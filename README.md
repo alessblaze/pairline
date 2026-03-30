@@ -55,3 +55,4 @@ Pairline leverages Elixir's battle-tested concurrency model and Go's lightweight
 
 ## Known Bugs
 - Using Turn sometimes skips first entry while starting video streams.
+- Could have additional bugs and issues as it is beta. Use at your own risk. Audit code by yourself.
