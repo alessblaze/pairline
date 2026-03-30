@@ -1,6 +1,6 @@
-# Omegle
+# Pairline
 
-Anonymous text and video chat app with moderation tooling.
+Anonymous text and video chat app with moderation tooling. Built for massive scale with true concurrency.
 
 ## Stack
 
@@ -37,9 +37,19 @@ Phoenix handles websocket sessions, matchmaking, and session IP tracking. The Go
 - `docker compose up -d redis postgres` starts the local data services.
 - `SHARED_SECRET` must match across the backend services.
 
+## Why Pairline Scales
+
+![Noah's Ark deployment philosophy](./noahsark.jpg)
+
+... Any Problem?
+Scale it up to half of the planet IDC. But be ethical.
+Pairline leverages Elixir's battle-tested concurrency model and Go's lightweight goroutines to handle massive concurrent connections. Two of every connection, all day, every day.
+
 ## Additional docs
 
 - [frontend/README.md](./frontend/README.md)
 - [backend/elixir/omegle_phoenix/README.md](./backend/elixir/omegle_phoenix/README.md)
 - [backend/golang/README.md](./backend/golang/README.md)
-- [Vulnerabilities.md](./Vulnerabilities.md)
+
+## Known Bugs
+- Using Turn sometimes skips first entry while starting video streams.
