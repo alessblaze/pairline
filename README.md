@@ -1,5 +1,7 @@
 # Pairline
 
+![Pairline Banner](./banner2.png)
+
 Anonymous text and video chat app with moderation tooling. Built for massive scale with true concurrency.
 
 ## Stack
