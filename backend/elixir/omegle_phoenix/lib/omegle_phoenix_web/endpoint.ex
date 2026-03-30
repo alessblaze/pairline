@@ -1,0 +1,37 @@
+defmodule OmeglePhoenixWeb.Endpoint do
+  use Phoenix.Endpoint, otp_app: :omegle_phoenix
+
+  socket("/ws", OmeglePhoenixWeb.Socket,
+    websocket: [
+      connect_info: [:peer_data, :x_headers],
+      max_frame_size: 65_536
+    ],
+    longpolling: false
+  )
+
+  plug(Plug.Static,
+    at: "/",
+    from: :omegle_phoenix,
+    gzip: false,
+    only: ~w(assets fonts images favicon.ico robots.txt)
+  )
+
+  if code_reloading? do
+    socket("/phoenix/live_reload/socket", Phoenix.LiveReloader.Socket)
+    plug(Phoenix.LiveReloader)
+    plug(Phoenix.CodeReloader)
+  end
+
+  plug(Plug.RequestId)
+  plug(Plug.Telemetry, event_prefix: [:omegle_phoenix, :endpoint])
+
+  plug(Plug.Parsers,
+    parsers: [:urlencoded, :multipart, :json],
+    pass: ["*/*"],
+    json_decoder: Phoenix.json_library()
+  )
+
+  plug(Plug.MethodOverride)
+  plug(Plug.Head)
+  plug(OmeglePhoenixWeb.Router)
+end
