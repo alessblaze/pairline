@@ -29,9 +29,8 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   @impl true
-  def handle_call({:join_queue, session_id, preferences}, _from, state) do
+  def handle_call({:join_queue, session_id, _preferences}, _from, state) do
     timestamp = System.system_time(:millisecond)
-    preferences_json = Jason.encode!(preferences)
 
     OmeglePhoenix.Redis.command([
       "ZADD",
@@ -40,19 +39,11 @@ defmodule OmeglePhoenix.Matchmaker do
       session_id
     ])
 
-    OmeglePhoenix.Redis.command([
-      "SETEX",
-      "#{session_id}:preferences",
-      "600",
-      preferences_json
-    ])
-
     {:reply, :ok, state}
   end
 
   def handle_call({:leave_queue, session_id}, _from, state) do
     OmeglePhoenix.Redis.command(["ZREM", @queue_key, session_id])
-    OmeglePhoenix.Redis.command(["DEL", "#{session_id}:preferences"])
 
     {:reply, :ok, state}
   end
@@ -138,59 +129,105 @@ defmodule OmeglePhoenix.Matchmaker do
         :ok
     end
 
-    case OmeglePhoenix.Redis.command(["ZPOPMIN", @queue_key, "2"]) do
+    # Fetch all waiting sessions sorted by join time (oldest first).
+    # We walk the list to find compatible pairs instead of blindly popping 2,
+    # which avoids the busy-loop where incompatible users keep getting re-added.
+    case OmeglePhoenix.Redis.command(["ZRANGEBYSCORE", @queue_key, "0", "+inf", "LIMIT", "0", "100"]) do
       {:ok, []} ->
         :ok
 
-      {:ok, [session_id1, score1]} ->
-        OmeglePhoenix.Redis.command(["ZADD", @queue_key, score1, session_id1])
+      {:ok, [_single]} ->
         :ok
 
-      {:ok, [session_id1, _score1, session_id2, _score2]} ->
-        pair_users(session_id1, session_id2)
+      {:ok, session_ids} when is_list(session_ids) ->
+        # Load preferences for all queued sessions
+        sessions_with_prefs =
+          session_ids
+          |> Enum.map(fn sid ->
+            case OmeglePhoenix.SessionManager.get_session(sid) do
+              {:ok, session} -> {sid, session}
+              _ -> nil
+            end
+          end)
+          |> Enum.reject(&is_nil/1)
+
+        match_from_pool(sessions_with_prefs, MapSet.new())
 
       _ ->
         :ok
     end
   end
 
+  defp match_from_pool([], _matched), do: :ok
+
+  defp match_from_pool([{sid1, session1} | rest], matched) do
+    if MapSet.member?(matched, sid1) do
+      match_from_pool(rest, matched)
+    else
+      # Find the first compatible partner in the remaining pool
+      case find_compatible_partner(sid1, session1, rest, matched) do
+        {sid2, _session2, remaining} ->
+          pair_users(sid1, sid2)
+          match_from_pool(remaining, MapSet.put(MapSet.put(matched, sid1), sid2))
+
+        nil ->
+          match_from_pool(rest, matched)
+      end
+    end
+  end
+
+  defp find_compatible_partner(_sid1, _session1, [], _matched), do: nil
+
+  defp find_compatible_partner(sid1, session1, [{sid2, session2} | rest], matched) do
+    if MapSet.member?(matched, sid2) do
+      find_compatible_partner(sid1, session1, rest, matched)
+    else
+      # Check if they just recently skipped each other
+      if session1.last_partner_id == sid2 or session2.last_partner_id == sid1 do
+        find_compatible_partner(sid1, session1, rest, matched)
+      else
+        if compatible?(session1.preferences, session2.preferences) do
+          {sid2, session2, rest}
+        else
+          find_compatible_partner(sid1, session1, rest, matched)
+        end
+      end
+    end
+  end
+
   defp pair_users(session_id1, session_id2) do
+    # Remove both users from the queue FIRST to prevent double-matching
+    OmeglePhoenix.Redis.command(["ZREM", @queue_key, session_id1])
+    OmeglePhoenix.Redis.command(["ZREM", @queue_key, session_id2])
+
     with {:ok, session1} <- OmeglePhoenix.SessionManager.get_session(session_id1),
          {:ok, session2} <- OmeglePhoenix.SessionManager.get_session(session_id2) do
       if session1.ban_status or session2.ban_status do
         {:error, :user_banned}
       else
-        preferences1 = session1.preferences
-        preferences2 = session2.preferences
+        common_interests = get_common_interests(session1.preferences, session2.preferences)
 
-        if compatible?(preferences1, preferences2) do
-          common_interests = get_common_interests(preferences1, preferences2)
+        OmeglePhoenix.SessionManager.update_session(session_id1, %{
+          status: :matched,
+          partner_id: session_id2,
+          last_partner_id: session_id2
+        })
 
-          OmeglePhoenix.SessionManager.update_session(session_id1, %{
-            status: :matched,
-            partner_id: session_id2
-          })
+        OmeglePhoenix.SessionManager.update_session(session_id2, %{
+          status: :matched,
+          partner_id: session_id1,
+          last_partner_id: session_id1
+        })
 
-          OmeglePhoenix.SessionManager.update_session(session_id2, %{
-            status: :matched,
-            partner_id: session_id1
-          })
+        OmeglePhoenix.Redis.command(["SETEX", "match:#{session_id1}", "3600", session_id2])
+        OmeglePhoenix.Redis.command(["SETEX", "match:#{session_id2}", "3600", session_id1])
+        OmeglePhoenix.Redis.command(["SETEX", "recent_match:#{session_id1}", "900", session_id2])
+        OmeglePhoenix.Redis.command(["SETEX", "recent_match:#{session_id2}", "900", session_id1])
 
-          OmeglePhoenix.Redis.command(["SETEX", "match:#{session_id1}", "3600", session_id2])
-          OmeglePhoenix.Redis.command(["SETEX", "match:#{session_id2}", "3600", session_id1])
-          OmeglePhoenix.Redis.command(["SETEX", "recent_match:#{session_id1}", "900", session_id2])
-          OmeglePhoenix.Redis.command(["SETEX", "recent_match:#{session_id2}", "900", session_id1])
+        notify_match(session_id1, session_id2, common_interests)
+        notify_match(session_id2, session_id1, common_interests)
 
-          notify_match(session_id1, session_id2, common_interests)
-          notify_match(session_id2, session_id1, common_interests)
-
-          :ok
-        else
-          now_bin = to_string(System.system_time(:millisecond))
-          OmeglePhoenix.Redis.command(["ZADD", @queue_key, now_bin, session_id1])
-          OmeglePhoenix.Redis.command(["ZADD", @queue_key, now_bin, session_id2])
-          :ok
-        end
+        :ok
       end
     else
       {:error, :not_found} ->
@@ -209,12 +246,16 @@ defmodule OmeglePhoenix.Matchmaker do
       interests1 = Map.get(preferences1, "interests", "") |> String.trim()
       interests2 = Map.get(preferences2, "interests", "") |> String.trim()
 
-      if interests1 != "" and interests2 != "" do
-        tags1 = parse_interests(interests1)
-        tags2 = parse_interests(interests2)
-        not MapSet.disjoint?(tags1, tags2)
-      else
+      if interests1 == "" and interests2 == "" do
         true
+      else
+        if interests1 != "" and interests2 != "" do
+          tags1 = parse_interests(interests1)
+          tags2 = parse_interests(interests2)
+          not MapSet.disjoint?(tags1, tags2)
+        else
+          false # Asymmetric interests (one has, one doesn't) -> incompatible
+        end
       end
     end
   end

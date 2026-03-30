@@ -102,6 +102,7 @@ defmodule OmeglePhoenix.SessionManager do
       ip: ip,
       status: :waiting,
       partner_id: nil,
+      last_partner_id: nil,
       signaling_ready: false,
       webrtc_started: false,
       preferences: preferences,
