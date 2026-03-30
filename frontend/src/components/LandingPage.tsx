@@ -98,7 +98,7 @@ export function LandingPage() {
         </div>
         <div className="flex items-center gap-4">
           <a
-            href="https://github.com"
+            href="https://github.com/alessblaze/pairline"
             target="_blank"
             rel="noopener noreferrer"
             className="hidden sm:flex items-center gap-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"
@@ -242,7 +242,7 @@ export function LandingPage() {
               </p>
               <div className="flex justify-center">
                 <a
-                  href="https://github.com"
+                  href="https://github.com/alessblaze/pairline"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center justify-center gap-3 px-8 py-4 sm:px-10 sm:py-5 rounded-xl bg-white dark:bg-white text-gray-900 dark:text-gray-900 font-semibold text-base sm:text-lg hover:bg-gray-100 dark:hover:bg-gray-200 transition-colors"
