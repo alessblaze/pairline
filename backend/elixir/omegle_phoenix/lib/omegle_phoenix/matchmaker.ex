@@ -132,22 +132,39 @@ defmodule OmeglePhoenix.Matchmaker do
     # Fetch all waiting sessions sorted by join time (oldest first).
     # We walk the list to find compatible pairs instead of blindly popping 2,
     # which avoids the busy-loop where incompatible users keep getting re-added.
-    case OmeglePhoenix.Redis.command(["ZRANGEBYSCORE", @queue_key, "0", "+inf", "LIMIT", "0", "100"]) do
+    case OmeglePhoenix.Redis.command(["ZRANGEBYSCORE", @queue_key, "0", "+inf", "WITHSCORES", "LIMIT", "0", "100"]) do
       {:ok, []} ->
         :ok
 
       {:ok, [_single]} ->
         :ok
 
-      {:ok, session_ids} when is_list(session_ids) ->
+      {:ok, session_ids_with_scores} when is_list(session_ids_with_scores) ->
+        now_ms = System.system_time(:millisecond)
+
         # Load preferences for all queued sessions
         sessions_with_prefs =
-          session_ids
-          |> Enum.map(fn sid ->
-            case OmeglePhoenix.SessionManager.get_session(sid) do
-              {:ok, session} -> {sid, session}
-              _ -> nil
-            end
+          session_ids_with_scores
+          |> Enum.chunk_every(2)
+          |> Enum.map(fn
+            [sid, score_str] ->
+              case OmeglePhoenix.SessionManager.get_session(sid) do
+                {:ok, session} ->
+                  join_time =
+                    case Float.parse(score_str) do
+                      {f, _} -> trunc(f)
+                      :error -> now_ms
+                    end
+
+                  wait_time_ms = now_ms - join_time
+                  {sid, session, wait_time_ms}
+
+                _ ->
+                  nil
+              end
+
+            _ ->
+              nil
           end)
           |> Enum.reject(&is_nil/1)
 
@@ -160,12 +177,12 @@ defmodule OmeglePhoenix.Matchmaker do
 
   defp match_from_pool([], _matched), do: :ok
 
-  defp match_from_pool([{sid1, session1} | rest], matched) do
+  defp match_from_pool([{sid1, session1, wait1} | rest], matched) do
     if MapSet.member?(matched, sid1) do
       match_from_pool(rest, matched)
     else
       # Find the first compatible partner in the remaining pool
-      case find_compatible_partner(sid1, session1, rest, matched) do
+      case find_compatible_partner(sid1, session1, wait1, rest, matched) do
         {sid2, _session2, remaining} ->
           pair_users(sid1, sid2)
           match_from_pool(remaining, MapSet.put(MapSet.put(matched, sid1), sid2))
@@ -176,20 +193,20 @@ defmodule OmeglePhoenix.Matchmaker do
     end
   end
 
-  defp find_compatible_partner(_sid1, _session1, [], _matched), do: nil
+  defp find_compatible_partner(_sid1, _session1, _wait1, [], _matched), do: nil
 
-  defp find_compatible_partner(sid1, session1, [{sid2, session2} | rest], matched) do
+  defp find_compatible_partner(sid1, session1, wait1, [{sid2, session2, wait2} | rest], matched) do
     if MapSet.member?(matched, sid2) do
-      find_compatible_partner(sid1, session1, rest, matched)
+      find_compatible_partner(sid1, session1, wait1, rest, matched)
     else
       # Check if they just recently skipped each other
       if session1.last_partner_id == sid2 or session2.last_partner_id == sid1 do
-        find_compatible_partner(sid1, session1, rest, matched)
+        find_compatible_partner(sid1, session1, wait1, rest, matched)
       else
-        if compatible?(session1.preferences, session2.preferences) do
+        if compatible?(session1.preferences, wait1, session2.preferences, wait2) do
           {sid2, session2, rest}
         else
-          find_compatible_partner(sid1, session1, rest, matched)
+          find_compatible_partner(sid1, session1, wait1, rest, matched)
         end
       end
     end
@@ -236,7 +253,7 @@ defmodule OmeglePhoenix.Matchmaker do
     end
   end
 
-  defp compatible?(preferences1, preferences2) do
+  defp compatible?(preferences1, wait1, preferences2, wait2) do
     mode1 = Map.get(preferences1, "mode")
     mode2 = Map.get(preferences2, "mode")
 
@@ -252,11 +269,25 @@ defmodule OmeglePhoenix.Matchmaker do
         if interests1 != "" and interests2 != "" do
           tags1 = parse_interests(interests1)
           tags2 = parse_interests(interests2)
-          not MapSet.disjoint?(tags1, tags2)
+
+          if not MapSet.disjoint?(tags1, tags2) do
+            true # Perfect match
+          else
+            can_fallback_to_random?(interests1, wait1) and can_fallback_to_random?(interests2, wait2)
+          end
         else
-          false # Asymmetric interests (one has, one doesn't) -> incompatible
+          # Asymmetric interests (one has, one doesn't) -> incompatible, unless BOTH fallback
+          can_fallback_to_random?(interests1, wait1) and can_fallback_to_random?(interests2, wait2)
         end
       end
+    end
+  end
+
+  defp can_fallback_to_random?(interests, wait_time_ms) do
+    if interests == "" do
+      true # No interests = always willing to fallback
+    else
+      wait_time_ms >= 10_000 # Wait 10 seconds before dropping constraints
     end
   end
 
