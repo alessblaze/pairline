@@ -105,6 +105,13 @@ export function ReportDialog({ peerId, messages, reporterSessionId, reporterToke
                 rows={3}
                 placeholder="Describe what happened..."
               />
+              {description.length > 0 && (
+                <div className={`text-center text-xs mt-1.5 font-medium transition-all duration-200 ${
+                  description.length >= 1800 ? 'text-red-500' : 'text-gray-400 dark:text-gray-500'
+                }`}>
+                  {description.length} / 2000 characters
+                </div>
+              )}
             </div>
 
             {chatMessages.length > 0 && (

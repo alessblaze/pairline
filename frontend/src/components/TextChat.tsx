@@ -211,45 +211,52 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
             </button>
           )}
 
-          {status === 'connected' && (
-            <div className="flex flex-col gap-2 sm:gap-3">
-              <form onSubmit={handleSend} className="flex gap-2">
-          <input
-            type="text"
-            value={input}
-            onChange={handleInputChange}
-            placeholder="Type a message..."
-            maxLength={2000}
-            className="flex-1 px-3 py-2 sm:px-4 sm:py-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-xl text-base text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            autoFocus
-          />
-                <button
-                  type="submit"
-                  disabled={!input.trim()}
-                  className="px-4 py-2 sm:px-6 sm:py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 dark:disabled:bg-gray-600 disabled:text-gray-500 text-white font-semibold rounded-xl transition-colors text-sm sm:text-base"
-                >
-                  Send
-                </button>
-              </form>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setShowReport(true)}
-                  className="flex-1 py-2.5 sm:py-3 bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 font-semibold rounded-xl hover:bg-orange-200 dark:hover:bg-orange-900/50 transition-colors text-sm sm:text-base"
-                >
-                  Report
-                </button>
-                <button
-                  onClick={handleDisconnect}
-                  className={`flex-1 py-2.5 sm:py-3 font-semibold rounded-xl transition-colors text-sm sm:text-base ${confirmStop
-                      ? 'bg-red-600 hover:bg-red-700 text-white'
-                      : 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50'
-                    }`}
-                >
-                  {confirmStop ? 'Tap again to stop' : 'Stop Chat'}
-                </button>
-              </div>
+      {status === 'connected' && (
+        <div className="flex flex-col gap-2 sm:gap-3">
+          <form onSubmit={handleSend} className="flex gap-2 items-center">
+            <input
+              type="text"
+              value={input}
+              onChange={handleInputChange}
+              placeholder="Type a message..."
+              maxLength={2000}
+              className="flex-1 px-3 py-2 sm:px-4 sm:py-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-xl text-base text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              autoFocus
+            />
+            <button
+              type="submit"
+              disabled={!input.trim()}
+              className="shrink-0 px-4 py-2 sm:px-6 sm:py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 dark:disabled:bg-gray-600 disabled:text-gray-500 text-white font-semibold rounded-xl transition-colors text-sm sm:text-base h-full"
+            >
+              Send
+            </button>
+          </form>
+          {input.length > 0 && (
+            <div className={`text-center text-xs font-medium transition-all duration-200 ${
+              input.length >= 1800 ? 'text-orange-500' : 'text-gray-400 dark:text-gray-500'
+            }`}>
+              {input.length} / 2000 characters
             </div>
           )}
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowReport(true)}
+              className="flex-1 py-2.5 sm:py-3 bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 font-semibold rounded-xl hover:bg-orange-200 dark:hover:bg-orange-900/50 transition-colors text-sm sm:text-base"
+            >
+              Report
+            </button>
+            <button
+              onClick={handleDisconnect}
+              className={`flex-1 py-2.5 sm:py-3 font-semibold rounded-xl transition-colors text-sm sm:text-base ${confirmStop
+                  ? 'bg-red-600 hover:bg-red-700 text-white'
+                  : 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50'
+                }`}
+            >
+              {confirmStop ? 'Tap again to stop' : 'Stop Chat'}
+            </button>
+          </div>
+        </div>
+      )}
         </div>
       </div>
 

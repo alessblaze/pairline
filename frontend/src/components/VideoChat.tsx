@@ -439,7 +439,7 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
             {status === 'connected' && (
               <div className="flex flex-col gap-2">
                 {/* Message input */}
-                <form onSubmit={handleSend} className="flex gap-2">
+                <form onSubmit={handleSend} className="flex gap-2 items-center">
                   <input
                     type="text"
                     value={input}
@@ -447,26 +447,33 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
                     placeholder="Type a message…"
                     maxLength={2000}
                     className="flex-1 px-4 py-2.5 bg-white dark:bg-gray-700/50
-                               border border-gray-300 dark:border-gray-600
-                               rounded-full text-sm sm:text-base
-                               text-gray-900 dark:text-white placeholder-gray-500
-                               focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500
-                               transition-all shadow-sm min-w-0"
+                      border border-gray-300 dark:border-gray-600
+                      rounded-full text-base
+                      text-gray-900 dark:text-white placeholder-gray-500
+                      focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500
+                      transition-all shadow-sm min-w-0"
                     autoFocus
                   />
                   <button
                     type="submit"
                     disabled={!input.trim()}
                     className="shrink-0 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700
-                               disabled:opacity-50 disabled:bg-gray-400
-                               text-white font-semibold rounded-full
-                               transition-all shadow-sm flex items-center justify-center"
+                      disabled:opacity-50 disabled:bg-gray-400
+                      text-white font-semibold rounded-full
+                      transition-all shadow-sm flex items-center justify-center h-full"
                   >
                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
                     </svg>
                   </button>
                 </form>
+                {input.length > 0 && (
+                  <div className={`text-center text-xs font-medium transition-all duration-200 ${
+                    input.length >= 1800 ? 'text-orange-500' : 'text-gray-400 dark:text-gray-500'
+                  }`}>
+                    {input.length} / 2000 characters
+                  </div>
+                )}
 
                 {/* Control buttons */}
                 <div className="grid grid-cols-3 gap-2">
