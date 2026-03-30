@@ -10,6 +10,8 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
   const { connected, status, messages, startSearch, stopSearch, disconnect, sendMessage, reportPeerId, sessionId, sessionToken, peerTyping, sendTyping } = useTextChat(wsUrl);
 
   const [input, setInput] = useState('');
+  const [interestTags, setInterestTags] = useState<string[]>([]);
+  const [tagInput, setTagInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [confirmStop, setConfirmStop] = useState(false);
   const [showReport, setShowReport] = useState(false);
@@ -84,6 +86,29 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
     }
   };
 
+  const addTag = () => {
+    const trimmed = tagInput.trim().replace(/[,,;]/g, '');
+    if (trimmed && !interestTags.includes(trimmed) && interestTags.length < 10) {
+      setInterestTags([...interestTags, trimmed]);
+      setTagInput('');
+    } else {
+      setTagInput('');
+    }
+  };
+
+  const removeTag = (index: number) => {
+    setInterestTags(interestTags.filter((_, i) => i !== index));
+  };
+
+  const handleTagInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' || e.key === ',' || e.key === ';') {
+      e.preventDefault();
+      addTag();
+    } else if (e.key === 'Backspace' && !tagInput && interestTags.length > 0) {
+      removeTag(interestTags.length - 1);
+    }
+  };
+
   return (
     <div className="fixed inset-0 flex items-center justify-center p-2 sm:p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800">
       <div className="w-full max-w-4xl h-full max-h-[calc(100dvh-1rem)] sm:max-h-[calc(100dvh-2rem)] flex flex-col bg-white dark:bg-gray-900 rounded-2xl shadow-2xl overflow-hidden border border-gray-200 dark:border-gray-700">
@@ -129,9 +154,25 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
           )}
 
           {status === 'searching' && (
-            <div className="h-full flex flex-col items-center justify-center text-center space-y-3 sm:space-y-4">
-              <div className="w-10 h-10 sm:w-12 sm:h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin shrink-0"></div>
-              <p className="text-base sm:text-lg font-medium text-gray-700 dark:text-gray-300">Finding your match...</p>
+            <div className="h-full flex flex-col items-center justify-center text-center space-y-4 sm:space-y-6 px-4">
+              <div className="relative">
+                <div className="w-16 h-16 sm:w-20 sm:h-20 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="w-8 h-8 sm:w-10 sm:h-10 bg-indigo-500/10 rounded-full animate-pulse"></div>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <p className="text-xl sm:text-2xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">Finding your match...</p>
+                {interestTags.length > 0 && (
+                  <div className="flex flex-wrap justify-center gap-2 mt-4">
+                    {interestTags.map((tag, i) => (
+                      <span key={i} className="px-3 py-1 bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300 text-xs font-semibold rounded-full border border-indigo-200 dark:border-indigo-800 animate-in fade-in zoom-in duration-300">
+                        #{tag}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -183,19 +224,55 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
         {/* Input Area */}
         <div className="p-3 sm:p-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 shrink-0">
           {(status === 'idle' || status === 'disconnected') && (
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-4">
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest ml-1">
+                  Interest Tags
+                </label>
+                <div className="flex flex-wrap items-center gap-2 p-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl min-h-[50px] focus-within:ring-2 focus-within:ring-indigo-500 transition-all shadow-sm">
+                  {interestTags.map((tag, index) => (
+                    <span 
+                      key={index}
+                      className="flex items-center gap-1.5 px-2.5 py-1 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 text-sm font-medium rounded-lg animate-in zoom-in-95 duration-200"
+                    >
+                      {tag}
+                      <button 
+                        onClick={() => removeTag(index)}
+                        className="hover:text-indigo-900 dark:hover:text-white transition-colors"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </span>
+                  ))}
+                  <input
+                    type="text"
+                    value={tagInput}
+                    onChange={(e) => setTagInput(e.target.value)}
+                    onKeyDown={handleTagInputKeyDown}
+                    onBlur={addTag}
+                    placeholder={interestTags.length === 0 ? "e.g. coding, music, movies..." : ""}
+                    className="flex-1 min-w-[120px] bg-transparent border-none outline-none text-sm font-medium dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500"
+                  />
+                </div>
+                <p className="text-[10px] text-gray-400 dark:text-gray-500 ml-1">
+                  Press Enter or Comma to add. Max 10 tags.
+                </p>
+              </div>
+
               {status === 'disconnected' && canReportLastChat && (
                 <button
                   onClick={() => setShowReport(true)}
-                  className="w-full py-2.5 sm:py-3 bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 font-semibold rounded-xl hover:bg-orange-200 dark:hover:bg-orange-900/50 transition-colors text-sm sm:text-base"
+                  className="w-full py-2.5 sm:py-3 bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 font-semibold rounded-xl hover:bg-orange-200 dark:hover:bg-orange-900/50 transition-colors text-sm sm:text-base border border-orange-200 dark:border-orange-800/50"
                 >
                   Report Last Chat
                 </button>
               )}
               <button
-                onClick={startSearch}
+                onClick={() => startSearch(interestTags.join(','))}
                 disabled={!connected}
-                className="w-full py-2.5 sm:py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 dark:disabled:bg-gray-600 disabled:text-gray-500 text-white font-semibold rounded-xl transition-colors text-sm sm:text-base"
+                className="w-full py-3 sm:py-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 dark:disabled:bg-gray-600 disabled:text-gray-500 text-white font-bold rounded-xl transition-all text-sm sm:text-lg shadow-lg shadow-indigo-500/25 active:scale-[0.98]"
               >
                 {connected ? (status === 'disconnected' ? 'Search Again' : 'Find a Stranger') : 'Connecting...'}
               </button>

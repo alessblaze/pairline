@@ -685,15 +685,31 @@ export function useVideoChat(wsUrl: string) {
             }
           };
           webrtcWsRef.current = ws;
+          
+          // Proactively fetch TURN credentials as soon as we have a session to avoid delay during match
+          if (turnEnabled && !turnFetchedRef.current) {
+            void fetchTurnServers().then(iceServers => {
+              if (iceServers) {
+                turnServersRef.current = iceServers;
+                if (hasTurnServer(iceServers)) {
+                  turnFetchedRef.current = true;
+                }
+              }
+            });
+          }
         }
         break;
 
       case 'match':
-        console.log('Matched with peer:', message.peer_id);
+        const peerIdMatch = message.peer_id;
+        const common = (message as any).common_interests || [];
+
+        console.log('Matched with peer:', peerIdMatch);
         logWebRTC('Phoenix match received', {
-          peerId: message.peer_id,
+          peerId: peerIdMatch,
           sessionId: sessionIdRef.current
         });
+
         // Close any stale PeerConnection from a previous match
         if (peerConnectionRef.current) {
           logWebRTC('Closing stale PeerConnection from previous match');
@@ -707,18 +723,33 @@ export function useVideoChat(wsUrl: string) {
         pendingIceCandidatesRef.current = [];
         pendingWebrtcStartRef.current = null;
 
-        setPeerId(message.peer_id || '');
-        setReportPeerId(message.peer_id || null);
+        setPeerId(peerIdMatch || '');
+        setReportPeerId(peerIdMatch || null);
         setStatus('connected');
         setShowReconnectMessage(false);
         signalingReadySentRef.current = false;
         negotiationStartedRef.current = false;
-        peerIdRef.current = message.peer_id || null;
+        peerIdRef.current = peerIdMatch || null;
+
+        if (common.length > 0) {
+          setMessages(prev => [...prev, {
+            id: crypto.randomUUID(),
+            text: `You both like: ${common.join(', ')}`,
+            sender: 'system',
+            timestamp: Date.now()
+          }]);
+        } else {
+          setMessages(prev => [...prev, {
+            id: crypto.randomUUID(),
+            text: `You are talking to a random stranger.`,
+            sender: 'system',
+            timestamp: Date.now()
+          }]);
+        }
+
         // Only send webrtc_ready if the Go WS is ALREADY open (e.g. same session re-matched).
-        // If the Go WS is still connecting, onopen will call maybeSendWebRTCReady after it opens.
-        // Calling it here before onopen races with Elixir partner assignment and causes 'No partner' errors.
         if (webrtcSocketOpenRef.current) {
-          maybeSendWebRTCReady(message.peer_id || null);
+          maybeSendWebRTCReady(peerIdMatch || null);
         }
         break;
 
@@ -734,6 +765,12 @@ export function useVideoChat(wsUrl: string) {
               hasRelay: hasTurnServer(iceServers),
               urls: iceServers.flatMap(server => Array.isArray(server.urls) ? server.urls : [server.urls])
             });
+            // PROACTIVE FIX: If the PeerConnection was already created (e.g., match raced with webrtc_ready),
+            // apply the new config immediately to avoid waiting for ICE failure.
+            if (peerConnectionRef.current) {
+              logWebRTC('Applying newly fetched TURN credentials to existing PeerConnection');
+              peerConnectionRef.current.setConfiguration({ ...peerConnectionRef.current.getConfiguration(), iceServers });
+            }
           }
         }
         break;
@@ -917,7 +954,7 @@ export function useVideoChat(wsUrl: string) {
     }
   };
 
-  const startSearch = async () => {
+  const startSearch = async (interests: string = '') => {
     try {
       turnFetchedRef.current = false;
       iceRestartPendingRef.current = false;
@@ -931,7 +968,8 @@ export function useVideoChat(wsUrl: string) {
       logWebRTC('Starting search', {
         turnEnabled,
         forceRelay,
-        prefetchedTurn: false
+        prefetchedTurn: false,
+        interests: interests.trim()
       });
 
       if (!wsClient.isConnected()) {
@@ -944,7 +982,12 @@ export function useVideoChat(wsUrl: string) {
       setReportPeerId(null);
       setStatus('searching');
 
-      wsClient.send('start', { preferences: { mode: 'video' } });
+      wsClient.send('start', { 
+        preferences: { 
+          mode: 'video',
+          interests: interests.trim()
+        } 
+      });
     } catch (error) {
       console.error('Failed to start search:', error);
       setStatus('idle');

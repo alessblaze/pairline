@@ -164,6 +164,8 @@ defmodule OmeglePhoenix.Matchmaker do
         preferences2 = session2.preferences
 
         if compatible?(preferences1, preferences2) do
+          common_interests = get_common_interests(preferences1, preferences2)
+
           OmeglePhoenix.SessionManager.update_session(session_id1, %{
             status: :matched,
             partner_id: session_id2
@@ -179,8 +181,8 @@ defmodule OmeglePhoenix.Matchmaker do
           OmeglePhoenix.Redis.command(["SETEX", "recent_match:#{session_id1}", "900", session_id2])
           OmeglePhoenix.Redis.command(["SETEX", "recent_match:#{session_id2}", "900", session_id1])
 
-          notify_match(session_id1, session_id2)
-          notify_match(session_id2, session_id1)
+          notify_match(session_id1, session_id2, common_interests)
+          notify_match(session_id2, session_id1, common_interests)
 
           :ok
         else
@@ -198,19 +200,51 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   defp compatible?(preferences1, preferences2) do
-    Enum.all?(preferences1, fn {key, value} ->
-      case Map.get(preferences2, key) do
-        nil -> false
-        ^value -> true
-        _ -> false
+    mode1 = Map.get(preferences1, "mode")
+    mode2 = Map.get(preferences2, "mode")
+
+    if mode1 != mode2 do
+      false
+    else
+      interests1 = Map.get(preferences1, "interests", "") |> String.trim()
+      interests2 = Map.get(preferences2, "interests", "") |> String.trim()
+
+      if interests1 != "" and interests2 != "" do
+        tags1 = parse_interests(interests1)
+        tags2 = parse_interests(interests2)
+        not MapSet.disjoint?(tags1, tags2)
+      else
+        true
       end
-    end)
+    end
   end
 
-  defp notify_match(session_id, partner_session_id) do
+  defp parse_interests(str) do
+    str
+    |> String.downcase()
+    |> String.split([",", ";"], trim: true)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> MapSet.new()
+  end
+
+  defp get_common_interests(p1, p2) do
+    i1 = Map.get(p1, "interests", "") |> String.trim()
+    i2 = Map.get(p2, "interests", "") |> String.trim()
+
+    if i1 != "" and i2 != "" do
+      set1 = parse_interests(i1)
+      set2 = parse_interests(i2)
+      MapSet.intersection(set1, set2) |> MapSet.to_list()
+    else
+      []
+    end
+  end
+
+  defp notify_match(session_id, partner_session_id, common_interests) do
     case OmeglePhoenix.Router.find_process(session_id) do
       {:ok, pid} ->
-        send(pid, {:match, partner_session_id})
+        send(pid, {:match, partner_session_id, common_interests})
 
       {:error, :not_found} ->
         :ok

@@ -272,7 +272,10 @@ defmodule OmeglePhoenixWeb.RoomChannel do
     |> Enum.take(5)
     |> Map.new(fn {k, v} ->
       key = if is_binary(k), do: String.slice(k, 0, 50), else: to_string(k) |> String.slice(0, 50)
-      val = if is_binary(v), do: String.slice(v, 0, 50), else: to_string(v) |> String.slice(0, 50)
+      
+      limit = if key == "interests", do: 255, else: 50
+      val = if is_binary(v), do: String.slice(v, 0, limit), else: to_string(v) |> String.slice(0, limit)
+      
       {key, val}
     end)
   end
@@ -310,8 +313,8 @@ defmodule OmeglePhoenixWeb.RoomChannel do
   end
 
   @impl true
-  def handle_info({:match, partner_session_id}, socket) do
-    push(socket, "match", %{peer_id: partner_session_id})
+  def handle_info({:match, partner_session_id, common_interests}, socket) do
+    push(socket, "match", %{peer_id: partner_session_id, common_interests: common_interests})
     {:noreply, socket}
   end
 

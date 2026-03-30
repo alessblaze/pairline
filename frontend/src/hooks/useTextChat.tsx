@@ -14,68 +14,15 @@ export function useTextChat(wsUrl: string) {
   const [showReconnectMessage, setShowReconnectMessage] = useState(false);
   const [peerTyping, setPeerTyping] = useState(false);
 
-  useEffect(() => {
-    let mounted = true;
-
-    const setup = async () => {
-      try {
-        await wsClient.connect();
-        if (mounted) {
-          setConnected(true);
-          setShowReconnectMessage(false);
-        }
-
-        wsClient.onMessage((message: Message) => {
-          if (mounted) handleMessage(message);
-        });
-
-        wsClient.onClose(() => {
-          if (mounted) {
-            setConnected(false);
-            setStatus(prev => {
-              if (prev === 'connected' || prev === 'searching') {
-                if (!showReconnectMessage) {
-                  setMessages(msgs => [...msgs, {
-                    id: crypto.randomUUID(),
-                    text: 'Connection to server lost. Reconnecting...',
-                    sender: 'system',
-                    timestamp: Date.now()
-                  }]);
-                  setShowReconnectMessage(true);
-                }
-                return 'disconnected';
-              }
-              return prev;
-            });
-            setPeerId(null);
-          }
-        });
-      } catch (error) {
-        console.error('Failed to connect:', error);
-        if (mounted) {
-          setConnected(false);
-          setStatus('disconnected');
-          if (!showReconnectMessage) {
-            setMessages(msgs => [...msgs, {
-              id: crypto.randomUUID(),
-              text: 'Failed to connect to server. Please refresh the page.',
-              sender: 'system',
-              timestamp: Date.now()
-            }]);
-            setShowReconnectMessage(true);
-          }
-        }
-      }
-    };
-
-    setup();
-
-    return () => {
-      mounted = false;
-      cleanup();
-      wsClient.disconnect();
-    };
-  }, [wsClient]);
+  const cleanup = () => {
+    setPeerId(null);
+    setSessionId(null);
+    setSessionToken(null);
+    setReportPeerId(null);
+    setMessages([]);
+    setShowReconnectMessage(false);
+    setPeerTyping(false);
+  };
 
   const handleMessage = (message: Message) => {
     console.log('Received message:', message);
@@ -90,11 +37,28 @@ export function useTextChat(wsUrl: string) {
     
     switch (message.type) {
       case 'match':
-        console.log('Matched with peer:', message.peer_id);
-        setPeerId(message.peer_id || '');
-        setReportPeerId(message.peer_id || null);
+        const peerIdMatch = message.peer_id;
+        const common = (message as any).common_interests || [];
+        setPeerId(peerIdMatch || '');
+        setReportPeerId(peerIdMatch || null);
         setStatus('connected');
         setShowReconnectMessage(false);
+        
+        if (common.length > 0) {
+          setMessages(prev => [...prev, {
+            id: crypto.randomUUID(),
+            text: `You both like: ${common.join(', ')}`,
+            sender: 'system',
+            timestamp: Date.now()
+          }]);
+        } else {
+          setMessages(prev => [...prev, {
+            id: crypto.randomUUID(),
+            text: `You are talking to a random stranger.`,
+            sender: 'system',
+            timestamp: Date.now()
+          }]);
+        }
         break;
 
       case 'message':
@@ -176,7 +140,70 @@ export function useTextChat(wsUrl: string) {
     }
   };
 
-  const startSearch = async () => {
+  useEffect(() => {
+    let mounted = true;
+
+    const setup = async () => {
+      try {
+        await wsClient.connect();
+        if (mounted) {
+          setConnected(true);
+          setShowReconnectMessage(false);
+        }
+
+        wsClient.onMessage((message: Message) => {
+          if (mounted) handleMessage(message);
+        });
+
+        wsClient.onClose(() => {
+          if (mounted) {
+            setConnected(false);
+            setStatus(prev => {
+              if (prev === 'connected' || prev === 'searching') {
+                if (!showReconnectMessage) {
+                  setMessages(msgs => [...msgs, {
+                    id: crypto.randomUUID(),
+                    text: 'Connection to server lost. Reconnecting...',
+                    sender: 'system',
+                    timestamp: Date.now()
+                  }]);
+                  setShowReconnectMessage(true);
+                }
+                return 'disconnected';
+              }
+              return prev;
+            });
+            setPeerId(null);
+          }
+        });
+      } catch (error) {
+        console.error('Failed to connect:', error);
+        if (mounted) {
+          setConnected(false);
+          setStatus('disconnected');
+          if (!showReconnectMessage) {
+            setMessages(msgs => [...msgs, {
+              id: crypto.randomUUID(),
+              text: 'Failed to connect to server. Please refresh the page.',
+              sender: 'system',
+              timestamp: Date.now()
+            }]);
+            setShowReconnectMessage(true);
+          }
+        }
+      }
+    };
+
+    setup();
+
+    return () => {
+      mounted = false;
+      cleanup();
+      wsClient.disconnect();
+    };
+  }, [wsClient]);
+
+  const startSearch = async (interests: string = '') => {
     try {
       if (!wsClient.isConnected()) {
         await wsClient.connect();
@@ -187,10 +214,16 @@ export function useTextChat(wsUrl: string) {
       setShowReconnectMessage(false);
       setReportPeerId(null);
       setStatus('searching');
-      wsClient.send('start', { preferences: { mode: 'text' } });
+
+      wsClient.send('start', { 
+        preferences: { 
+          mode: 'text',
+          interests: interests.trim()
+        } 
+      });
     } catch (error) {
       console.error('Failed to start search:', error);
-      setStatus('disconnected');
+      setStatus('idle');
     }
   };
 
@@ -260,16 +293,6 @@ export function useTextChat(wsUrl: string) {
     } catch (error) {
       console.error('Failed to send typing indicator:', error);
     }
-  };
-
-  const cleanup = () => {
-    setPeerId(null);
-    setSessionId(null);
-    setSessionToken(null);
-    setReportPeerId(null);
-    setMessages([]);
-    setShowReconnectMessage(false);
-    setPeerTyping(false);
   };
 
   return {
