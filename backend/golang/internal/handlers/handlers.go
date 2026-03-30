@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"math/big"
 	"net"
 	"net/http"
 	"net/netip"
@@ -421,6 +422,12 @@ func GetBansHandlerGin(c *gin.Context) {
 func DeleteBanHandlerGin(c *gin.Context) {
 	banIdentifier := c.Param("session_id")
 
+	// Validate that banIdentifier is a valid UUID to prevent injection
+	if !uuidRe.MatchString(banIdentifier) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ban identifier format"})
+		return
+	}
+
 	db := storage.NewDatabase()
 	redisClient := redis.NewClient()
 
@@ -554,6 +561,13 @@ func CreateAdminHandlerGin(c *gin.Context) {
 
 func DeleteAdminHandlerGin(c *gin.Context) {
 	username := c.Param("username")
+
+	// Validate username format to prevent injection via path parameter
+	if !usernameRe.MatchString(username) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid username format"})
+		return
+	}
+
 	currentUsername, ok := getContextString(c, "username")
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
@@ -633,15 +647,15 @@ func getEnvAsInt(key, defaultValue string) int {
 }
 
 func generateOpaqueToken() string {
-	token := make([]byte, 32)
-	if _, err := rand.Read(token); err != nil {
-		log.Fatalf("CRITICAL: crypto/rand failure, cannot generate secure tokens: %v", err)
-	}
-
 	const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
-	out := make([]byte, len(token))
-	for i, b := range token {
-		out[i] = alphabet[int(b)%len(alphabet)]
+	alphabetLen := big.NewInt(int64(len(alphabet)))
+	out := make([]byte, 32)
+	for i := range out {
+		idx, err := rand.Int(rand.Reader, alphabetLen)
+		if err != nil {
+			log.Fatalf("CRITICAL: crypto/rand failure, cannot generate secure tokens: %v", err)
+		}
+		out[i] = alphabet[idx.Int64()]
 	}
 
 	return string(out)
@@ -714,6 +728,8 @@ func normalizeChatLog(raw json.RawMessage) (string, error) {
 		if messages[i].Sender != "me" && messages[i].Sender != "peer" && messages[i].Sender != "system" {
 			return "", errors.New("chat_log contains an invalid sender value")
 		}
+		// Sanitize chat text to prevent stored XSS when rendered in admin panel
+		messages[i].Text = stripHTML(messages[i].Text)
 		totalBytes += len(messages[i].Text)
 	}
 

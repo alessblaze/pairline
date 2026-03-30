@@ -253,3 +253,4 @@ Pipfile.lock
 !LICENSE
 Vulnerabilities.md
 backend/golang/omegle-go
+vulnerabilities2.md

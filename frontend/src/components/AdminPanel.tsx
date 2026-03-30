@@ -210,7 +210,6 @@ export function AdminPanel() {
       if (response.status === 401) return logout();
 
       if (response.ok) {
-        await storeCSRFFromResponse(response);
         const data = await response.json();
         const normalized = (data.reports || []).map((r: any) => ({
           ...r,
@@ -373,7 +372,6 @@ export function AdminPanel() {
       if (response.status === 401) return logout();
 
       if (response.ok) {
-        await storeCSRFFromResponse(response);
         const data = await response.json();
         setBans(data.bans || []);
       }

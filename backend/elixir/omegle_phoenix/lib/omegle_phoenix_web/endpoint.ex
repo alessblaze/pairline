@@ -28,7 +28,8 @@ defmodule OmeglePhoenixWeb.Endpoint do
   plug(Plug.Parsers,
     parsers: [:urlencoded, :multipart, :json],
     pass: ["*/*"],
-    json_decoder: Phoenix.json_library()
+    json_decoder: Phoenix.json_library(),
+    length: 2_097_152
   )
 
   plug(Plug.MethodOverride)

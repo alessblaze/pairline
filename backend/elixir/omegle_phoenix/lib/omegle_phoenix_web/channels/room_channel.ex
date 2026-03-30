@@ -1,9 +1,13 @@
 defmodule OmeglePhoenixWeb.RoomChannel do
   use Phoenix.Channel
 
+  @max_messages_per_window 30
+  @rate_window_ms 5_000
+
   @impl true
   def join("room:" <> mode, _payload, socket) when mode in ["lobby", "text", "video"] do
-    {:ok, assign(socket, :mode, mode)}
+    {:ok, assign(socket, mode: mode, msg_count: 0, window_start: System.system_time(:millisecond))
+    }
   end
 
   @impl true
@@ -90,43 +94,58 @@ defmodule OmeglePhoenixWeb.RoomChannel do
 
   def handle_in("message", %{"data" => data}, socket) do
     session_id = socket.assigns[:session_id]
-    content = Map.get(data, "content")
 
-    case OmeglePhoenix.SessionManager.get_session(session_id) do
-      {:ok, session}
-      when session.partner_id != nil and is_binary(content) and byte_size(content) <= 2_000 ->
-        OmeglePhoenix.Router.send_message(session.partner_id, %{
-          type: "message",
-          from: session_id,
-          data: %{content: content}
-        })
+    if is_nil(session_id) do
+      {:reply, {:error, %{reason: "No active session"}}, socket}
+    else
+      {socket, allowed} = check_rate_limit(socket)
 
-        {:noreply, socket}
+      if not allowed do
+        {:reply, {:error, %{reason: "Rate limit exceeded"}}, socket}
+      else
+        content = Map.get(data, "content")
 
-      {:ok, _session} ->
-        {:reply, {:error, %{reason: "Invalid message content"}}, socket}
+        case OmeglePhoenix.SessionManager.get_session(session_id) do
+          {:ok, session}
+          when session.partner_id != nil and is_binary(content) and byte_size(content) <= 2_000 ->
+            OmeglePhoenix.Router.send_message(session.partner_id, %{
+              type: "message",
+              from: session_id,
+              data: %{content: content}
+            })
 
-      _ ->
-        {:reply, {:error, %{reason: "No partner"}}, socket}
+            {:noreply, socket}
+
+          {:ok, _session} ->
+            {:reply, {:error, %{reason: "Invalid message content"}}, socket}
+
+          _ ->
+            {:reply, {:error, %{reason: "No partner"}}, socket}
+        end
+      end
     end
   end
 
   def handle_in("typing", %{"data" => data}, socket) do
     session_id = socket.assigns[:session_id]
-    is_typing = Map.get(data, "typing", false)
+    if is_nil(session_id) do
+      {:noreply, socket}
+    else
+      is_typing = Map.get(data, "typing", false)
 
-    case OmeglePhoenix.SessionManager.get_session(session_id) do
-      {:ok, session} when session.partner_id != nil ->
-        OmeglePhoenix.Router.send_message(session.partner_id, %{
-          type: "typing",
-          from: session_id,
-          data: %{typing: is_typing}
-        })
+      case OmeglePhoenix.SessionManager.get_session(session_id) do
+        {:ok, session} when session.partner_id != nil ->
+          OmeglePhoenix.Router.send_message(session.partner_id, %{
+            type: "typing",
+            from: session_id,
+            data: %{typing: is_typing}
+          })
 
-        {:noreply, socket}
+          {:noreply, socket}
 
-      _ ->
-        {:noreply, socket}
+        _ ->
+          {:noreply, socket}
+      end
     end
   end
 
@@ -366,5 +385,24 @@ defmodule OmeglePhoenixWeb.RoomChannel do
     end
 
     :ok
+  end
+
+  defp check_rate_limit(socket) do
+    now = System.system_time(:millisecond)
+    window_start = socket.assigns[:window_start] || now
+    msg_count = socket.assigns[:msg_count] || 0
+
+    if now - window_start > @rate_window_ms do
+      # Reset window
+      {assign(socket, msg_count: 1, window_start: now), true}
+    else
+      new_count = msg_count + 1
+
+      if new_count > @max_messages_per_window do
+        {socket, false}
+      else
+        {assign(socket, :msg_count, new_count), true}
+      end
+    end
   end
 end

@@ -99,7 +99,7 @@ export function ReportDialog({ peerId, messages, reporterSessionId, reporterToke
               <label className="block text-sm font-medium mb-1.5 text-gray-700 dark:text-gray-300">Additional Details</label>
               <textarea
                 value={description}
-                maxLength={2000}
+                maxLength={500}
                 onChange={(e) => setDescription(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-red-500"
                 rows={3}
@@ -107,9 +107,9 @@ export function ReportDialog({ peerId, messages, reporterSessionId, reporterToke
               />
               {description.length > 0 && (
                 <div className={`text-center text-xs mt-1.5 font-medium transition-all duration-200 ${
-                  description.length >= 1800 ? 'text-red-500' : 'text-gray-400 dark:text-gray-500'
+                  description.length >= 400 ? 'text-red-500' : 'text-gray-400 dark:text-gray-500'
                 }`}>
-                  {description.length} / 2000 characters
+                  {description.length} / 500 characters
                 </div>
               )}
             </div>

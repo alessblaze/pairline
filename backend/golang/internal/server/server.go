@@ -348,9 +348,6 @@ func (s *Server) JWTAuthMiddleware() gin.HandlerFunc {
 
 		c.Set("username", admin.Username)
 		c.Set("role", admin.Role)
-		if csrfToken, err := c.Cookie(adminCSRFCookieName); err == nil && csrfToken != "" {
-			c.Header("X-CSRF-Token", csrfToken)
-		}
 		c.Next()
 	}
 }

@@ -15,21 +15,28 @@ func CORS(allowedOrigins string) mux.MiddlewareFunc {
 			// Set CORS headers
 			if allowedOrigins == "*" {
 				w.Header().Set("Access-Control-Allow-Origin", "*")
+				// IMPORTANT: Do NOT set Allow-Credentials with wildcard origin
 			} else if origin != "" {
 				// Check if origin is in the allowed list
+				matched := false
 				allowedList := strings.Split(allowedOrigins, ",")
 				for _, allowed := range allowedList {
 					allowed = strings.TrimSpace(allowed)
 					if origin == allowed {
 						w.Header().Set("Access-Control-Allow-Origin", origin)
+						w.Header().Set("Access-Control-Allow-Credentials", "true")
+						matched = true
 						break
 					}
+				}
+				// If no match, do NOT reflect the origin (prevents open CORS)
+				if !matched {
+					w.Header().Set("Access-Control-Allow-Origin", "")
 				}
 			}
 
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-signature, x-timestamp, x-nonce")
-			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Access-Control-Max-Age", "86400")
 
 			// Handle preflight requests
