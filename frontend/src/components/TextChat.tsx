@@ -214,15 +214,15 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
           {status === 'connected' && (
             <div className="flex flex-col gap-2 sm:gap-3">
               <form onSubmit={handleSend} className="flex gap-2">
-                <input
-                  type="text"
-                  value={input}
-                  onChange={handleInputChange}
-                  placeholder="Type a message..."
-                  maxLength={2000}
-                  className="flex-1 px-3 py-2 sm:px-4 sm:py-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-xl text-sm sm:text-base text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  autoFocus
-                />
+          <input
+            type="text"
+            value={input}
+            onChange={handleInputChange}
+            placeholder="Type a message..."
+            maxLength={2000}
+            className="flex-1 px-3 py-2 sm:px-4 sm:py-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-xl text-base text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            autoFocus
+          />
                 <button
                   type="submit"
                   disabled={!input.trim()}
