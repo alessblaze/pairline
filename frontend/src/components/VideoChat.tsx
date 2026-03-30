@@ -296,7 +296,7 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
         </div>
 
         <div className="flex-1 flex flex-col min-h-0 md:w-[45%] bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-700">
-          <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3" id="messages">
+          <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 flex flex-col" id="messages">
             {messages.map((msg) => (
               <div key={msg.id} className={`flex ${msg.sender === 'system' ? 'justify-center' : msg.sender === 'me' ? 'justify-end' : 'justify-start'}`}>
                 <div className={`max-w-[85%] px-4 py-2 rounded-2xl text-sm ${msg.sender === 'system' ? 'bg-gray-100 dark:bg-gray-800 text-gray-500' : msg.sender === 'me' ? 'bg-indigo-600 text-white' : 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white'}`}>
@@ -305,16 +305,13 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
               </div>
             ))}
             {status === 'idle' && (
-              <div className="h-full flex flex-col items-center justify-center text-center space-y-4 px-4 animate-in fade-in duration-700">
-                <div className="w-16 h-16 sm:w-20 sm:h-20 bg-gradient-to-tr from-indigo-500 to-purple-500 rounded-3xl rotate-12 flex items-center justify-center shadow-xl shadow-indigo-500/20">
-                  <svg className="w-8 h-8 sm:w-10 sm:h-10 text-white -rotate-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z" />
-                  </svg>
-                </div>
-                <div>
-                  <h3 className="text-xl sm:text-2xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent mb-1">Pairline</h3>
-                  <p className="text-gray-500 dark:text-gray-400 text-xs sm:text-sm max-w-[200px] mx-auto">Connect instantly. Text chat will appear here once matched.</p>
-                </div>
+              <div className="flex-1 flex flex-col items-center justify-center text-center px-4 animate-in fade-in duration-500">
+                <h3 className="text-2xl sm:text-3xl font-extrabold tracking-tight bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent mb-3">
+                  Pairline
+                </h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 max-w-[220px] mx-auto leading-relaxed">
+                  Start searching to connect instantly via text and video.
+                </p>
               </div>
             )}
             <div className={`flex justify-start transition-opacity ${peerTyping ? 'opacity-100' : 'opacity-0'}`}>
@@ -349,7 +346,7 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
                       onBlur={addTag}
                       maxLength={30}
                       placeholder={interestTags.length === 0 ? "e.g. coding, music..." : ""}
-                      className="flex-1 min-w-[120px] bg-transparent border-none outline-none text-sm dark:text-white"
+                      className="flex-1 min-w-[120px] bg-transparent border-none outline-none text-[16px] font-medium dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500"
                     />
                   </div>
                   <p className="text-[10px] text-gray-400 dark:text-gray-500 ml-1">

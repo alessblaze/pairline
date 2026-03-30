@@ -143,21 +143,20 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
         </div>
 
         {/* Chat Area */}
-        <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4" id="messages">
+        <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 flex flex-col" id="messages">
           {status === 'idle' && (
-            <div className="h-full flex flex-col items-center justify-center text-center space-y-3 sm:space-y-4">
-              <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center shrink-0">
-                <svg className="w-7 h-7 sm:w-8 sm:h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z" />
-                </svg>
-              </div>
-              <h2 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white">Start a Conversation</h2>
-              <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400 max-w-md px-4">Connect with random strangers around the world in an instant.</p>
+            <div className="flex-1 flex flex-col items-center justify-center text-center px-4 animate-in fade-in duration-500">
+              <h2 className="text-3xl sm:text-4xl font-extrabold tracking-tight bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent mb-3">
+                Pairline
+              </h2>
+              <p className="text-sm sm:text-base text-gray-500 dark:text-gray-400 max-w-xs mx-auto leading-relaxed">
+                Enter your interests below or press Start to chat with someone new.
+              </p>
             </div>
           )}
 
           {status === 'searching' && (
-            <div className="h-full flex flex-col items-center justify-center text-center space-y-4 sm:space-y-6 px-4">
+            <div className="flex-1 flex flex-col items-center justify-center text-center space-y-4 sm:space-y-6 px-4">
               <div className="relative">
                 <div className="w-16 h-16 sm:w-20 sm:h-20 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
                 <div className="absolute inset-0 flex items-center justify-center">
@@ -249,16 +248,16 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
                       </button>
                     </span>
                   ))}
-                  <input
-                    type="text"
-                    value={tagInput}
-                    onChange={(e) => setTagInput(e.target.value)}
-                    onKeyDown={handleTagInputKeyDown}
-                    onBlur={addTag}
-                    maxLength={30}
-                    placeholder={interestTags.length === 0 ? "e.g. coding, music, movies..." : ""}
-                    className="flex-1 min-w-[120px] bg-transparent border-none outline-none text-sm font-medium dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500"
-                  />
+                    <input
+                      type="text"
+                      value={tagInput}
+                      onChange={(e) => setTagInput(e.target.value)}
+                      onKeyDown={handleTagInputKeyDown}
+                      onBlur={addTag}
+                      maxLength={30}
+                      placeholder={interestTags.length === 0 ? "e.g. coding, music, movies..." : ""}
+                      className="flex-1 min-w-[120px] bg-transparent border-none outline-none text-[16px] font-medium dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500"
+                    />
                 </div>
                 <p className="text-[10px] text-gray-400 dark:text-gray-500 ml-1">
                   Press Enter or Comma to add. Max 10 tags.
