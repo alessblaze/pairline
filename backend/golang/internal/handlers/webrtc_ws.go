@@ -107,6 +107,11 @@ func (h *SignalingHub) Unregister(sessionID string) {
 
 func (h *SignalingHub) StartBackgroundGC(redisClient *redis.Client) {
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("CRITICAL: SignalingHub GC panic recovered: %v", r)
+			}
+		}()
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {
@@ -215,6 +220,11 @@ func WebRTCWebSocketHandlerGin(redisClient *redis.Client) gin.HandlerFunc {
 		defer close(done)
 
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("CRITICAL: WebRTC WS ping goroutine panic for session %s: %v", sessionID, r)
+				}
+			}()
 			ticker := time.NewTicker(pingPeriod)
 			defer ticker.Stop()
 

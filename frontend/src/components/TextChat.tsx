@@ -87,7 +87,10 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
   };
 
   const addTag = () => {
-    const trimmed = tagInput.trim().replace(/[,,;]/g, '');
+    let trimmed = tagInput.trim().replace(/[,,;]/g, '');
+    if (trimmed.length > 30) {
+      trimmed = trimmed.substring(0, 30);
+    }
     if (trimmed && !interestTags.includes(trimmed) && interestTags.length < 10) {
       setInterestTags([...interestTags, trimmed]);
       setTagInput('');
@@ -252,6 +255,7 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
                     onChange={(e) => setTagInput(e.target.value)}
                     onKeyDown={handleTagInputKeyDown}
                     onBlur={addTag}
+                    maxLength={30}
                     placeholder={interestTags.length === 0 ? "e.g. coding, music, movies..." : ""}
                     className="flex-1 min-w-[120px] bg-transparent border-none outline-none text-sm font-medium dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500"
                   />

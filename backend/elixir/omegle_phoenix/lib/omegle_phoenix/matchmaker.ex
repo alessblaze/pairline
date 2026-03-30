@@ -220,11 +220,15 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   defp parse_interests(str) do
-    str
+    # Defense-in-depth: enforce limits on malicious large payloads bypassing the frontend
+    truncated_str = String.slice(str, 0, 500)
+
+    truncated_str
     |> String.downcase()
     |> String.split([",", ";"], trim: true)
     |> Enum.map(&String.trim/1)
     |> Enum.reject(&(&1 == ""))
+    |> Enum.take(10) # Maximum 10 interests allowed
     |> MapSet.new()
   end
 

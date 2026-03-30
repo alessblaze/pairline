@@ -152,7 +152,10 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
   };
 
   const addTag = () => {
-    const trimmed = tagInput.trim().replace(/[,,;]/g, '');
+    let trimmed = tagInput.trim().replace(/[,,;]/g, '');
+    if (trimmed.length > 30) {
+      trimmed = trimmed.substring(0, 30);
+    }
     if (trimmed && !interestTags.includes(trimmed) && interestTags.length < 10) {
       setInterestTags([...interestTags, trimmed]);
       setTagInput('');
@@ -344,10 +347,14 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
                       onChange={(e) => setTagInput(e.target.value)}
                       onKeyDown={handleTagInputKeyDown}
                       onBlur={addTag}
+                      maxLength={30}
                       placeholder={interestTags.length === 0 ? "e.g. coding, music..." : ""}
                       className="flex-1 min-w-[120px] bg-transparent border-none outline-none text-sm dark:text-white"
                     />
                   </div>
+                  <p className="text-[10px] text-gray-400 dark:text-gray-500 ml-1">
+                    Press Enter or Comma to add. Max 10 tags.
+                  </p>
                 </div>
 
                 <div className="flex flex-col gap-2">
