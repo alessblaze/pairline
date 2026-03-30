@@ -53,7 +53,7 @@ doc/
 *.out
 
 # Dependency directories
-vendor/
+backend/**/vendor/
 
 # Go workspace file
 go.work
