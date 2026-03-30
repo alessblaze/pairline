@@ -63,9 +63,9 @@ export function useVideoChat(wsUrl: string) {
   const defaultStunServers = import.meta.env.VITE_STUN_SERVERS
     ? import.meta.env.VITE_STUN_SERVERS.split(',').map((url: string) => ({ urls: url.trim() }))
     : [
-        { urls: 'stun:stun.cloudflare.com:3478' },
-        { urls: 'stun:stun.l.google.com:19302' }
-      ];
+      { urls: 'stun:stun.cloudflare.com:3478' },
+      { urls: 'stun:stun.l.google.com:19302' }
+    ];
 
   const turnServersRef = useRef<RTCIceServer[]>(defaultStunServers);
   const turnFetchedRef = useRef(false);
@@ -106,29 +106,29 @@ export function useVideoChat(wsUrl: string) {
       logWebRTC('Selected candidate pair', {
         pair: selectedPair
           ? {
-              state: selectedPair.state,
-              nominated: selectedPair.nominated,
-              currentRoundTripTime: selectedPair.currentRoundTripTime,
-              availableOutgoingBitrate: selectedPair.availableOutgoingBitrate
-            }
+            state: selectedPair.state,
+            nominated: selectedPair.nominated,
+            currentRoundTripTime: selectedPair.currentRoundTripTime,
+            availableOutgoingBitrate: selectedPair.availableOutgoingBitrate
+          }
           : null,
         local: localCandidate
           ? {
-              candidateType: localCandidate.candidateType,
-              protocol: localCandidate.protocol,
-              address: localCandidate.address,
-              port: localCandidate.port,
-              url: localCandidate.url
-            }
+            candidateType: localCandidate.candidateType,
+            protocol: localCandidate.protocol,
+            address: localCandidate.address,
+            port: localCandidate.port,
+            url: localCandidate.url
+          }
           : null,
         remote: remoteCandidate
           ? {
-              candidateType: remoteCandidate.candidateType,
-              protocol: remoteCandidate.protocol,
-              address: remoteCandidate.address,
-              port: remoteCandidate.port,
-              url: remoteCandidate.url
-            }
+            candidateType: remoteCandidate.candidateType,
+            protocol: remoteCandidate.protocol,
+            address: remoteCandidate.address,
+            port: remoteCandidate.port,
+            url: remoteCandidate.url
+          }
           : null
       });
     } catch (error) {
@@ -231,7 +231,7 @@ export function useVideoChat(wsUrl: string) {
       return stream;
     } catch (error: any) {
       if (error.name === 'NotAllowedError' || error.name === 'SecurityError') {
-        setCameraError("Camera access is blocked. Please click the lock icon in your URL bar to unblock it, then refresh.");
+        setCameraError("Camera access is blocked. Please click the lock icon in your URL bar to unblock it, if in mobile, check app settings, then refresh.");
         console.warn("User or Browser explicitly denied camera permissions.");
         return null;
       }
@@ -520,28 +520,28 @@ export function useVideoChat(wsUrl: string) {
     }
     turnFetchPromiseRef.current = (async () => {
       try {
-      const goApiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8082';
-      const activeSessionId = sessionIdRef.current;
-      const activeSessionToken = sessionTokenRef.current;
-      if (!activeSessionId || !activeSessionToken) {
-        logWebRTC('Skipping TURN fetch because session auth is missing');
+        const goApiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8082';
+        const activeSessionId = sessionIdRef.current;
+        const activeSessionToken = sessionTokenRef.current;
+        if (!activeSessionId || !activeSessionToken) {
+          logWebRTC('Skipping TURN fetch because session auth is missing');
+          return null;
+        }
+
+        const turnUrl = new URL(`${goApiUrl}/api/v1/webrtc/turn`);
+        turnUrl.searchParams.set('session_id', activeSessionId);
+        turnUrl.searchParams.set('session_token', activeSessionToken);
+
+        const res = await fetch(turnUrl.toString());
+        const data = await res.json();
+
+        if (data.iceServers && Array.isArray(data.iceServers)) {
+          logWebRTC('Fetched TURN/STUN servers', {
+            urls: data.iceServers.flatMap((server: RTCIceServer) => Array.isArray(server.urls) ? server.urls : [server.urls])
+          });
+          return data.iceServers as RTCIceServer[];
+        }
         return null;
-      }
-
-      const turnUrl = new URL(`${goApiUrl}/api/v1/webrtc/turn`);
-      turnUrl.searchParams.set('session_id', activeSessionId);
-      turnUrl.searchParams.set('session_token', activeSessionToken);
-
-      const res = await fetch(turnUrl.toString());
-      const data = await res.json();
-
-      if (data.iceServers && Array.isArray(data.iceServers)) {
-        logWebRTC('Fetched TURN/STUN servers', {
-          urls: data.iceServers.flatMap((server: RTCIceServer) => Array.isArray(server.urls) ? server.urls : [server.urls])
-        });
-        return data.iceServers as RTCIceServer[];
-      }
-      return null;
       } catch (err) {
         console.error('Failed to fetch TURN credentials:', err);
         return null;
@@ -604,7 +604,7 @@ export function useVideoChat(wsUrl: string) {
         if (message.session_id && message.session_id !== sessionIdRef.current) {
           setSessionId(message.session_id);
           sessionIdRef.current = message.session_id;
-          
+
           if (message.session_token) {
             setSessionToken(message.session_token);
             sessionTokenRef.current = message.session_token;
@@ -685,7 +685,7 @@ export function useVideoChat(wsUrl: string) {
             }
           };
           webrtcWsRef.current = ws;
-          
+
           // Proactively fetch TURN credentials as soon as we have a session to avoid delay during match
           if (turnEnabled && !turnFetchedRef.current) {
             void fetchTurnServers().then(iceServers => {
@@ -982,11 +982,11 @@ export function useVideoChat(wsUrl: string) {
       setReportPeerId(null);
       setStatus('searching');
 
-      wsClient.send('start', { 
-        preferences: { 
+      wsClient.send('start', {
+        preferences: {
           mode: 'video',
           interests: interests.trim()
-        } 
+        }
       });
     } catch (error) {
       console.error('Failed to start search:', error);
@@ -1014,7 +1014,7 @@ export function useVideoChat(wsUrl: string) {
       setReportPeerId(null);
       setMessages([]);
       setStatus('searching');
-      
+
       // Clean up WebRTC state for the next connection
       if (peerConnectionRef.current) {
         peerConnectionRef.current.close();
