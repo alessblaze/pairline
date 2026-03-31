@@ -38,6 +38,12 @@ func HealthHandlerGin(c *gin.Context) {
 }
 
 func LoginHandlerGin(c *gin.Context) {
+	// Per-endpoint request size limit: prevent DoS through large payloads
+	if c.Request.ContentLength > 4096 {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "Request too large"})
+		return
+	}
+
 	var req struct {
 		Username string `json:"username" binding:"required,max=100"`
 		Password string `json:"password" binding:"required,max=255"`
@@ -186,6 +192,12 @@ func UpdateReportHandlerGin(c *gin.Context) {
 }
 
 func CreateReportHandlerGin(c *gin.Context) {
+	// Per-endpoint request size limit: reports with chat logs can be larger but still bounded
+	if c.Request.ContentLength > 262144 { // 256 KB
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "Request too large"})
+		return
+	}
+
 	var req struct {
 		ReporterSessionID string          `json:"reporter_session_id" binding:"required,uuid"`
 		ReporterToken     string          `json:"reporter_token" binding:"required,max=128"`
@@ -212,7 +224,6 @@ func CreateReportHandlerGin(c *gin.Context) {
 	redisClient := redis.NewClient()
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
-
 
 	if !verifySessionToken(ctx, redisClient, req.ReporterSessionID, req.ReporterToken) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid session token"})
@@ -263,6 +274,12 @@ func CreateReportHandlerGin(c *gin.Context) {
 }
 
 func CreateBanHandlerGin(c *gin.Context) {
+	// Per-endpoint request size limit: prevent DoS through large payloads
+	if c.Request.ContentLength > 4096 {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "Request too large"})
+		return
+	}
+
 	var req struct {
 		SessionID  string `json:"session_id" binding:"omitempty,uuid"`
 		IP         string `json:"ip" binding:"omitempty,max=45"`
@@ -297,7 +314,6 @@ func CreateBanHandlerGin(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
-
 
 	var ipAddress string
 	var sessionID string
@@ -574,6 +590,12 @@ func DeleteBanHandlerGin(c *gin.Context) {
 }
 
 func CreateAdminHandlerGin(c *gin.Context) {
+	// Per-endpoint request size limit: prevent DoS through large payloads
+	if c.Request.ContentLength > 4096 {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "Request too large"})
+		return
+	}
+
 	var req struct {
 		Username string `json:"username" binding:"required,max=50"`
 		Password string `json:"password" binding:"required,min=8,max=128"`
@@ -901,7 +923,7 @@ func isTrustedProxyIP(raw string) bool {
 }
 
 var (
-	trustedPrefixesOnce sync.Once
+	trustedPrefixesOnce   sync.Once
 	cachedTrustedPrefixes []netip.Prefix
 )
 

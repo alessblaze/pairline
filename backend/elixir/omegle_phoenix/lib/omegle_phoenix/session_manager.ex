@@ -8,8 +8,6 @@ defmodule OmeglePhoenix.SessionManager do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  # ── Public API (reads bypass GenServer via ETS) ──
-
   def get_session(session_id) do
     case :ets.lookup(@table, session_id) do
       [{^session_id, session}] -> {:ok, session}
@@ -40,8 +38,6 @@ defmodule OmeglePhoenix.SessionManager do
 
     {:ok, sessions}
   end
-
-  # ── Writes still go through GenServer for Redis sync ──
 
   def create_session(session_id, ip, preferences) do
     GenServer.call(__MODULE__, {:create_session, session_id, ip, preferences})
@@ -83,11 +79,9 @@ defmodule OmeglePhoenix.SessionManager do
     end
   end
 
-  # ── GenServer callbacks ──
-
   @impl true
   def init(_opts) do
-    table = :ets.new(@table, [:named_table, :public, :set, read_concurrency: true])
+    table = :ets.new(@table, [:named_table, :protected, :set, read_concurrency: true])
     {:ok, %{table: table}}
   end
 
@@ -95,6 +89,7 @@ defmodule OmeglePhoenix.SessionManager do
   def handle_call({:create_session, session_id, ip, preferences}, _from, state) do
     now = System.system_time(:second)
     session_token = generate_session_token()
+    preferences = normalize_preferences(preferences)
 
     session = %{
       id: session_id,
@@ -125,6 +120,22 @@ defmodule OmeglePhoenix.SessionManager do
   def handle_call({:update_session, session_id, updates}, _from, state) do
     case :ets.lookup(@table, session_id) do
       [{^session_id, session}] ->
+        updates =
+          if is_map(updates) do
+            case Map.fetch(updates, :preferences) do
+              {:ok, prefs} -> Map.put(updates, :preferences, normalize_preferences(prefs))
+              :error -> updates
+            end
+            |> then(fn updates2 ->
+              case Map.fetch(updates2, "preferences") do
+                {:ok, prefs} -> Map.put(updates2, "preferences", normalize_preferences(prefs))
+                :error -> updates2
+              end
+            end)
+          else
+            %{}
+          end
+
         updated_session = Map.merge(session, updates)
         :ets.insert(@table, {session_id, updated_session})
         {:reply, {:ok, updated_session}, state}
@@ -303,6 +314,22 @@ defmodule OmeglePhoenix.SessionManager do
   def terminate(_reason, _state) do
     :ok
   end
+
+  defp normalize_preferences(preferences) when is_map(preferences) do
+    %{
+      "mode" => safe_string(Map.get(preferences, "mode", "text"), "text"),
+      "interests" => safe_string(Map.get(preferences, "interests", ""), "")
+    }
+  end
+
+  defp normalize_preferences(_), do: %{"mode" => "text", "interests" => ""}
+
+  defp safe_string(nil, default), do: default
+  defp safe_string(value, _default) when is_binary(value), do: value
+  defp safe_string(value, _default) when is_atom(value), do: Atom.to_string(value)
+  defp safe_string(value, _default) when is_integer(value), do: Integer.to_string(value)
+  defp safe_string(value, _default) when is_float(value), do: :erlang.float_to_binary(value, [:compact])
+  defp safe_string(_value, default), do: default
 
   defp generate_session_token do
     :crypto.strong_rand_bytes(32)

@@ -129,10 +129,16 @@ defmodule OmeglePhoenix.Matchmaker do
         :ok
     end
 
-    # Fetch all waiting sessions sorted by join time (oldest first).
-    # We walk the list to find compatible pairs instead of blindly popping 2,
-    # which avoids the busy-loop where incompatible users keep getting re-added.
-    case OmeglePhoenix.Redis.command(["ZRANGEBYSCORE", @queue_key, "0", "+inf", "WITHSCORES", "LIMIT", "0", "100"]) do
+    case OmeglePhoenix.Redis.command([
+           "ZRANGEBYSCORE",
+           @queue_key,
+           "0",
+           "+inf",
+           "WITHSCORES",
+           "LIMIT",
+           "0",
+           "100"
+         ]) do
       {:ok, []} ->
         :ok
 
@@ -142,7 +148,6 @@ defmodule OmeglePhoenix.Matchmaker do
       {:ok, session_ids_with_scores} when is_list(session_ids_with_scores) ->
         now_ms = System.system_time(:millisecond)
 
-        # Load preferences for all queued sessions
         sessions_with_prefs =
           session_ids_with_scores
           |> Enum.chunk_every(2)
@@ -181,7 +186,6 @@ defmodule OmeglePhoenix.Matchmaker do
     if MapSet.member?(matched, sid1) do
       match_from_pool(rest, matched)
     else
-      # Find the first compatible partner in the remaining pool
       case find_compatible_partner(sid1, session1, wait1, rest, matched) do
         {sid2, _session2, remaining} ->
           pair_users(sid1, sid2)
@@ -199,7 +203,6 @@ defmodule OmeglePhoenix.Matchmaker do
     if MapSet.member?(matched, sid2) do
       find_compatible_partner(sid1, session1, wait1, rest, matched)
     else
-      # Check if they just recently skipped each other
       if session1.last_partner_id == sid2 or session2.last_partner_id == sid1 do
         find_compatible_partner(sid1, session1, wait1, rest, matched)
       else
@@ -213,12 +216,13 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   defp pair_users(session_id1, session_id2) do
-    # Remove both users from the queue FIRST to prevent double-matching
     OmeglePhoenix.Redis.command(["ZREM", @queue_key, session_id1])
     OmeglePhoenix.Redis.command(["ZREM", @queue_key, session_id2])
 
     with {:ok, session1} <- OmeglePhoenix.SessionManager.get_session(session_id1),
-         {:ok, session2} <- OmeglePhoenix.SessionManager.get_session(session_id2) do
+         {:ok, session2} <- OmeglePhoenix.SessionManager.get_session(session_id2),
+         true <- session1.status == :waiting,
+         true <- session2.status == :waiting do
       if session1.ban_status or session2.ban_status do
         {:error, :user_banned}
       else
@@ -248,14 +252,26 @@ defmodule OmeglePhoenix.Matchmaker do
       end
     else
       {:error, :not_found} ->
-        Logger.warning("Matchmaker: session disappeared during pairing (#{session_id1} or #{session_id2})")
+        Logger.warning(
+          "Matchmaker: session disappeared during pairing (#{session_id1} or #{session_id2})"
+        )
+
+        :ok
+
+      false ->
+        :ok
+
+      _ ->
         :ok
     end
   end
 
   defp compatible?(preferences1, wait1, preferences2, wait2) do
-    mode1 = Map.get(preferences1, "mode")
-    mode2 = Map.get(preferences2, "mode")
+    preferences1 = normalize_preferences(preferences1)
+    preferences2 = normalize_preferences(preferences2)
+
+    mode1 = Map.get(preferences1, "mode", "text")
+    mode2 = Map.get(preferences2, "mode", "text")
 
     if mode1 != mode2 do
       false
@@ -263,48 +279,52 @@ defmodule OmeglePhoenix.Matchmaker do
       interests1 = Map.get(preferences1, "interests", "") |> String.trim()
       interests2 = Map.get(preferences2, "interests", "") |> String.trim()
 
-      if interests1 == "" and interests2 == "" do
-        true
-      else
-        if interests1 != "" and interests2 != "" do
+      cond do
+        interests1 == "" and interests2 == "" ->
+          true
+
+        interests1 != "" and interests2 != "" ->
           tags1 = parse_interests(interests1)
           tags2 = parse_interests(interests2)
 
           if not MapSet.disjoint?(tags1, tags2) do
-            true # Perfect match
+            true
           else
-            can_fallback_to_random?(interests1, wait1) and can_fallback_to_random?(interests2, wait2)
+            can_fallback_to_random?(interests1, wait1) and
+              can_fallback_to_random?(interests2, wait2)
           end
-        else
-          # Asymmetric interests (one has, one doesn't) -> incompatible, unless BOTH fallback
-          can_fallback_to_random?(interests1, wait1) and can_fallback_to_random?(interests2, wait2)
-        end
+
+        true ->
+          can_fallback_to_random?(interests1, wait1) and
+            can_fallback_to_random?(interests2, wait2)
       end
     end
   end
 
   defp can_fallback_to_random?(interests, wait_time_ms) do
     if interests == "" do
-      true # No interests = always willing to fallback
+      true
     else
-      wait_time_ms >= 10_000 # Wait 10 seconds before dropping constraints
+      wait_time_ms >= 10_000
     end
   end
 
   defp parse_interests(str) do
-    # Defense-in-depth: enforce limits on malicious large payloads bypassing the frontend
-    truncated_str = String.slice(str, 0, 500)
-
-    truncated_str
+    str
+    |> safe_string("")
+    |> String.slice(0, 500)
     |> String.downcase()
     |> String.split([",", ";"], trim: true)
     |> Enum.map(&String.trim/1)
     |> Enum.reject(&(&1 == ""))
-    |> Enum.take(10) # Maximum 10 interests allowed
+    |> Enum.take(10)
     |> MapSet.new()
   end
 
   defp get_common_interests(p1, p2) do
+    p1 = normalize_preferences(p1)
+    p2 = normalize_preferences(p2)
+
     i1 = Map.get(p1, "interests", "") |> String.trim()
     i2 = Map.get(p2, "interests", "") |> String.trim()
 
@@ -316,6 +336,22 @@ defmodule OmeglePhoenix.Matchmaker do
       []
     end
   end
+
+  defp normalize_preferences(preferences) when is_map(preferences) do
+    %{
+      "mode" => safe_string(Map.get(preferences, "mode", "text"), "text"),
+      "interests" => safe_string(Map.get(preferences, "interests", ""), "")
+    }
+  end
+
+  defp normalize_preferences(_), do: %{"mode" => "text", "interests" => ""}
+
+  defp safe_string(nil, default), do: default
+  defp safe_string(value, _default) when is_binary(value), do: value
+  defp safe_string(value, _default) when is_atom(value), do: Atom.to_string(value)
+  defp safe_string(value, _default) when is_integer(value), do: Integer.to_string(value)
+  defp safe_string(value, _default) when is_float(value), do: :erlang.float_to_binary(value, [:compact])
+  defp safe_string(_value, default), do: default
 
   defp notify_match(session_id, partner_session_id, common_interests) do
     case OmeglePhoenix.Router.find_process(session_id) do
