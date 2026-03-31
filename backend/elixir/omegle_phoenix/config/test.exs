@@ -5,4 +5,4 @@ config :omegle_phoenix, OmeglePhoenixWeb.Endpoint,
   secret_key_base: "secret_key_base_test",
   server: false
 
-config :logger, level: :warn
+config :logger, level: :warning
