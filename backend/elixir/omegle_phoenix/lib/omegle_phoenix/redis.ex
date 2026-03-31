@@ -44,7 +44,10 @@ defmodule OmeglePhoenix.Redis do
           %{admin_channel => %{connection: sub_conn, channel: admin_channel}}
 
         {:error, reason} ->
-          Logger.error("Failed to subscribe to admin channel #{admin_channel}: #{inspect(reason)}")
+          Logger.error(
+            "Failed to subscribe to admin channel #{admin_channel}: #{inspect(reason)}"
+          )
+
           %{}
       end
 
@@ -309,7 +312,9 @@ defmodule OmeglePhoenix.Redis do
   end
 
   defp handle_admin_action("server_shutdown", _data) do
-    Logger.warning("Server shutdown action received via Redis but rejected — not supported via pub/sub")
+    Logger.warning(
+      "Server shutdown action received via Redis but rejected — not supported via pub/sub"
+    )
   end
 
   defp handle_admin_action(action, data) do
@@ -317,8 +322,12 @@ defmodule OmeglePhoenix.Redis do
   end
 
   defp uuid?(str) when is_binary(str) do
-    Regex.match?(~r/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/, str)
+    Regex.match?(
+      ~r/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/,
+      str
+    )
   end
+
   defp uuid?(_), do: false
 
   defp valid_ip?(str) when is_binary(str) do
@@ -327,5 +336,6 @@ defmodule OmeglePhoenix.Redis do
       _ -> false
     end
   end
+
   defp valid_ip?(_), do: false
 end

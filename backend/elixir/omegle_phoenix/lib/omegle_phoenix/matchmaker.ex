@@ -350,7 +350,10 @@ defmodule OmeglePhoenix.Matchmaker do
   defp safe_string(value, _default) when is_binary(value), do: value
   defp safe_string(value, _default) when is_atom(value), do: Atom.to_string(value)
   defp safe_string(value, _default) when is_integer(value), do: Integer.to_string(value)
-  defp safe_string(value, _default) when is_float(value), do: :erlang.float_to_binary(value, [:compact])
+
+  defp safe_string(value, _default) when is_float(value),
+    do: :erlang.float_to_binary(value, [:compact])
+
   defp safe_string(_value, default), do: default
 
   defp notify_match(session_id, partner_session_id, common_interests) do

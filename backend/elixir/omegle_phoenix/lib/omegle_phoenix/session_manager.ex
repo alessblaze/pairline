@@ -328,7 +328,10 @@ defmodule OmeglePhoenix.SessionManager do
   defp safe_string(value, _default) when is_binary(value), do: value
   defp safe_string(value, _default) when is_atom(value), do: Atom.to_string(value)
   defp safe_string(value, _default) when is_integer(value), do: Integer.to_string(value)
-  defp safe_string(value, _default) when is_float(value), do: :erlang.float_to_binary(value, [:compact])
+
+  defp safe_string(value, _default) when is_float(value),
+    do: :erlang.float_to_binary(value, [:compact])
+
   defp safe_string(_value, default), do: default
 
   defp generate_session_token do

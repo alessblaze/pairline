@@ -4,7 +4,7 @@ defmodule OmeglePhoenixWeb.Endpoint do
   socket("/ws", OmeglePhoenixWeb.Socket,
     websocket: [
       connect_info: [:peer_data, :x_headers],
-      max_frame_size: 65_536,
+      max_frame_size: 65_536
     ],
     longpolling: false
   )

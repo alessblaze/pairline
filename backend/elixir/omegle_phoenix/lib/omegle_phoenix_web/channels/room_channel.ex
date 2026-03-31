@@ -6,8 +6,8 @@ defmodule OmeglePhoenixWeb.RoomChannel do
 
   @impl true
   def join("room:" <> mode, _payload, socket) when mode in ["lobby", "text", "video"] do
-    {:ok, assign(socket, mode: mode, msg_count: 0, window_start: System.system_time(:millisecond))
-    }
+    {:ok,
+     assign(socket, mode: mode, msg_count: 0, window_start: System.system_time(:millisecond))}
   end
 
   @impl true
@@ -128,6 +128,7 @@ defmodule OmeglePhoenixWeb.RoomChannel do
 
   def handle_in("typing", %{"data" => data}, socket) do
     session_id = socket.assigns[:session_id]
+
     if is_nil(session_id) do
       {:noreply, socket}
     else
@@ -276,6 +277,7 @@ defmodule OmeglePhoenixWeb.RoomChannel do
 
   defp build_preferences(socket, preferences) do
     safe_prefs = validate_preferences(preferences)
+
     mode =
       case socket.assigns[:mode] do
         "text" -> "text"
@@ -296,7 +298,12 @@ defmodule OmeglePhoenixWeb.RoomChannel do
 
       if key in @allowed_preference_keys do
         limit = if key == "interests", do: 255, else: 50
-        val = if is_binary(v), do: String.slice(v, 0, limit), else: to_string(v) |> String.slice(0, limit)
+
+        val =
+          if is_binary(v),
+            do: String.slice(v, 0, limit),
+            else: to_string(v) |> String.slice(0, limit)
+
         Map.put(acc, key, val)
       else
         acc

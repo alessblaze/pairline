@@ -78,10 +78,14 @@ defmodule OmeglePhoenix.Router do
 
   @impl true
   def handle_call({:register, session_id, pid}, _from, state) do
-    :ets.insert(@table, {session_id, %{
-      pid: pid,
-      timestamp: System.system_time(:second)
-    }})
+    :ets.insert(
+      @table,
+      {session_id,
+       %{
+         pid: pid,
+         timestamp: System.system_time(:second)
+       }}
+    )
 
     ref = Process.monitor(pid)
     new_monitors = Map.put(state.monitors, ref, session_id)
