@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DOMPurify from 'dompurify';
 import type { CreateBanRequest, Report } from '../types';
@@ -119,6 +119,8 @@ export function AdminPanel() {
   const [reportLimit, setReportLimit] = useState<string>('10');
   const [serverReportMetrics, setServerReportMetrics] = useState({ pending: 0, approved: 0, rejected: 0 });
   const [banFilter, setBanFilter] = useState<'all' | 'active' | 'inactive'>('active');
+  const [banLimit, setBanLimit] = useState<string>('10');
+  const [serverBanMetrics, setServerBanMetrics] = useState({ active: 0, inactive: 0, total: 0 });
   const [manualBanSessionId, setManualBanSessionId] = useState('');
   const [manualBanIP, setManualBanIP] = useState('');
   const [manualBanReason, setManualBanReason] = useState('');
@@ -138,7 +140,7 @@ export function AdminPanel() {
     if (token) {
       fetchBans();
     }
-  }, [token]);
+  }, [token, banFilter, banLimit]);
 
   useEffect(() => {
     if (token) {
@@ -152,20 +154,6 @@ export function AdminPanel() {
       localStorage.setItem('admin_csrf', csrfToken);
     }
   };
-
-  const filteredBans = useMemo(() => {
-    return bans.filter((ban) => {
-      if (banFilter === 'active') return ban.is_active;
-      if (banFilter === 'inactive') return !ban.is_active;
-      return true;
-    });
-  }, [banFilter, bans]);
-
-  const banMetrics = useMemo(() => {
-    const active = bans.filter((ban) => ban.is_active).length;
-    const inactive = bans.length - active;
-    return { active, inactive, total: bans.length };
-  }, [bans]);
 
   const login = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -373,7 +361,7 @@ export function AdminPanel() {
 
   const fetchBans = async () => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/bans`, {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/bans?status=${banFilter}&limit=${banLimit}`, {
         credentials: 'include',
       });
 
@@ -381,6 +369,13 @@ export function AdminPanel() {
 
       if (response.ok) {
         const data = await response.json();
+        if (data.metrics) {
+          setServerBanMetrics({
+            active: data.metrics.active || 0,
+            inactive: data.metrics.inactive || 0,
+            total: data.metrics.total || 0,
+          });
+        }
         setBans(data.bans || []);
       }
     } catch (error) {
@@ -539,12 +534,12 @@ export function AdminPanel() {
           </div>
           <div className={metricCardClass}>
             <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Active Bans</p>
-            <p className="mt-3 text-3xl font-semibold text-white">{banMetrics.active}</p>
+            <p className="mt-3 text-3xl font-semibold text-white">{serverBanMetrics.active}</p>
             <p className="mt-2 text-sm text-slate-400">Currently enforced session or IP blocks.</p>
           </div>
           <div className={metricCardClass}>
             <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Ban History</p>
-            <p className="mt-3 text-3xl font-semibold text-white">{banMetrics.total}</p>
+            <p className="mt-3 text-3xl font-semibold text-white">{serverBanMetrics.total}</p>
             <p className="mt-2 text-sm text-slate-400">Includes active and inactive records.</p>
           </div>
         </section>
@@ -628,6 +623,19 @@ export function AdminPanel() {
                         All
                       </button>
                     </div>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <label className="text-xs uppercase tracking-[0.2em] text-slate-400">Show Limit</label>
+                    <select
+                      value={banLimit}
+                      onChange={(e) => setBanLimit(e.target.value)}
+                      className={`${inputClass} appearance-none bg-white/5 [&>option]:bg-slate-900 w-full lg:w-48`}
+                    >
+                      <option value="10">10 entries</option>
+                      <option value="20">20 entries</option>
+                      <option value="50">50 entries</option>
+                      <option value="all">All entries (Max)</option>
+                    </select>
                   </div>
                   <div className="flex flex-wrap gap-2 lg:ml-auto">
                     <button
@@ -880,13 +888,13 @@ export function AdminPanel() {
                 </div>
 
                 <div className="space-y-4 p-4 sm:p-6">
-                  {filteredBans.length === 0 && (
+                  {bans.length === 0 && (
                     <div className="rounded-[28px] border border-dashed border-white/10 bg-white/4 px-6 py-16 text-center text-slate-400">
                       No bans found
                     </div>
                   )}
 
-                  {filteredBans.map((ban) => (
+                  {bans.map((ban) => (
                     <article
                       key={ban.id}
                       className="rounded-[28px] border border-white/10 bg-white/5 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.2)]"

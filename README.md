@@ -22,7 +22,7 @@ Anonymous text and video chat app with moderation tooling. Built for massive sca
 │   └── golang/
 ├── docker-compose.yml
 ├── SETUP.md
-└── Vulnerabilities.md
+└── Vulnerabilities.md(Internal only.)
 ```
 
 ## Getting started
@@ -56,5 +56,6 @@ Pairline leverages Elixir's battle-tested concurrency model and Go's lightweight
 ## Known Bugs
 - Using Turn sometimes skips first entry while starting video streams.
 - Could have additional bugs and issues as it is beta. Use at your own risk. Audit code by yourself.
+- IPv6 banning isn't tested.
 
 Keywords: omegle clone github, random video chat app, omegle alternative, open source video chat, webrtc video chat, omegle like, omegle clone, random video chat, omegle alternative, open source omegle, video chat app, random chat application, webrtc video chat, react video chat, omegle like app github, video chat github, omegle clone github, random video chat open source
