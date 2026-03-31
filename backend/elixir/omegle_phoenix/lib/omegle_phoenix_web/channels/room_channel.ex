@@ -275,7 +275,7 @@ defmodule OmeglePhoenixWeb.RoomChannel do
   end
 
   defp build_preferences(socket, preferences) do
-    safe_prefs = sanitize_preferences(preferences)
+    safe_prefs = validate_preferences(preferences)
     mode =
       case socket.assigns[:mode] do
         "text" -> "text"
@@ -286,20 +286,25 @@ defmodule OmeglePhoenixWeb.RoomChannel do
     Map.put(safe_prefs, "mode", mode)
   end
 
-  defp sanitize_preferences(prefs) when is_map(prefs) do
-    prefs
-    |> Enum.take(5)
-    |> Map.new(fn {k, v} ->
-      key = if is_binary(k), do: String.slice(k, 0, 50), else: to_string(k) |> String.slice(0, 50)
-      
-      limit = if key == "interests", do: 255, else: 50
-      val = if is_binary(v), do: String.slice(v, 0, limit), else: to_string(v) |> String.slice(0, limit)
-      
-      {key, val}
+  # Strict allowlist: only known keys are preserved, all others are silently dropped.
+  # This prevents DoS via memory exhaustion from arbitrary key/value pairs.
+  @allowed_preference_keys ["mode", "interests", "max_wait", "tags"]
+
+  defp validate_preferences(prefs) when is_map(prefs) do
+    Enum.reduce(prefs, %{}, fn {k, v}, acc ->
+      key = if is_binary(k), do: k, else: to_string(k)
+
+      if key in @allowed_preference_keys do
+        limit = if key == "interests", do: 255, else: 50
+        val = if is_binary(v), do: String.slice(v, 0, limit), else: to_string(v) |> String.slice(0, limit)
+        Map.put(acc, key, val)
+      else
+        acc
+      end
     end)
   end
 
-  defp sanitize_preferences(_), do: %{}
+  defp validate_preferences(_), do: %{}
 
   defp teardown_existing_session(socket) do
     if session_id = socket.assigns[:session_id] do
