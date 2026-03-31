@@ -115,6 +115,9 @@ export function AdminPanel() {
   const [expandedReport, setExpandedReport] = useState<string | null>(null);
   const [bans, setBans] = useState<Ban[]>([]);
   const [currentTab, setCurrentTab] = useState<'reports' | 'bans'>('reports');
+  const [reportStatusFilter, setReportStatusFilter] = useState<'pending' | 'decided' | 'all'>('pending');
+  const [reportLimit, setReportLimit] = useState<string>('10');
+  const [serverReportMetrics, setServerReportMetrics] = useState({ pending: 0, approved: 0, rejected: 0 });
   const [banFilter, setBanFilter] = useState<'all' | 'active' | 'inactive'>('active');
   const [manualBanSessionId, setManualBanSessionId] = useState('');
   const [manualBanIP, setManualBanIP] = useState('');
@@ -133,10 +136,15 @@ export function AdminPanel() {
 
   useEffect(() => {
     if (token) {
-      fetchReports();
       fetchBans();
     }
   }, [token]);
+
+  useEffect(() => {
+    if (token) {
+      fetchReports();
+    }
+  }, [token, reportStatusFilter, reportLimit]);
 
   const storeCSRFFromResponse = async (response: Response) => {
     const csrfToken = response.headers.get('X-CSRF-Token');
@@ -152,13 +160,6 @@ export function AdminPanel() {
       return true;
     });
   }, [banFilter, bans]);
-
-  const reportMetrics = useMemo(() => {
-    const pending = reports.filter((report) => report.status === 'pending').length;
-    const approved = reports.filter((report) => report.status === 'approved').length;
-    const rejected = reports.filter((report) => report.status === 'rejected').length;
-    return { pending, approved, rejected };
-  }, [reports]);
 
   const banMetrics = useMemo(() => {
     const active = bans.filter((ban) => ban.is_active).length;
@@ -203,7 +204,7 @@ export function AdminPanel() {
 
   const fetchReports = async () => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/reports`, {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/reports?status=${reportStatusFilter}&limit=${reportLimit}`, {
         credentials: 'include',
       });
 
@@ -211,6 +212,13 @@ export function AdminPanel() {
 
       if (response.ok) {
         const data = await response.json();
+        if (data.metrics) {
+          setServerReportMetrics({
+            pending: data.metrics.pending || 0,
+            approved: data.metrics.approved || 0,
+            rejected: data.metrics.rejected || 0,
+          });
+        }
         const normalized = (data.reports || []).map((r: any) => ({
           ...r,
           chat_log:
@@ -516,17 +524,17 @@ export function AdminPanel() {
         <section className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <div className={metricCardClass}>
             <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Pending Reports</p>
-            <p className="mt-3 text-3xl font-semibold text-white">{reportMetrics.pending}</p>
+            <p className="mt-3 text-3xl font-semibold text-white">{serverReportMetrics.pending}</p>
             <p className="mt-2 text-sm text-slate-400">Items still waiting for human review.</p>
           </div>
           <div className={metricCardClass}>
             <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Approved</p>
-            <p className="mt-3 text-3xl font-semibold text-white">{reportMetrics.approved}</p>
+            <p className="mt-3 text-3xl font-semibold text-white">{serverReportMetrics.approved}</p>
             <p className="mt-2 text-sm text-slate-400">Reports already acted on.</p>
           </div>
           <div className={metricCardClass}>
             <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Rejected</p>
-            <p className="mt-3 text-3xl font-semibold text-white">{reportMetrics.rejected}</p>
+            <p className="mt-3 text-3xl font-semibold text-white">{serverReportMetrics.rejected}</p>
             <p className="mt-2 text-sm text-slate-400">Reports closed without action.</p>
           </div>
           <div className={metricCardClass}>
@@ -541,7 +549,7 @@ export function AdminPanel() {
           </div>
         </section>
 
-        <div className="grid gap-6 xl:grid-cols-[1.1fr_2fr]">
+        <div className="flex flex-col gap-6">
           <aside className="space-y-6">
             <section className={`${surfaceCardClass} p-6`}>
               <div className="flex items-start justify-between gap-4">
@@ -554,51 +562,79 @@ export function AdminPanel() {
               </div>
 
               {currentTab === 'reports' ? (
-                <div className="mt-6 space-y-3">
-                  <button
-                    onClick={fetchReports}
-                    className={`${actionButtonClass} w-full bg-white text-slate-950 hover:bg-cyan-100`}
-                  >
-                    Refresh Reports
-                  </button>
-                  <button
-                    onClick={() => {
-                      selectedReports.forEach((id) => updateReportStatus(id, 'approved'));
-                      setSelectedReports(new Set());
-                    }}
-                    disabled={selectedReports.size === 0}
-                    className={`${actionButtonClass} w-full bg-emerald-400/15 text-emerald-100 hover:bg-emerald-400/25`}
-                  >
-                    Approve Selected ({selectedReports.size})
-                  </button>
-                  <button
-                    onClick={() => {
-                      selectedReports.forEach((id) => updateReportStatus(id, 'rejected'));
-                      setSelectedReports(new Set());
-                    }}
-                    disabled={selectedReports.size === 0}
-                    className={`${actionButtonClass} w-full bg-rose-400/15 text-rose-100 hover:bg-rose-400/25`}
-                  >
-                    Reject Selected ({selectedReports.size})
-                  </button>
+                <div className="mt-6 flex flex-col gap-4 lg:flex-row lg:items-end">
+                  <div className="flex flex-col gap-2">
+                    <label className="text-xs uppercase tracking-[0.2em] text-slate-400">Status Filter</label>
+                    <div className="flex flex-wrap gap-2">
+                      <button onClick={() => setReportStatusFilter('pending')} className={filterButtonClass(reportStatusFilter === 'pending')}>Pending</button>
+                      <button onClick={() => setReportStatusFilter('decided')} className={filterButtonClass(reportStatusFilter === 'decided')}>Decided</button>
+                      <button onClick={() => setReportStatusFilter('all')} className={filterButtonClass(reportStatusFilter === 'all')}>All</button>
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <label className="text-xs uppercase tracking-[0.2em] text-slate-400">Show Limit</label>
+                    <select
+                      value={reportLimit}
+                      onChange={(e) => setReportLimit(e.target.value)}
+                      className={`${inputClass} appearance-none bg-white/5 [&>option]:bg-slate-900 w-full lg:w-48`}
+                    >
+                      <option value="10">10 entries</option>
+                      <option value="20">20 entries</option>
+                      <option value="50">50 entries</option>
+                      <option value="all">All entries (Max)</option>
+                    </select>
+                  </div>
+                  <div className="flex flex-wrap gap-2 lg:ml-auto">
+                    <button
+                      onClick={fetchReports}
+                      className={`${actionButtonClass} bg-white text-slate-950 hover:bg-cyan-100`}
+                    >
+                      Refresh Reports
+                    </button>
+                    <button
+                      onClick={() => {
+                        selectedReports.forEach((id) => updateReportStatus(id, 'approved'));
+                        setSelectedReports(new Set());
+                      }}
+                      disabled={selectedReports.size === 0}
+                      className={`${actionButtonClass} bg-emerald-400/15 text-emerald-100 hover:bg-emerald-400/25`}
+                    >
+                      Approve Selected ({selectedReports.size})
+                    </button>
+                    <button
+                      onClick={() => {
+                        selectedReports.forEach((id) => updateReportStatus(id, 'rejected'));
+                        setSelectedReports(new Set());
+                      }}
+                      disabled={selectedReports.size === 0}
+                      className={`${actionButtonClass} bg-rose-400/15 text-rose-100 hover:bg-rose-400/25`}
+                    >
+                      Reject Selected ({selectedReports.size})
+                    </button>
+                  </div>
                 </div>
               ) : (
-                <div className="mt-6 space-y-4">
-                  <button
-                    onClick={fetchBans}
-                    className={`${actionButtonClass} w-full bg-white text-slate-950 hover:bg-cyan-100`}
-                  >
-                    Refresh Bans
-                  </button>
-                  <div className="flex flex-wrap gap-2">
-                    <button onClick={() => setBanFilter('active')} className={filterButtonClass(banFilter === 'active')}>
-                      Active
-                    </button>
-                    <button onClick={() => setBanFilter('inactive')} className={filterButtonClass(banFilter === 'inactive')}>
-                      Inactive
-                    </button>
-                    <button onClick={() => setBanFilter('all')} className={filterButtonClass(banFilter === 'all')}>
-                      All
+                <div className="mt-6 flex flex-col gap-4 lg:flex-row lg:items-end">
+                  <div className="flex flex-col gap-2">
+                    <label className="text-xs uppercase tracking-[0.2em] text-slate-400">Ban Filter</label>
+                    <div className="flex flex-wrap gap-2">
+                      <button onClick={() => setBanFilter('active')} className={filterButtonClass(banFilter === 'active')}>
+                        Active
+                      </button>
+                      <button onClick={() => setBanFilter('inactive')} className={filterButtonClass(banFilter === 'inactive')}>
+                        Inactive
+                      </button>
+                      <button onClick={() => setBanFilter('all')} className={filterButtonClass(banFilter === 'all')}>
+                        All
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2 lg:ml-auto">
+                    <button
+                      onClick={fetchBans}
+                      className={`${actionButtonClass} bg-white text-slate-950 hover:bg-cyan-100`}
+                    >
+                      Refresh Bans
                     </button>
                   </div>
                 </div>
@@ -612,7 +648,7 @@ export function AdminPanel() {
                   <h2 className="mt-2 text-xl font-semibold text-white">Create a session or IP ban</h2>
                 </div>
 
-                <div className="space-y-4">
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 items-end">
                   <div>
                     <label className="mb-2 block text-sm font-medium text-slate-300">Session ID</label>
                     <input

@@ -90,20 +90,55 @@ func LoginHandlerGin(c *gin.Context) {
 }
 
 func GetReportsHandlerGin(c *gin.Context) {
+	status := c.Query("status")
+	limitStr := c.Query("limit")
+
+	limit := 10
+	if limitStr != "" {
+		if limitStr == "all" {
+			limit = 1000
+		} else {
+			if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+				limit = parsed
+			}
+		}
+	}
+
 	db := storage.NewDatabase()
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 
+	query := db.GetDB().WithContext(ctx).Model(&storage.Report{})
+
+	if status == "pending" {
+		query = query.Where("status = ?", "pending")
+	} else if status == "decided" {
+		query = query.Where("status IN ?", []string{"approved", "rejected"})
+	}
+
 	var reports []storage.Report
-	result := db.GetDB().WithContext(ctx).Order("created_at DESC").Limit(200).Find(&reports).Error
+	result := query.Order("created_at DESC").Limit(limit).Find(&reports).Error
 
 	if result != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch reports"})
 		return
 	}
 
+	var metricPending int64
+	var metricApproved int64
+	var metricRejected int64
+
+	db.GetDB().WithContext(ctx).Model(&storage.Report{}).Where("status = ?", "pending").Count(&metricPending)
+	db.GetDB().WithContext(ctx).Model(&storage.Report{}).Where("status = ?", "approved").Count(&metricApproved)
+	db.GetDB().WithContext(ctx).Model(&storage.Report{}).Where("status = ?", "rejected").Count(&metricRejected)
+
 	c.JSON(http.StatusOK, gin.H{
 		"reports": reports,
+		"metrics": map[string]int64{
+			"pending":  metricPending,
+			"approved": metricApproved,
+			"rejected": metricRejected,
+		},
 	})
 }
 
@@ -402,20 +437,53 @@ func CreateBanHandlerGin(c *gin.Context) {
 }
 
 func GetBansHandlerGin(c *gin.Context) {
+	status := c.Query("status")
+	limitStr := c.Query("limit")
+
+	limit := 10
+	if limitStr != "" {
+		if limitStr == "all" {
+			limit = 1000
+		} else {
+			if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+				limit = parsed
+			}
+		}
+	}
+
 	db := storage.NewDatabase()
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 
+	query := db.GetDB().WithContext(ctx).Model(&storage.Ban{})
+
+	if status == "active" {
+		query = query.Where("is_active = ?", true)
+	} else if status == "inactive" {
+		query = query.Where("is_active = ?", false)
+	}
+
 	var bans []storage.Ban
-	result := db.GetDB().WithContext(ctx).Order("created_at DESC").Limit(200).Find(&bans).Error
+	result := query.Order("created_at DESC").Limit(limit).Find(&bans).Error
 
 	if result != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch bans"})
 		return
 	}
 
+	var activeCount int64
+	var inactiveCount int64
+
+	db.GetDB().WithContext(ctx).Model(&storage.Ban{}).Where("is_active = ?", true).Count(&activeCount)
+	db.GetDB().WithContext(ctx).Model(&storage.Ban{}).Where("is_active = ?", false).Count(&inactiveCount)
+
 	c.JSON(http.StatusOK, gin.H{
 		"bans": bans,
+		"metrics": map[string]int64{
+			"active":   activeCount,
+			"inactive": inactiveCount,
+			"total":    activeCount + inactiveCount,
+		},
 	})
 }
 
