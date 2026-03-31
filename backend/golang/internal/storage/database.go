@@ -19,7 +19,6 @@ type Database struct {
 
 var (
 	sharedDB   *Database
-	sharedErr  error
 	dbInitOnce sync.Once
 )
 
@@ -80,7 +79,7 @@ type AdminActivityLog struct {
 	CreatedAt     time.Time `gorm:"autoCreateTime" json:"created_at"`
 }
 
-func NewDatabase() (*Database, error) {
+func NewDatabase() *Database {
 	dbInitOnce.Do(func() {
 		config := DBConfig{
 			Host:     getEnv("POSTGRES_HOST", "localhost"),
@@ -103,14 +102,12 @@ func NewDatabase() (*Database, error) {
 
 		db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 		if err != nil {
-			sharedErr = fmt.Errorf("open database: %w", err)
-			return
+			panic(fmt.Errorf("open database: %w", err))
 		}
 
 		sqlDB, err := db.DB()
 		if err != nil {
-			sharedErr = fmt.Errorf("get sql DB: %w", err)
-			return
+			panic(fmt.Errorf("get sql DB: %w", err))
 		}
 
 		sqlDB.SetMaxOpenConns(getEnvAsInt("POSTGRES_MAX_OPEN_CONNS", 25))
@@ -119,24 +116,21 @@ func NewDatabase() (*Database, error) {
 		sqlDB.SetConnMaxIdleTime(time.Duration(getEnvAsInt("POSTGRES_CONN_MAX_IDLE_MINUTES", 10)) * time.Minute)
 
 		if err := sqlDB.Ping(); err != nil {
-			sharedErr = fmt.Errorf("ping database: %w", err)
-			return
+			panic(fmt.Errorf("ping database: %w", err))
 		}
 
 		if err := db.AutoMigrate(&AdminAccount{}, &Report{}, &Ban{}, &AdminActivityLog{}); err != nil {
-			sharedErr = fmt.Errorf("auto migrate database: %w", err)
-			return
+			panic(fmt.Errorf("auto migrate database: %w", err))
 		}
 
 		if err := createRootAdmin(db); err != nil {
-			sharedErr = fmt.Errorf("create root admin: %w", err)
-			return
+			panic(fmt.Errorf("create root admin: %w", err))
 		}
 
 		sharedDB = &Database{db: db}
 	})
 
-	return sharedDB, sharedErr
+	return sharedDB
 }
 
 func (d *Database) GetDB() *gorm.DB {
