@@ -1,6 +1,7 @@
 import Config
 host = System.get_env("PHX_HOST") || "example.com"
 port = String.to_integer(System.get_env("PORT") || "8080")
+
 config :omegle_phoenix, OmeglePhoenixWeb.Endpoint,
   http: [
     ip:
@@ -16,7 +17,7 @@ config :omegle_phoenix, OmeglePhoenixWeb.Endpoint,
       System.get_env("CORS_ORIGINS") || "http://localhost:5173,http://127.0.0.1:5173",
       ","
     ),
-  secret_key_base: System.get_env("SECRET_KEY_BASE") || raise "SECRET_KEY_BASE is not set"
+  secret_key_base: System.get_env("SECRET_KEY_BASE") || raise("SECRET_KEY_BASE is not set")
 
 config :omegle_phoenix, OmeglePhoenix.PubSub, adapter: Phoenix.PubSub.PG2
 config :phoenix, :json_library, Jason
