@@ -43,6 +43,9 @@ func NewServer() *Server {
 	if jwtSecret == "" {
 		log.Fatal("JWT_SECRET environment variable is required")
 	}
+	if len(jwtSecret) < 32 {
+		log.Fatal("JWT_SECRET must be at least 32 characters")
+	}
 
 	s := &Server{
 		db:           db,
