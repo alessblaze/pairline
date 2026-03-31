@@ -1,7 +1,7 @@
 import Config
 
 config :omegle_phoenix, OmeglePhoenixWeb.Endpoint,
-  http: [ip: {0, 0, 0, 0}, port: 8080],
+  http: [ip: (if System.get_env("ENABLE_IPV6") == "true", do: {0, 0, 0, 0, 0, 0, 0, 0}, else: {0, 0, 0, 0}), port: 8080],
   check_origin: String.split(System.get_env("CORS_ORIGINS") || "http://localhost:5173,http://127.0.0.1:5173", ","),
   code_reloader: true,
   debug_errors: true,

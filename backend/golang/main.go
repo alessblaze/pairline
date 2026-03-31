@@ -17,7 +17,11 @@ func main() {
 
 	host := os.Getenv("HOST")
 	if host == "" {
-		host = "0.0.0.0"
+		if os.Getenv("ENABLE_IPV6") == "true" {
+			host = "::"
+		} else {
+			host = "0.0.0.0"
+		}
 	}
 
 	port := os.Getenv("PORT")

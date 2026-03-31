@@ -226,7 +226,7 @@ func originAllowed(origin string, allowedOrigins []string) bool {
 func trustedProxyCIDRsFromEnv() []string {
 	raw := os.Getenv("TRUSTED_PROXY_CIDRS")
 	if raw == "" {
-		return []string{"127.0.0.1/32"}
+		return []string{"127.0.0.1/32", "::1/128"}
 	}
 
 	parts := strings.Split(raw, ",")

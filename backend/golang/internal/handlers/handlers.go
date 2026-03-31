@@ -224,18 +224,14 @@ func CreateReportHandlerGin(c *gin.Context) {
 		return
 	}
 
-	reporterIP, _ := redisClient.GetClient().Get(ctx, "session:"+req.ReporterSessionID+":ip").Result()
-	reportedIP, _ := redisClient.GetClient().Get(ctx, "session:"+req.ReportedSessionID+":ip").Result()
+	rawReporterIP, _ := redisClient.GetClient().Get(ctx, "session:"+req.ReporterSessionID+":ip").Result()
+	rawReportedIP, _ := redisClient.GetClient().Get(ctx, "session:"+req.ReportedSessionID+":ip").Result()
+
+	reporterIP := normalizeIP(rawReporterIP)
+	reportedIP := normalizeIP(rawReportedIP)
 
 	if reporterIP == "" {
 		reporterIP = getRequestClientIP(c)
-	}
-
-	if reporterIP != "" && net.ParseIP(reporterIP) == nil {
-		reporterIP = ""
-	}
-	if reportedIP != "" && net.ParseIP(reportedIP) == nil {
-		reportedIP = ""
 	}
 
 	chatLogStr, err := normalizeChatLog(req.ChatLog)
@@ -309,9 +305,14 @@ func CreateBanHandlerGin(c *gin.Context) {
 
 	if req.SessionID != "" {
 		sessionID = req.SessionID
-		ipAddress, _ = redisClient.GetClient().Get(ctx, "session:"+req.SessionID+":ip").Result()
+		raw, _ := redisClient.GetClient().Get(ctx, "session:"+req.SessionID+":ip").Result()
+		ipAddress = normalizeIP(raw)
 	} else {
-		ipAddress = req.IP
+		ipAddress = normalizeIP(req.IP)
+		if ipAddress == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid IP address format"})
+			return
+		}
 	}
 
 	if ipAddress != "" {
@@ -908,7 +909,7 @@ func trustedProxyPrefixes() []netip.Prefix {
 	trustedPrefixesOnce.Do(func() {
 		raw := os.Getenv("TRUSTED_PROXY_CIDRS")
 		if raw == "" {
-			raw = "127.0.0.1/32"
+			raw = "127.0.0.1/32,::1/128"
 		}
 
 		prefixes := make([]netip.Prefix, 0)

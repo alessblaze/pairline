@@ -40,8 +40,8 @@ defmodule OmeglePhoenixWeb.Socket do
 
   defp trusted_proxy_ranges do
     case System.get_env(@trusted_proxy_env) do
-      nil -> ["127.0.0.1/32"]
-      "" -> ["127.0.0.1/32"]
+      nil -> ["127.0.0.1/32", "::1/128"]
+      "" -> ["127.0.0.1/32", "::1/128"]
       cidrs -> String.split(cidrs, ",") |> Enum.map(&String.trim/1)
     end
   end
@@ -83,10 +83,20 @@ defmodule OmeglePhoenixWeb.Socket do
 
   defp normalize_ip(value) do
     case :inet.parse_address(String.to_charlist(value)) do
-      {:ok, address} -> :inet.ntoa(address) |> to_string()
+      {:ok, address} -> address |> unmap_ipv4() |> :inet.ntoa() |> to_string()
       {:error, _reason} -> nil
     end
   end
+
+  # Strip IPv4-in-IPv6 mapping (::ffff:A.B.C.D) so ban keys are always in
+  # canonical IPv4 form, matching what the Go service stores via netip.Addr.Unmap().
+  # Erlang represents ::ffff:A.B.C.D as {0,0,0,0,0,65535,AB,CD} where
+  # AB = (A bsl 8) bor B and CD = (C bsl 8) bor D.
+  defp unmap_ipv4({0, 0, 0, 0, 0, 65535, ab, cd}) do
+    {ab >>> 8, ab &&& 0xFF, cd >>> 8, cd &&& 0xFF}
+  end
+
+  defp unmap_ipv4(addr), do: addr
 
   defp cidr_match?(peer_ip, cidr) do
     with {:ok, proxy} <- :inet.parse_address(String.to_charlist(peer_ip)),
@@ -99,9 +109,22 @@ defmodule OmeglePhoenixWeb.Socket do
     end
   end
 
+  # Serialize an IP address tuple to a binary for bitwise CIDR comparison.
+  # IPv4 tuples are {a, b, c, d} — 4 elements of 1 byte each → 4-byte binary.
+  # IPv6 tuples are {a, b, c, d, e, f, g, h} — 8 elements of 2 bytes each → 16-byte binary.
+  # :erlang.list_to_binary/1 only works for byte values (0–255), so it cannot
+  # be used directly for IPv6 (elements can be 0–65535).
+  defp ip_to_binary(tuple) when tuple_size(tuple) == 4 do
+    tuple |> Tuple.to_list() |> :erlang.list_to_binary()
+  end
+
+  defp ip_to_binary(tuple) when tuple_size(tuple) == 8 do
+    for group <- Tuple.to_list(tuple), into: <<>>, do: <<group::16>>
+  end
+
   defp match_cidr?(proxy, network, prefix_length) do
-    proxy_bin = :erlang.list_to_binary(Tuple.to_list(proxy))
-    network_bin = :erlang.list_to_binary(Tuple.to_list(network))
+    proxy_bin = ip_to_binary(proxy)
+    network_bin = ip_to_binary(network)
     bytes = div(prefix_length, 8)
     bits = rem(prefix_length, 8)
 

@@ -9,7 +9,7 @@ if config_env() == :prod do
     |> Enum.reject(&(&1 == ""))
 
   endpoint_config = [
-    http: [ip: {0, 0, 0, 0}, port: String.to_integer(port)],
+    http: [ip: (if System.get_env("ENABLE_IPV6") == "true", do: {0, 0, 0, 0, 0, 0, 0, 0}, else: {0, 0, 0, 0}), port: String.to_integer(port)],
     secret_key_base: System.get_env("SECRET_KEY_BASE")
   ]
 

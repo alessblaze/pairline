@@ -23,3 +23,17 @@ services:
 volumes:
   redis_data:
   postgres_data:
+
+# ---------------------------------------------------------------------------
+# IPv6 networking (optional)
+# Uncomment the block below and set ENABLE_IPV6=true in both service .env
+# files to run the stack in dual-stack (IPv4 + IPv6) mode.
+# ---------------------------------------------------------------------------
+# networks:
+#   default:
+#     driver: bridge
+#     enable_ipv6: true
+#     ipam:
+#       config:
+#         - subnet: "172.28.0.0/16"
+#         - subnet: "fd00:dead:beef::/80"
