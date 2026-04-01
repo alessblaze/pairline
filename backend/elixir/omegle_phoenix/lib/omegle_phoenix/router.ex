@@ -51,6 +51,7 @@ defmodule OmeglePhoenix.Router do
   end
 
   def notify_disconnect(session_id, reason) do
+    Logger.info("Notifying disconnect for session: #{session_id}, reason: #{reason}")
     route(session_id, {:router_disconnect, reason})
   end
 
@@ -132,6 +133,7 @@ defmodule OmeglePhoenix.Router do
   end
 
   defp dispatch_local(session_id, message) do
+    Logger.debug("Router dispatching locally for session: #{session_id}, message: #{inspect(message)}")
     Phoenix.PubSub.local_broadcast(
       OmeglePhoenix.PubSub,
       topic(session_id),

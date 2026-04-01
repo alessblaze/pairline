@@ -46,15 +46,15 @@ defmodule OmeglePhoenix.RedisState do
   redis.call('SETEX', KEYS[1], ARGV[1], ARGV[5])
   redis.call('SETEX', KEYS[2], ARGV[1], ARGV[3])
   redis.call('SETEX', KEYS[3], ARGV[1], ARGV[4])
-  redis.call('SETEX', KEYS[7], ARGV[1], ARGV[10])
-  redis.call('SETEX', KEYS[8], ARGV[1], ARGV[8])
-  redis.call('SETEX', KEYS[9], ARGV[1], ARGV[9])
-  redis.call('SADD', KEYS[11], ARGV[2], ARGV[7])
+  redis.call('SETEX', KEYS[7], ARGV[1], ARGV[9])
+  redis.call('SETEX', KEYS[8], ARGV[1], ARGV[7])
+  redis.call('SETEX', KEYS[9], ARGV[1], ARGV[8])
+  redis.call('SADD', KEYS[11], ARGV[2], ARGV[6])
   redis.call('SADD', KEYS[12], ARGV[2])
-  redis.call('SADD', KEYS[13], ARGV[7])
+  redis.call('SADD', KEYS[13], ARGV[6])
   if redis.call('EXISTS', KEYS[4]) == 1 then redis.call('EXPIRE', KEYS[4], ARGV[1]) end
   if redis.call('EXISTS', KEYS[10]) == 1 then redis.call('EXPIRE', KEYS[10], ARGV[1]) end
-  redis.call('DEL', KEYS[14], KEYS[15])
+  redis.call('DEL', KEYS[15], KEYS[16])
   return 1
   """
 
@@ -147,21 +147,21 @@ defmodule OmeglePhoenix.RedisState do
     command = [
       "EVAL",
       @reset_pair_script,
-      "15",
+      "16",
       session_key(session1.id),
       session_ip_key(session1.id),
       session_token_key(session1.id),
       session_owner_key(session1.id),
-      match_key(session1.id),
-      recent_match_key(session1.id),
+      "dummy5",
+      "dummy6",
       session_key(session2.id),
       session_ip_key(session2.id),
       session_token_key(session2.id),
       session_owner_key(session2.id),
-      recent_match_key(session2.id),
       active_sessions_key(),
       ip_sessions_key(session1.ip),
       ip_sessions_key(session2.ip),
+      "dummy14",
       match_key(session1.id),
       match_key(session2.id),
       ttl,
