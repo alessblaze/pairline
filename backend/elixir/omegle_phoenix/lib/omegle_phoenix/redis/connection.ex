@@ -16,7 +16,9 @@ defmodule OmeglePhoenix.Redis.Connection do
 
   @impl true
   def handle_call({:command, cmd}, _from, state) do
-    {result, conn} = exec_with_reconnect(state.conn, fn active_conn -> Redix.command(active_conn, cmd) end)
+    {result, conn} =
+      exec_with_reconnect(state.conn, fn active_conn -> Redix.command(active_conn, cmd) end)
+
     {:reply, result, %{state | conn: conn}}
   end
 
@@ -35,8 +37,11 @@ defmodule OmeglePhoenix.Redis.Connection do
 
   defp exec_with_reconnect(conn, callback) do
     case callback.(conn) do
-      {:error, %Redix.ConnectionError{reason: :closed}} ->
-        Logger.warning("Redis connection closed; reconnecting pooled connection")
+      {:error, %Redix.ConnectionError{} = error} ->
+        Logger.warning(
+          "Redis connection error #{inspect(error.reason)}; reconnecting pooled connection"
+        )
+
         stop_conn(conn)
         new_conn = connect()
         {callback.(new_conn), new_conn}

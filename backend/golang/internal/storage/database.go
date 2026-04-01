@@ -11,6 +11,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Database struct {
@@ -157,47 +158,60 @@ func createRootAdmin(db *gorm.DB) error {
 	username := getEnv("ROOT_ADMIN_USERNAME", "admin")
 	password := os.Getenv("ROOT_ADMIN_PASSWORD")
 
-	var adminAccount AdminAccount
-	result := db.Where("username = ?", username).First(&adminAccount)
-	if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return fmt.Errorf("find root admin: %w", result.Error)
-	}
-
-	exists := result.Error == nil
-
-	if password == "" {
-		if exists {
-			return nil
+	return db.Transaction(func(tx *gorm.DB) error {
+		var adminAccount AdminAccount
+		result := tx.Where("username = ?", username).First(&adminAccount)
+		if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("find root admin: %w", result.Error)
 		}
-		return fmt.Errorf("ROOT_ADMIN_PASSWORD environment variable is required to bootstrap root admin %q", username)
-	}
 
-	hash, err := HashPassword(password)
-	if err != nil {
-		return fmt.Errorf("hash root admin password: %w", err)
-	}
+		exists := result.Error == nil
+		if password == "" {
+			if exists {
+				return nil
+			}
+			return fmt.Errorf("ROOT_ADMIN_PASSWORD environment variable is required to bootstrap root admin %q", username)
+		}
 
-	if exists {
-		if !CheckPasswordHash(password, adminAccount.PasswordHash) {
-			if err := db.Model(&adminAccount).Update("password_hash", hash).Error; err != nil {
+		hash, err := HashPassword(password)
+		if err != nil {
+			return fmt.Errorf("hash root admin password: %w", err)
+		}
+
+		if !exists {
+			admin := &AdminAccount{
+				Username:     username,
+				PasswordHash: hash,
+				Role:         "root",
+				IsActive:     true,
+			}
+
+			createResult := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "username"}},
+				DoNothing: true,
+			}).Create(admin)
+			if createResult.Error != nil {
+				return fmt.Errorf("insert root admin: %w", createResult.Error)
+			}
+
+			if createResult.RowsAffected > 0 {
+				return nil
+			}
+
+			if err := tx.Where("username = ?", username).First(&adminAccount).Error; err != nil {
+				return fmt.Errorf("reload root admin after conflict: %w", err)
+			}
+			exists = true
+		}
+
+		if exists && !CheckPasswordHash(password, adminAccount.PasswordHash) {
+			if err := tx.Model(&adminAccount).Update("password_hash", hash).Error; err != nil {
 				return fmt.Errorf("update root admin password hash: %w", err)
 			}
 		}
+
 		return nil
-	}
-
-	admin := &AdminAccount{
-		Username:     username,
-		PasswordHash: hash,
-		Role:         "root",
-		IsActive:     true,
-	}
-
-	if err := db.Create(admin).Error; err != nil {
-		return fmt.Errorf("insert root admin: %w", err)
-	}
-
-	return nil
+	})
 }
 
 func HashPassword(password string) (string, error) {

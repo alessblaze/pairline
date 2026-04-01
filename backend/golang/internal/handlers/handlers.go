@@ -15,6 +15,7 @@ import (
 	"net/netip"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -361,41 +362,47 @@ func CreateBanHandlerGin(redisClient *redis.Client) gin.HandlerFunc {
 			expiresAt = &parsedExpiry
 		}
 
-		var existingBan storage.Ban
-		lookup := db.GetDB().WithContext(ctx).Where("is_active = ? AND (expires_at IS NULL OR expires_at > ?)", true, time.Now())
+		var (
+			existingBan   storage.Ban
+			createdBan    storage.Ban
+			alreadyBanned bool
+		)
 
-		switch {
-		case sessionID != "" && ipAddress != "":
-			lookup = lookup.Where("(session_id = ? OR ip_address = ?)", sessionID, ipAddress)
-		case sessionID != "":
-			lookup = lookup.Where("session_id = ?", sessionID)
-		default:
-			lookup = lookup.Where("ip_address = ?", ipAddress)
-		}
+		err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := lockBanTargets(tx, sessionID, ipAddress); err != nil {
+				return err
+			}
 
-		if err := lookup.Order("created_at DESC").First(&existingBan).Error; err == nil {
+			lookup := activeBanLookup(tx, sessionID, ipAddress, time.Now())
+			if err := lookup.Order("created_at DESC").First(&existingBan).Error; err == nil {
+				alreadyBanned = true
+				return nil
+			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+
+			createdBan = storage.Ban{
+				SessionID:        sessionID,
+				IPAddress:        ipAddress,
+				Reason:           req.Reason,
+				BannedByUsername: username,
+				CreatedAt:        time.Now(),
+				ExpiresAt:        expiresAt,
+				IsActive:         true,
+			}
+
+			return tx.Create(&createdBan).Error
+		})
+
+		if err == nil && alreadyBanned {
 			c.JSON(http.StatusOK, gin.H{
 				"status": "already_banned",
 				"ban_id": existingBan.ID,
 			})
 			return
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check existing bans"})
-			return
 		}
 
-		ban := storage.Ban{
-			SessionID:        sessionID,
-			IPAddress:        ipAddress,
-			Reason:           req.Reason,
-			BannedByUsername: username,
-			CreatedAt:        time.Now(),
-			ExpiresAt:        expiresAt,
-			IsActive:         true,
-		}
-
-		result := db.GetDB().WithContext(ctx).Create(&ban).Error
-		if result != nil {
+		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create ban"})
 			return
 		}
@@ -452,7 +459,7 @@ func CreateBanHandlerGin(redisClient *redis.Client) gin.HandlerFunc {
 
 		c.JSON(http.StatusOK, gin.H{
 			"status": "banned",
-			"ban_id": ban.ID,
+			"ban_id": createdBan.ID,
 		})
 	}
 }
@@ -529,61 +536,101 @@ func DeleteBanHandlerGin(redisClient *redis.Client) gin.HandlerFunc {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 		defer cancel()
 
-		var ban storage.Ban
-		result := db.GetDB().WithContext(ctx).
-			Where("id = ? AND is_active = ?", banIdentifier, true).
-			First(&ban).Error
+		var (
+			ban                 storage.Ban
+			remainingSessionBan *storage.Ban
+			remainingIPBan      *storage.Ban
+		)
 
-		if errors.Is(result, gorm.ErrRecordNotFound) {
-			result = db.GetDB().WithContext(ctx).
-				Where("session_id = ? AND is_active = ?", banIdentifier, true).
-				Order("created_at DESC").
-				First(&ban).Error
-		}
+		err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			result := tx.Where("id = ? AND is_active = ?", banIdentifier, true).First(&ban).Error
 
-		if result != nil {
+			if errors.Is(result, gorm.ErrRecordNotFound) {
+				result = tx.Where("session_id = ? AND is_active = ?", banIdentifier, true).
+					Order("created_at DESC").
+					First(&ban).Error
+			}
+
+			if result != nil {
+				return result
+			}
+
+			if err := lockBanTargets(tx, ban.SessionID, ban.IPAddress); err != nil {
+				return err
+			}
+
+			if err := tx.Model(&storage.Ban{}).
+				Where("id = ? AND is_active = ?", ban.ID, true).
+				Updates(map[string]interface{}{
+					"is_active":            false,
+					"unbanned_at":          now,
+					"unbanned_by_username": username,
+				}).Error; err != nil {
+				return err
+			}
+
+			if ban.SessionID != "" {
+				if activeBan, err := latestActiveBan(tx, "session_id = ?", ban.SessionID, now); err != nil {
+					return err
+				} else {
+					remainingSessionBan = activeBan
+				}
+			}
+
+			if ban.IPAddress != "" {
+				if activeBan, err := latestActiveBan(tx, "ip_address = ?", ban.IPAddress, now); err != nil {
+					return err
+				} else {
+					remainingIPBan = activeBan
+				}
+			}
+
+			return nil
+		})
+
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Ban not found"})
 			return
 		}
 
-		result = db.GetDB().WithContext(ctx).Model(&storage.Ban{}).
-			Where("id = ?", ban.ID).
-			Updates(map[string]interface{}{
-				"is_active":            false,
-				"unbanned_at":          now,
-				"unbanned_by_username": username,
-			}).Error
-
-		if result != nil {
+		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to unban"})
 			return
 		}
 
 		if ban.SessionID != "" {
-			err := redisClient.GetClient().Del(ctx, "ban:"+ban.SessionID).Err()
-			if err != nil {
-				log.Printf("Failed to delete ban from Redis: %v", err)
+			if remainingSessionBan != nil {
+				if err := redisClient.GetClient().Set(ctx, "ban:"+ban.SessionID, remainingSessionBan.Reason, redisBanTTL(*remainingSessionBan)).Err(); err != nil {
+					log.Printf("Failed to refresh session ban in Redis: %v", err)
+				}
+			} else {
+				err := redisClient.GetClient().Del(ctx, "ban:"+ban.SessionID).Err()
+				if err != nil {
+					log.Printf("Failed to delete ban from Redis: %v", err)
+				}
+
+				err = redisClient.PublishUnbanAction(ctx, ban.SessionID, ban.IPAddress)
+				if err != nil {
+					log.Printf("Failed to publish unban action: %v", err)
+				}
 			}
 		}
 
 		if ban.IPAddress != "" {
-			err := redisClient.GetClient().Del(ctx, "ban:ip:"+ban.IPAddress).Err()
-			if err != nil {
-				log.Printf("Failed to delete IP ban from Redis: %v", err)
-			}
-		}
+			if remainingIPBan != nil {
+				if err := redisClient.GetClient().Set(ctx, "ban:ip:"+ban.IPAddress, remainingIPBan.Reason, redisBanTTL(*remainingIPBan)).Err(); err != nil {
+					log.Printf("Failed to refresh IP ban in Redis: %v", err)
+				}
+			} else {
+				err := redisClient.GetClient().Del(ctx, "ban:ip:"+ban.IPAddress).Err()
+				if err != nil {
+					log.Printf("Failed to delete IP ban from Redis: %v", err)
+				}
 
-		if ban.SessionID != "" {
-			err := redisClient.PublishUnbanAction(ctx, ban.SessionID, ban.IPAddress)
-			if err != nil {
-				log.Printf("Failed to publish unban action: %v", err)
-			}
-		}
-
-		if ban.IPAddress != "" {
-			err := redisClient.PublishUnbanIPAction(ctx, ban.IPAddress)
-			if err != nil {
-				log.Printf("Failed to publish unban IP action: %v", err)
+				err = redisClient.PublishUnbanIPAction(ctx, ban.IPAddress)
+				if err != nil {
+					log.Printf("Failed to publish unban IP action: %v", err)
+				}
 			}
 		}
 
@@ -966,4 +1013,63 @@ func stripHTML(s string) string {
 		}
 	}
 	return strings.TrimSpace(clean.String())
+}
+
+func lockBanTargets(tx *gorm.DB, sessionID, ipAddress string) error {
+	keys := make([]string, 0, 2)
+	if sessionID != "" {
+		keys = append(keys, "ban:session:"+sessionID)
+	}
+	if ipAddress != "" {
+		keys = append(keys, "ban:ip:"+ipAddress)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", key).Error; err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func activeBanLookup(tx *gorm.DB, sessionID, ipAddress string, now time.Time) *gorm.DB {
+	lookup := tx.Where("is_active = ? AND (expires_at IS NULL OR expires_at > ?)", true, now)
+
+	switch {
+	case sessionID != "" && ipAddress != "":
+		return lookup.Where("(session_id = ? OR ip_address = ?)", sessionID, ipAddress)
+	case sessionID != "":
+		return lookup.Where("session_id = ?", sessionID)
+	default:
+		return lookup.Where("ip_address = ?", ipAddress)
+	}
+}
+
+func latestActiveBan(tx *gorm.DB, clause string, value string, now time.Time) (*storage.Ban, error) {
+	var ban storage.Ban
+	err := tx.Where(clause+" AND is_active = ? AND (expires_at IS NULL OR expires_at > ?)", value, true, now).
+		Order("created_at DESC").
+		First(&ban).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &ban, nil
+}
+
+func redisBanTTL(ban storage.Ban) time.Duration {
+	if ban.ExpiresAt == nil {
+		return 0
+	}
+
+	ttl := time.Until(*ban.ExpiresAt)
+	if ttl <= 0 {
+		return time.Second
+	}
+
+	return ttl
 }

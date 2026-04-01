@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -83,6 +84,7 @@ func newServer(enablePublic, enableAdmin bool, serviceName string) *Server {
 
 	if enablePublic || enableAdmin {
 		s.syncActiveBansToRedis()
+		s.startBanSyncLoop()
 	}
 
 	s.setupRoutes()
@@ -137,6 +139,36 @@ func (s *Server) syncActiveBansToRedis() {
 	}
 
 	log.Printf("Synced %d active ban keys to Redis from Postgres", syncedKeys)
+}
+
+func (s *Server) startBanSyncLoop() {
+	interval := time.Duration(banSyncIntervalSeconds()) * time.Second
+	if interval <= 0 {
+		return
+	}
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			s.syncActiveBansToRedis()
+		}
+	}()
+}
+
+func banSyncIntervalSeconds() int {
+	raw := os.Getenv("BAN_SYNC_INTERVAL_SECONDS")
+	if raw == "" {
+		return 60
+	}
+
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 60
+	}
+
+	return value
 }
 
 func SecurityHeadersMiddleware() gin.HandlerFunc {

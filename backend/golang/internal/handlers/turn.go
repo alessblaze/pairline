@@ -41,7 +41,7 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		sessionID := c.Query("session_id")
 		sessionToken := c.Query("session_token")
-		if sessionID == "" || sessionToken == "" || len(sessionID) > 100 || len(sessionToken) > 128 {
+		if sessionID == "" || sessionToken == "" || len(sessionID) > 100 || len(sessionToken) > 128 || !uuidRe.MatchString(sessionID) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid session_id or session_token format"})
 			return
 		}

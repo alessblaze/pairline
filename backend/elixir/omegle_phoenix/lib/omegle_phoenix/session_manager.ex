@@ -148,6 +148,10 @@ defmodule OmeglePhoenix.SessionManager do
     end
   end
 
+  def refresh_session(session_id) do
+    update_session(session_id, %{})
+  end
+
   def delete_session(session_id) do
     case get_session(session_id) do
       {:ok, session} ->
@@ -162,7 +166,12 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   def emergency_ban(session_id, reason) do
-    with {:ok, session} <- update_session(session_id, %{ban_status: true, ban_reason: reason, status: :disconnecting}) do
+    with {:ok, session} <-
+           update_session(session_id, %{
+             ban_status: true,
+             ban_reason: reason,
+             status: :disconnecting
+           }) do
       OmeglePhoenix.Matchmaker.leave_queue(session_id)
       OmeglePhoenix.Router.notify_banned(session_id, reason)
       disconnect_partner(session)
@@ -239,7 +248,12 @@ defmodule OmeglePhoenix.SessionManager do
           webrtc_started: false
       })
 
-    case OmeglePhoenix.RedisState.pair_sessions(updated_session1, updated_session2, ttl_seconds(), 900) do
+    case OmeglePhoenix.RedisState.pair_sessions(
+           updated_session1,
+           updated_session2,
+           ttl_seconds(),
+           900
+         ) do
       {:ok, _} -> {:ok, updated_session1, updated_session2, common_interests}
       {:error, reason} -> {:error, reason}
     end

@@ -36,6 +36,10 @@ defmodule OmeglePhoenix.Config do
     get("MATCH_TIMEOUT", "30000") |> String.to_integer()
   end
 
+  def get_match_leader_ttl_ms do
+    get("MATCH_LEADER_TTL_MS", "5000") |> String.to_integer()
+  end
+
   def get_session_ttl do
     get("SESSION_TTL", "3600") |> String.to_integer()
   end

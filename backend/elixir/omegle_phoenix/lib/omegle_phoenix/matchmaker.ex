@@ -4,7 +4,6 @@ defmodule OmeglePhoenix.Matchmaker do
 
   @mode_queue_prefix "matchmaking_queue"
   @lock_key "matchmaking:leader"
-  @lock_ttl_ms 500
   @renew_lock_script """
   if redis.call('GET', KEYS[1]) == ARGV[1] then
     return redis.call('PEXPIRE', KEYS[1], ARGV[2])
@@ -26,7 +25,10 @@ defmodule OmeglePhoenix.Matchmaker do
       session_id
     ])
 
-    :telemetry.execute([:omegle_phoenix, :matchmaking, :queued], %{count: 1}, %{session_id: session_id})
+    :telemetry.execute([:omegle_phoenix, :matchmaking, :queued], %{count: 1}, %{
+      session_id: session_id
+    })
+
     :ok
   end
 
@@ -121,7 +123,10 @@ defmodule OmeglePhoenix.Matchmaker do
             {:ok, session} when session.status == :waiting ->
               OmeglePhoenix.SessionManager.update_session(session_id, %{status: :disconnecting})
               OmeglePhoenix.Router.notify_timeout(session_id)
-              :telemetry.execute([:omegle_phoenix, :matchmaking, :timeout], %{count: 1}, %{session_id: session_id})
+
+              :telemetry.execute([:omegle_phoenix, :matchmaking, :timeout], %{count: 1}, %{
+                session_id: session_id
+              })
 
             _ ->
               :ok
@@ -234,10 +239,15 @@ defmodule OmeglePhoenix.Matchmaker do
             {:ok, _updated_session1, _updated_session2, common_interests} ->
               OmeglePhoenix.Router.notify_match(session_id1, session_id2, common_interests)
               OmeglePhoenix.Router.notify_match(session_id2, session_id1, common_interests)
+
               :telemetry.execute(
                 [:omegle_phoenix, :matchmaking, :matched],
                 %{count: 1},
-                %{session_id: session_id1, partner_id: session_id2, common_interests: length(common_interests)}
+                %{
+                  session_id: session_id1,
+                  partner_id: session_id2,
+                  common_interests: length(common_interests)
+                }
               )
 
               :ok
@@ -273,7 +283,7 @@ defmodule OmeglePhoenix.Matchmaker do
            @lock_key,
            node_name,
            "PX",
-           Integer.to_string(@lock_ttl_ms),
+           Integer.to_string(OmeglePhoenix.Config.get_match_leader_ttl_ms()),
            "NX"
          ]) do
       {:ok, "OK"} ->
@@ -286,7 +296,7 @@ defmodule OmeglePhoenix.Matchmaker do
                "1",
                @lock_key,
                node_name,
-               Integer.to_string(@lock_ttl_ms)
+               Integer.to_string(OmeglePhoenix.Config.get_match_leader_ttl_ms())
              ]) do
           {:ok, 1} -> true
           _ -> false

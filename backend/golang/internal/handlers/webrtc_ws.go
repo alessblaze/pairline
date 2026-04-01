@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -17,6 +18,13 @@ import (
 )
 
 var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+var allowedSignalTypes = map[string]struct{}{
+	"ready":  {},
+	"offer":  {},
+	"answer": {},
+	"ice":    {},
+}
 
 const (
 	writeWait         = 10 * time.Second
@@ -178,8 +186,13 @@ func (h *RedisSignalingHub) SendOrQueue(targetSessionID string, payload []byte) 
 			Payload:         payload,
 		})
 		if marshalErr == nil {
-			if publishErr := h.redis.GetClient().Publish(ctx, signalChannel(owner), envelope).Err(); publishErr == nil {
+			delivered, publishErr := h.redis.GetClient().Publish(ctx, signalChannel(owner), envelope).Result()
+			if publishErr == nil && delivered > 0 {
 				return nil
+			}
+
+			if publishErr == nil && delivered == 0 {
+				_ = h.compareAndDelete(ctx, ownerKey(targetSessionID))
 			}
 		}
 	}
@@ -359,7 +372,7 @@ func WebRTCWebSocketHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		sessionID := c.Query("session_id")
 		sessionToken := c.Query("session_token")
-		if sessionID == "" || sessionToken == "" || len(sessionID) > 100 || len(sessionToken) > 128 {
+		if sessionID == "" || sessionToken == "" || len(sessionID) > 100 || len(sessionToken) > 128 || !uuidRe.MatchString(sessionID) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid session_id or session_token format"})
 			return
 		}
@@ -445,13 +458,8 @@ func WebRTCWebSocketHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 				continue
 			}
 
-			if !uuidRe.MatchString(msg.ToSessionID) {
-				log.Printf("WebRTC WS dropping payload due to malformed ToSessionID from %s", sessionID)
-				continue
-			}
-
-			if len(msg.Data) > 32768 {
-				log.Printf("WebRTC WS dropping oversized payload from %s", sessionID)
+			if err := validateSignalingMessage(msg); err != nil {
+				log.Printf("WebRTC WS dropping payload from %s: %v", sessionID, err)
 				continue
 			}
 
@@ -496,4 +504,33 @@ func WebRTCWebSocketHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 			}
 		}
 	}
+}
+
+func validateSignalingMessage(msg SignalingMessage) error {
+	if _, ok := allowedSignalTypes[msg.Type]; !ok {
+		return errors.New("unsupported signaling message type")
+	}
+
+	if !uuidRe.MatchString(msg.ToSessionID) {
+		return errors.New("malformed target session id")
+	}
+
+	rawData, err := json.Marshal(msg.Data)
+	if err != nil {
+		return errors.New("invalid signaling payload")
+	}
+
+	if len(rawData) > 32*1024 {
+		return errors.New("oversized signaling payload")
+	}
+
+	if msg.Type == "ready" {
+		return nil
+	}
+
+	if len(rawData) <= 2 {
+		return errors.New("empty signaling payload")
+	}
+
+	return nil
 }
