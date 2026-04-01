@@ -4,6 +4,12 @@ defmodule OmeglePhoenix.SessionLock do
   """
 
   @lock_ttl_ms 5_000
+  @unlock_script """
+  if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('DEL', KEYS[1])
+  end
+  return 0
+  """
 
   def with_lock(nil, fun), do: fun.()
 
@@ -72,14 +78,16 @@ defmodule OmeglePhoenix.SessionLock do
   end
 
   defp release_lock(session_id, token) do
-    case OmeglePhoenix.Redis.command(["GET", lock_key(session_id)]) do
-      {:ok, ^token} ->
-        OmeglePhoenix.Redis.command(["DEL", lock_key(session_id)])
-        :ok
+    _ =
+      OmeglePhoenix.Redis.command([
+        "EVAL",
+        @unlock_script,
+        "1",
+        lock_key(session_id),
+        token
+      ])
 
-      _ ->
-        :ok
-    end
+    :ok
   end
 
   defp lock_key(session_id), do: "session:lock:" <> session_id

@@ -19,6 +19,6 @@ config :omegle_phoenix, OmeglePhoenixWeb.Endpoint,
     ),
   secret_key_base: System.get_env("SECRET_KEY_BASE") || raise("SECRET_KEY_BASE is not set")
 
-config :omegle_phoenix, OmeglePhoenix.PubSub, adapter: Phoenix.PubSub.PG2
+config :omegle_phoenix, OmeglePhoenix.PubSub, adapter: Phoenix.PubSub.PG
 config :phoenix, :json_library, Jason
 config :logger, level: :info

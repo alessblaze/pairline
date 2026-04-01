@@ -44,6 +44,12 @@ defmodule OmeglePhoenix.Config do
     get("ADMIN_CHANNEL", "admin:action")
   end
 
+  def get_redis_pool_size do
+    get("REDIS_POOL_SIZE", "16")
+    |> String.to_integer()
+    |> max(1)
+  end
+
   def get_cors_origins do
     get("CORS_ORIGINS", "")
   end
@@ -62,5 +68,13 @@ defmodule OmeglePhoenix.Config do
 
   def get_reaper_interval_ms do
     get("REAPER_INTERVAL_MS", "10000") |> String.to_integer()
+  end
+
+  def get_reaper_batch_size do
+    get("REAPER_BATCH_SIZE", "200") |> String.to_integer()
+  end
+
+  def get_match_batch_size do
+    get("MATCH_BATCH_SIZE", "200") |> String.to_integer()
   end
 end

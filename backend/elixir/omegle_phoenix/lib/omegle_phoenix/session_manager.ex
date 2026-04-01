@@ -17,6 +17,7 @@ defmodule OmeglePhoenix.SessionManager do
     :ban_status,
     :ban_reason
   ]
+  @allowed_statuses [:waiting, :matched, :disconnecting]
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -32,17 +33,49 @@ defmodule OmeglePhoenix.SessionManager do
 
   def get_session(_session_id), do: {:error, :not_found}
 
+  def get_sessions(session_ids) when is_list(session_ids) do
+    ordered_ids =
+      session_ids
+      |> Enum.filter(&is_binary/1)
+      |> Enum.uniq()
+
+    case ordered_ids do
+      [] ->
+        {:ok, %{}}
+
+      ids ->
+        keys = Enum.map(ids, &session_key/1)
+
+        case OmeglePhoenix.Redis.command(["MGET" | keys]) do
+          {:ok, payloads} when is_list(payloads) ->
+            sessions =
+              ids
+              |> Enum.zip(payloads)
+              |> Enum.reduce(%{}, fn
+                {_id, nil}, acc ->
+                  acc
+
+                {id, payload}, acc ->
+                  case decode_session(payload) do
+                    {:ok, session} -> Map.put(acc, id, session)
+                    _ -> acc
+                  end
+              end)
+
+            {:ok, sessions}
+
+          _ ->
+            {:ok, %{}}
+        end
+    end
+  end
+
   def get_all_sessions do
     sessions =
       case OmeglePhoenix.Redis.command(["SMEMBERS", @active_sessions_key]) do
         {:ok, session_ids} when is_list(session_ids) ->
-          session_ids
-          |> Enum.map(&get_session/1)
-          |> Enum.flat_map(fn
-            {:ok, session} -> [{session.id, session}]
-            _ -> []
-          end)
-          |> Map.new()
+          {:ok, batched_sessions} = get_sessions(session_ids)
+          batched_sessions
 
         _ ->
           %{}
@@ -55,12 +88,8 @@ defmodule OmeglePhoenix.SessionManager do
     sessions =
       case OmeglePhoenix.Redis.command(["SMEMBERS", ip_sessions_key(ip)]) do
         {:ok, session_ids} when is_list(session_ids) ->
-          session_ids
-          |> Enum.map(&get_session/1)
-          |> Enum.flat_map(fn
-            {:ok, session} -> [session]
-            _ -> []
-          end)
+          {:ok, batched_sessions} = get_sessions(session_ids)
+          Map.values(batched_sessions)
 
         _ ->
           []
@@ -70,6 +99,13 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   def get_sessions_by_ip(_ip), do: {:ok, []}
+
+  def count_active_sessions do
+    case OmeglePhoenix.Redis.command(["SCARD", @active_sessions_key]) do
+      {:ok, count} when is_integer(count) -> count
+      _ -> 0
+    end
+  end
 
   def create_session(session_id, ip, preferences) do
     session_token = generate_session_token()
@@ -271,8 +307,7 @@ defmodule OmeglePhoenix.SessionManager do
 
   defp normalize_updates(_updates), do: %{}
 
-  defp normalize_field(:status, value) when is_binary(value), do: String.to_atom(value)
-  defp normalize_field(:status, value) when is_atom(value), do: value
+  defp normalize_field(:status, value), do: normalize_status(value)
   defp normalize_field(:preferences, value), do: normalize_preferences(value)
   defp normalize_field(:signaling_ready, value), do: truthy?(value)
   defp normalize_field(:webrtc_started, value), do: truthy?(value)
@@ -342,7 +377,7 @@ defmodule OmeglePhoenix.SessionManager do
   defp deserialize_session(_raw), do: {:error, :invalid}
 
   defp deserialize_field(:status, nil), do: :waiting
-  defp deserialize_field(:status, value) when is_binary(value), do: String.to_atom(value)
+  defp deserialize_field(:status, value), do: normalize_status(value)
   defp deserialize_field(:signaling_ready, value), do: truthy?(value)
   defp deserialize_field(:webrtc_started, value), do: truthy?(value)
   defp deserialize_field(:ban_status, value), do: truthy?(value)
@@ -358,6 +393,19 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   defp normalize_preferences(_), do: %{"mode" => "text", "interests" => ""}
+
+  defp normalize_status(value) when is_atom(value) and value in @allowed_statuses, do: value
+
+  defp normalize_status(value) when is_binary(value) do
+    case value do
+      "waiting" -> :waiting
+      "matched" -> :matched
+      "disconnecting" -> :disconnecting
+      _ -> :waiting
+    end
+  end
+
+  defp normalize_status(_value), do: :waiting
 
   defp safe_string(nil, default), do: default
   defp safe_string(value, _default) when is_binary(value), do: value

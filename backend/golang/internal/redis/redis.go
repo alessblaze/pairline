@@ -95,7 +95,7 @@ func (r *Client) PublishUnbanIPAction(ctx context.Context, ipAddress string) err
 
 func (r *Client) PublishDisconnectAction(ctx context.Context, sessionID string) error {
 	data := map[string]interface{}{
-		"action":     "disconnect",
+		"action":     "emergency_disconnect",
 		"session_id": sessionID,
 		"timestamp":  time.Now().UnixMilli(),
 	}

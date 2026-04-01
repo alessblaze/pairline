@@ -1,381 +1,58 @@
 defmodule OmeglePhoenix.Redis do
-  use GenServer
-  require Logger
+  use Supervisor
 
-  defstruct pool: [], subscribers: %{}
+  alias OmeglePhoenix.Redis.{AdminSubscriber, Connection}
+
+  @registry __MODULE__.Registry
+  @default_timeout 5_000
 
   def start_link(opts \\ []) do
-    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+    Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  def command(cmd) do
-    GenServer.call(__MODULE__, {:command, cmd})
+  def command(cmd, opts \\ []) do
+    call_worker({:command, cmd}, opts)
   end
 
-  def pipeline(commands) do
-    GenServer.call(__MODULE__, {:pipeline, commands})
+  def pipeline(commands, opts \\ []) do
+    call_worker({:pipeline, commands}, opts)
   end
 
-  def publish(channel, message) do
-    GenServer.call(__MODULE__, {:publish, channel, message})
+  def publish(channel, message, opts \\ []) do
+    payload = Jason.encode!(message)
+    command(["PUBLISH", channel, payload], opts)
   end
 
-  def subscribe(channel) do
-    GenServer.call(__MODULE__, {:subscribe, channel}, :infinity)
-  end
-
-  def unsubscribe(channel) do
-    GenServer.call(__MODULE__, {:unsubscribe, channel})
-  end
+  def subscribe(_channel), do: {:error, :unsupported}
+  def unsubscribe(_channel), do: {:error, :unsupported}
 
   @impl true
   def init(_opts) do
-    host = OmeglePhoenix.Config.get_redis_host()
-    port = OmeglePhoenix.Config.get_redis_port()
-    password = OmeglePhoenix.Config.get_redis_password()
-    admin_channel = OmeglePhoenix.Config.get_admin_channel()
+    pool_size = OmeglePhoenix.Config.get_redis_pool_size()
 
-    pool_size = 10
-    pool = Enum.map(1..pool_size, fn _ -> connect(host, port, password) end)
+    children =
+      [
+        {Registry, keys: :unique, name: @registry}
+      ] ++
+        Enum.map(0..(pool_size - 1), fn index ->
+          Supervisor.child_spec({Connection, [name: via(index)]}, id: {:redis_connection, index})
+        end) ++
+        [AdminSubscriber]
 
-    subscribers =
-      case start_subscription(host, port, password, admin_channel) do
-        {:ok, sub_conn} ->
-          %{admin_channel => %{connection: sub_conn, channel: admin_channel}}
-
-        {:error, reason} ->
-          Logger.error(
-            "Failed to subscribe to admin channel #{admin_channel}: #{inspect(reason)}"
-          )
-
-          %{}
-      end
-
-    {:ok, %__MODULE__{pool: pool, subscribers: subscribers}}
+    Supervisor.init(children, strategy: :one_for_one)
   end
 
-  @impl true
-  def handle_call({:command, cmd}, _from, state) do
-    [conn | rest] = state.pool
-    {result, conn, state} = exec_command_with_reconnect(conn, cmd, state)
-    new_pool = rest ++ [conn]
-    {:reply, result, %{state | pool: new_pool}}
+  defp call_worker(message, opts) do
+    timeout = Keyword.get(opts, :timeout, @default_timeout)
+    worker = pick_worker()
+    GenServer.call(worker, message, timeout)
   end
 
-  def handle_call({:pipeline, commands}, _from, state) do
-    [conn | rest] = state.pool
-    {result, conn, state} = exec_pipeline_with_reconnect(conn, commands, state)
-    new_pool = rest ++ [conn]
-    {:reply, result, %{state | pool: new_pool}}
+  defp pick_worker do
+    pool_size = OmeglePhoenix.Config.get_redis_pool_size()
+    index = :erlang.phash2({self(), System.unique_integer([:positive, :monotonic])}, pool_size)
+    via(index)
   end
 
-  def handle_call({:publish, channel, message}, _from, state) do
-    [conn | rest] = state.pool
-    {result, conn, state} =
-      exec_command_with_reconnect(conn, ["PUBLISH", channel, Jason.encode!(message)], state)
-
-    new_pool = rest ++ [conn]
-    {:reply, result, %{state | pool: new_pool}}
-  end
-
-  def handle_call({:subscribe, channel}, {caller_pid, _tag}, state) do
-    host = OmeglePhoenix.Config.get_redis_host()
-    port = OmeglePhoenix.Config.get_redis_port()
-    password = OmeglePhoenix.Config.get_redis_password()
-
-    opts = [host: host, port: port]
-
-    opts =
-      if password do
-        Keyword.put(opts, :password, password)
-      else
-        opts
-      end
-
-    case Redix.PubSub.start_link(opts) do
-      {:ok, sub_conn} ->
-        case Redix.PubSub.subscribe(sub_conn, channel, self()) do
-          {:ok, _ref} ->
-            new_subscribers =
-              Map.put(state.subscribers, caller_pid, %{
-                connection: sub_conn,
-                channel: channel
-              })
-
-            {:reply, {:ok, sub_conn}, %{state | subscribers: new_subscribers}}
-
-          {:error, reason} ->
-            Redix.PubSub.stop(sub_conn)
-            {:reply, {:error, reason}, state}
-        end
-
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
-    end
-  end
-
-  def handle_call({:unsubscribe, channel}, _from, state) do
-    case find_subscriber_by_channel(channel, state.subscribers) do
-      {:ok, pid, sub_data} ->
-        conn = sub_data.connection
-        Redix.PubSub.unsubscribe(conn, channel, self())
-        Redix.PubSub.stop(conn)
-        new_subscribers = Map.delete(state.subscribers, pid)
-        {:reply, :ok, %{state | subscribers: new_subscribers}}
-
-      :not_found ->
-        {:reply, {:error, :not_found}, state}
-    end
-  end
-
-  def handle_call(_request, _from, state) do
-    {:reply, {:error, :unknown_request}, state}
-  end
-
-  @impl true
-  def handle_cast(_msg, state) do
-    {:noreply, state}
-  end
-
-  @impl true
-  def handle_info({:redix_pubsub, _pid, _ref, :subscribed, _}, state) do
-    {:noreply, state}
-  end
-
-  def handle_info({:redix_pubsub, _pid, _ref, :unsubscribed, _}, state) do
-    {:noreply, state}
-  end
-
-  def handle_info(
-        {:redix_pubsub, _pid, _ref, :message, %{channel: channel, payload: message}},
-        state
-      ) do
-    handle_admin_message(channel, message)
-    {:noreply, state}
-  end
-
-  def handle_info({:redix_pubsub, _pid, _ref, :disconnected, _}, state) do
-    Logger.warning("Redis pub/sub disconnected")
-    {:noreply, state}
-  end
-
-  def handle_info({:DOWN, _ref, :process, pid, _reason}, state) do
-    case Map.get(state.subscribers, pid) do
-      nil ->
-        {:noreply, state}
-
-      sub_data ->
-        try do
-          Redix.PubSub.stop(sub_data.connection)
-        rescue
-          _ -> :ok
-        end
-
-        new_subscribers = Map.delete(state.subscribers, pid)
-        {:noreply, %{state | subscribers: new_subscribers}}
-    end
-  end
-
-  def handle_info(_info, state) do
-    {:noreply, state}
-  end
-
-  @impl true
-  def terminate(_reason, state) do
-    Enum.each(state.pool, fn conn ->
-      try do
-        Redix.stop(conn)
-      rescue
-        _ -> :ok
-      end
-    end)
-
-    Enum.each(state.subscribers, fn {_pid, sub_data} ->
-      try do
-        Redix.PubSub.stop(sub_data.connection)
-      rescue
-        _ -> :ok
-      end
-    end)
-
-    :ok
-  end
-
-  defp connect(host, port, password) do
-    opts = [host: host, port: port]
-
-    opts =
-      if password do
-        Keyword.put(opts, :password, password)
-      else
-        opts
-      end
-
-    case Redix.start_link(opts) do
-      {:ok, pid} -> pid
-      {:error, reason} -> raise "Redis connection failed: #{inspect(reason)}"
-    end
-  end
-
-  defp exec_command_with_reconnect(conn, cmd, state) do
-    case Redix.command(conn, cmd) do
-      {:error, %Redix.ConnectionError{reason: :closed}} ->
-        reconnect_and_retry(conn, state, fn new_conn -> Redix.command(new_conn, cmd) end)
-
-      result ->
-        {result, conn, state}
-    end
-  end
-
-  defp exec_pipeline_with_reconnect(conn, commands, state) do
-    case Redix.pipeline(conn, commands) do
-      {:error, %Redix.ConnectionError{reason: :closed}} ->
-        reconnect_and_retry(conn, state, fn new_conn -> Redix.pipeline(new_conn, commands) end)
-
-      result ->
-        {result, conn, state}
-    end
-  end
-
-  defp reconnect_and_retry(conn, state, callback) do
-    host = OmeglePhoenix.Config.get_redis_host()
-    port = OmeglePhoenix.Config.get_redis_port()
-    password = OmeglePhoenix.Config.get_redis_password()
-
-    Logger.warning("Redis connection closed; reconnecting pooled connection")
-
-    try do
-      Redix.stop(conn)
-    rescue
-      _ -> :ok
-    end
-
-    new_conn = connect(host, port, password)
-    result = callback.(new_conn)
-    {result, new_conn, state}
-  end
-
-  defp start_subscription(host, port, password, channel) do
-    opts = [host: host, port: port]
-
-    opts =
-      if password do
-        Keyword.put(opts, :password, password)
-      else
-        opts
-      end
-
-    with {:ok, sub_conn} <- Redix.PubSub.start_link(opts),
-         {:ok, _ref} <- Redix.PubSub.subscribe(sub_conn, channel, self()) do
-      {:ok, sub_conn}
-    else
-      {:error, _reason} = error ->
-        error
-    end
-  end
-
-  defp find_subscriber_by_channel(channel, subscribers) do
-    Enum.find(subscribers, :not_found, fn {_pid, sub_data} ->
-      sub_data.channel == channel
-    end)
-  end
-
-  defp handle_admin_message("admin:action", message) do
-    case Jason.decode(message) do
-      {:ok, %{"action" => action} = data} ->
-        handle_admin_action(action, data)
-
-      _ ->
-        Logger.error("Invalid admin message: #{message}")
-    end
-  end
-
-  defp handle_admin_message(channel, message) do
-    Logger.debug("Unknown channel: #{channel}, message: #{message}")
-  end
-
-  defp handle_admin_action("emergency_ban", data) do
-    session_id = Map.get(data, "session_id")
-    reason = Map.get(data, "reason", "admin action")
-
-    if session_id && uuid?(session_id) do
-      OmeglePhoenix.SessionManager.emergency_ban(session_id, reason)
-      Logger.info("Emergency ban: #{session_id} - #{reason}")
-    else
-      Logger.error("Emergency ban: missing or invalid session_id")
-    end
-  end
-
-  defp handle_admin_action("emergency_ban_ip", data) do
-    ip = Map.get(data, "ip")
-    reason = Map.get(data, "reason", "admin action")
-
-    if ip && valid_ip?(ip) do
-      OmeglePhoenix.SessionManager.emergency_ban_ip(ip, reason)
-      Logger.info("Emergency ban IP: #{ip} - #{reason}")
-    else
-      Logger.error("Emergency ban IP: missing or invalid ip")
-    end
-  end
-
-  defp handle_admin_action("emergency_disconnect", data) do
-    session_id = Map.get(data, "session_id")
-
-    if session_id && uuid?(session_id) do
-      OmeglePhoenix.SessionManager.emergency_disconnect(session_id)
-      Logger.info("Emergency disconnect: #{session_id}")
-    else
-      Logger.error("Emergency disconnect: missing or invalid session_id")
-    end
-  end
-
-  defp handle_admin_action("emergency_unban", data) do
-    session_id = Map.get(data, "session_id")
-
-    if session_id && uuid?(session_id) do
-      OmeglePhoenix.SessionManager.emergency_unban(session_id)
-      Logger.info("Emergency unban: #{session_id}")
-    else
-      Logger.error("Emergency unban: missing or invalid session_id")
-    end
-  end
-
-  defp handle_admin_action("emergency_unban_ip", data) do
-    ip = Map.get(data, "ip")
-
-    if ip && valid_ip?(ip) do
-      OmeglePhoenix.SessionManager.emergency_unban_ip(ip)
-      Logger.info("Emergency unban IP: #{ip}")
-    else
-      Logger.error("Emergency unban IP: missing or invalid ip")
-    end
-  end
-
-  defp handle_admin_action("server_shutdown", _data) do
-    Logger.warning(
-      "Server shutdown action received via Redis but rejected — not supported via pub/sub"
-    )
-  end
-
-  defp handle_admin_action(action, data) do
-    Logger.warning("Unknown admin action: #{action}, data: #{inspect(data)}")
-  end
-
-  defp uuid?(str) when is_binary(str) do
-    Regex.match?(
-      ~r/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/,
-      str
-    )
-  end
-
-  defp uuid?(_), do: false
-
-  defp valid_ip?(str) when is_binary(str) do
-    case :inet.parse_address(String.to_charlist(str)) do
-      {:ok, _} -> true
-      _ -> false
-    end
-  end
-
-  defp valid_ip?(_), do: false
+  defp via(index), do: {:via, Registry, {@registry, {:conn, index}}}
 end

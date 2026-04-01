@@ -31,72 +31,25 @@ export class WebSocketClient {
       return this.connectPromise;
     }
 
+    if (this.channel && this.channel.state === 'joining') {
+      return Promise.resolve();
+    }
+
     this.isConnecting = true;
 
     this.connectPromise = new Promise((resolve, reject) => {
       try {
-        this.socket = new Socket(this.url);
+        this.ensureSocket();
+        this.ensureChannel();
 
-        this.socket.onOpen(() => {
-          console.log('Phoenix socket connected');
-        });
+        this.socket?.connect();
+        const channel = this.channel;
 
-        this.socket.onError((error: unknown) => {
-          console.error('Phoenix socket error:', error);
-        });
+        if (!channel) {
+          throw new Error('Channel is not initialized');
+        }
 
-        this.socket.onClose((event: unknown) => {
-          console.log('Phoenix socket disconnected', event);
-          this.isConnecting = false;
-          this.channel = null;
-          this.closeHandlers.forEach(handler => handler());
-
-          if (this.shouldReconnect) {
-            this.handleReconnect();
-          }
-        });
-
-        this.socket.connect();
-
-        this.channel = this.socket.channel(this.topic, {});
-
-        this.channel.on('match', (payload: Omit<Message, 'type'>) => {
-          this.dispatchMessage({ type: 'match', ...payload });
-        });
-
-        this.channel.on('message', (payload: Omit<Message, 'type'>) => {
-          this.dispatchMessage({ type: 'message', ...payload });
-        });
-
-        this.channel.on('typing', (payload: Omit<Message, 'type'>) => {
-          this.dispatchMessage({ type: 'typing', ...payload });
-        });
-
-        this.channel.on('webrtc_start', (payload: Omit<Message, 'type'>) => {
-          this.dispatchMessage({ type: 'webrtc_start', ...payload });
-        });
-
-        this.channel.on('offer', (payload: Omit<Message, 'type'>) => {
-          this.dispatchMessage({ type: 'offer', ...payload });
-        });
-
-        this.channel.on('answer', (payload: Omit<Message, 'type'>) => {
-          this.dispatchMessage({ type: 'answer', ...payload });
-        });
-
-        this.channel.on('ice', (payload: Omit<Message, 'type'>) => {
-          this.dispatchMessage({ type: 'ice', ...payload });
-        });
-
-        this.channel.on('disconnected', (payload: Omit<Message, 'type'>) => {
-          this.dispatchMessage({ type: 'disconnected', ...payload });
-        });
-
-        this.channel.on('timeout', (payload: Omit<Message, 'type'>) => {
-          this.dispatchMessage({ type: 'timeout', ...payload });
-        });
-
-        this.channel.join()
+        channel.join()
           .receive('ok', () => {
             this.isConnecting = false;
             this.connectPromise = null;
@@ -117,6 +70,83 @@ export class WebSocketClient {
     });
 
     return this.connectPromise;
+  }
+
+  private ensureSocket() {
+    if (this.socket) {
+      return;
+    }
+
+    this.socket = new Socket(this.url);
+
+    this.socket.onOpen(() => {
+      console.log('Phoenix socket connected');
+    });
+
+    this.socket.onError((error: unknown) => {
+      console.error('Phoenix socket error:', error);
+    });
+
+    this.socket.onClose((event: unknown) => {
+      console.log('Phoenix socket disconnected', event);
+      this.isConnecting = false;
+      this.connectPromise = null;
+      this.channel = null;
+      this.socket = null;
+      this.closeHandlers.forEach(handler => handler());
+
+      if (this.shouldReconnect) {
+        this.handleReconnect();
+      }
+    });
+  }
+
+  private ensureChannel() {
+    if (!this.socket) {
+      throw new Error('Socket is not initialized');
+    }
+
+    if (this.channel && this.channel.state !== 'closed') {
+      return;
+    }
+
+    this.channel = this.socket.channel(this.topic, {});
+
+    this.channel.on('match', (payload: Omit<Message, 'type'>) => {
+      this.dispatchMessage({ type: 'match', ...payload });
+    });
+
+    this.channel.on('message', (payload: Omit<Message, 'type'>) => {
+      this.dispatchMessage({ type: 'message', ...payload });
+    });
+
+    this.channel.on('typing', (payload: Omit<Message, 'type'>) => {
+      this.dispatchMessage({ type: 'typing', ...payload });
+    });
+
+    this.channel.on('webrtc_start', (payload: Omit<Message, 'type'>) => {
+      this.dispatchMessage({ type: 'webrtc_start', ...payload });
+    });
+
+    this.channel.on('offer', (payload: Omit<Message, 'type'>) => {
+      this.dispatchMessage({ type: 'offer', ...payload });
+    });
+
+    this.channel.on('answer', (payload: Omit<Message, 'type'>) => {
+      this.dispatchMessage({ type: 'answer', ...payload });
+    });
+
+    this.channel.on('ice', (payload: Omit<Message, 'type'>) => {
+      this.dispatchMessage({ type: 'ice', ...payload });
+    });
+
+    this.channel.on('disconnected', (payload: Omit<Message, 'type'>) => {
+      this.dispatchMessage({ type: 'disconnected', ...payload });
+    });
+
+    this.channel.on('timeout', (payload: Omit<Message, 'type'>) => {
+      this.dispatchMessage({ type: 'timeout', ...payload });
+    });
   }
 
   private handleReconnect() {
@@ -184,7 +214,9 @@ export class WebSocketClient {
       this.reconnectTimeout = null;
     }
 
-    this.channel?.leave();
+    if (this.channel && this.channel.state !== 'closed') {
+      this.channel.leave();
+    }
     this.channel = null;
     this.socket?.disconnect();
     this.socket = null;

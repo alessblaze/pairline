@@ -2,85 +2,85 @@ defmodule OmeglePhoenix.Matchmaker do
   use GenServer
   require Logger
 
-  defstruct match_timer: nil
-
-  @queue_key "matchmaking_queue"
+  @mode_queue_prefix "matchmaking_queue"
   @lock_key "matchmaking:leader"
   @lock_ttl_ms 500
+  @renew_lock_script """
+  if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('PEXPIRE', KEYS[1], ARGV[2])
+  end
+  return 0
+  """
+
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
   def join_queue(session_id, preferences) do
-    GenServer.call(__MODULE__, {:join_queue, session_id, preferences})
-  end
-
-  def leave_queue(session_id) do
-    GenServer.call(__MODULE__, {:leave_queue, session_id})
-  end
-
-  def check_match(session_id) do
-    GenServer.call(__MODULE__, {:check_match, session_id})
-  end
-
-  @impl true
-  def init(_opts) do
-    send(self(), :check_matches)
-    {:ok, %__MODULE__{}}
-  end
-
-  @impl true
-  def handle_call({:join_queue, session_id, _preferences}, _from, state) do
     timestamp = System.system_time(:millisecond)
 
     OmeglePhoenix.Redis.command([
       "ZADD",
-      @queue_key,
+      queue_key(preferences),
       to_string(timestamp),
       session_id
     ])
 
     :telemetry.execute([:omegle_phoenix, :matchmaking, :queued], %{count: 1}, %{session_id: session_id})
-
-    {:reply, :ok, state}
+    :ok
   end
 
-  def handle_call({:leave_queue, session_id}, _from, state) do
-    OmeglePhoenix.Redis.command(["ZREM", @queue_key, session_id])
+  def leave_queue(session_id) do
+    Enum.each(queue_keys(), fn queue_key ->
+      OmeglePhoenix.Redis.command(["ZREM", queue_key, session_id])
+    end)
 
-    {:reply, :ok, state}
+    :ok
   end
 
-  def handle_call({:check_match, session_id}, _from, state) do
+  def check_match(session_id) do
     case OmeglePhoenix.SessionManager.get_session(session_id) do
       {:ok, session} when session.status == :matched ->
         case OmeglePhoenix.SessionManager.get_session(session.partner_id) do
           {:ok, partner_session} ->
-            {:reply, {:matched, partner_session}, state}
+            {:matched, partner_session}
 
           {:error, :not_found} ->
-            {:reply, {:waiting, :none}, state}
+            {:waiting, :none}
         end
 
       _ ->
-        {:reply, {:waiting, :none}, state}
+        {:waiting, :none}
     end
   end
 
-  def handle_call(_request, _from, state) do
-    {:reply, {:error, :unknown_request}, state}
+  def queue_keys do
+    Enum.map(["lobby", "text", "video"], &queue_key/1)
+  end
+
+  def queue_depths do
+    Map.new(queue_keys(), fn key ->
+      count =
+        case OmeglePhoenix.Redis.command(["ZCARD", key]) do
+          {:ok, value} when is_integer(value) -> value
+          _ -> 0
+        end
+
+      {key, count}
+    end)
   end
 
   @impl true
-  def handle_cast(_msg, state) do
-    {:noreply, state}
+  def init(_opts) do
+    send(self(), :check_matches)
+    {:ok, %{}}
   end
 
   @impl true
   def handle_info(:check_matches, state) do
     if match_leader?() do
       try do
-        do_matching()
+        Enum.each(queue_keys(), &do_matching/1)
       rescue
         e -> Logger.error("Matching error: #{inspect(e)}")
       end
@@ -99,19 +99,23 @@ defmodule OmeglePhoenix.Matchmaker do
     :ok
   end
 
-  defp do_matching do
+  defp do_matching(queue_key) do
     now = System.system_time(:millisecond)
     expiration_time = now - OmeglePhoenix.Config.get_match_timeout()
+    batch_size = OmeglePhoenix.Config.get_match_batch_size()
 
     case OmeglePhoenix.Redis.command([
            "ZRANGEBYSCORE",
-           @queue_key,
+           queue_key,
            "0",
-           to_string(expiration_time)
+           to_string(expiration_time),
+           "LIMIT",
+           "0",
+           Integer.to_string(batch_size)
          ]) do
       {:ok, expired_sessions} ->
         Enum.each(expired_sessions, fn session_id ->
-          OmeglePhoenix.Redis.command(["ZREM", @queue_key, session_id])
+          OmeglePhoenix.Redis.command(["ZREM", queue_key, session_id])
 
           case OmeglePhoenix.SessionManager.get_session(session_id) do
             {:ok, session} when session.status == :waiting ->
@@ -130,13 +134,13 @@ defmodule OmeglePhoenix.Matchmaker do
 
     case OmeglePhoenix.Redis.command([
            "ZRANGEBYSCORE",
-           @queue_key,
+           queue_key,
            "0",
            "+inf",
            "WITHSCORES",
            "LIMIT",
            "0",
-           "100"
+           Integer.to_string(batch_size)
          ]) do
       {:ok, []} ->
         :ok
@@ -146,52 +150,52 @@ defmodule OmeglePhoenix.Matchmaker do
 
       {:ok, session_ids_with_scores} when is_list(session_ids_with_scores) ->
         now_ms = System.system_time(:millisecond)
+        entries = Enum.chunk_every(session_ids_with_scores, 2)
+        session_ids = Enum.map(entries, fn [sid, _score_str] -> sid end)
+        {:ok, sessions_by_id} = OmeglePhoenix.SessionManager.get_sessions(session_ids)
 
         sessions_with_prefs =
-          session_ids_with_scores
-          |> Enum.chunk_every(2)
-          |> Enum.map(fn
-            [sid, score_str] ->
-              case OmeglePhoenix.SessionManager.get_session(sid) do
-                {:ok, session} ->
+          Enum.reduce(entries, [], fn
+            [sid, score_str], acc ->
+              case Map.get(sessions_by_id, sid) do
+                nil ->
+                  acc
+
+                session ->
                   join_time =
                     case Float.parse(score_str) do
                       {f, _} -> trunc(f)
                       :error -> now_ms
                     end
 
-                  wait_time_ms = now_ms - join_time
-                  {sid, session, wait_time_ms}
-
-                _ ->
-                  nil
+                  [{sid, session, now_ms - join_time} | acc]
               end
 
-            _ ->
-              nil
+            _entry, acc ->
+              acc
           end)
-          |> Enum.reject(&is_nil/1)
+          |> Enum.reverse()
 
-        match_from_pool(sessions_with_prefs, MapSet.new())
+        match_from_pool(queue_key, sessions_with_prefs, MapSet.new())
 
       _ ->
         :ok
     end
   end
 
-  defp match_from_pool([], _matched), do: :ok
+  defp match_from_pool(_queue_key, [], _matched), do: :ok
 
-  defp match_from_pool([{sid1, session1, wait1} | rest], matched) do
+  defp match_from_pool(queue_key, [{sid1, session1, wait1} | rest], matched) do
     if MapSet.member?(matched, sid1) do
-      match_from_pool(rest, matched)
+      match_from_pool(queue_key, rest, matched)
     else
       case find_compatible_partner(sid1, session1, wait1, rest, matched) do
         {sid2, _session2, remaining} ->
-          pair_users(sid1, sid2)
-          match_from_pool(remaining, MapSet.put(MapSet.put(matched, sid1), sid2))
+          pair_users(queue_key, sid1, sid2)
+          match_from_pool(queue_key, remaining, MapSet.put(MapSet.put(matched, sid1), sid2))
 
         nil ->
-          match_from_pool(rest, matched)
+          match_from_pool(queue_key, rest, matched)
       end
     end
   end
@@ -214,10 +218,10 @@ defmodule OmeglePhoenix.Matchmaker do
     end
   end
 
-  defp pair_users(session_id1, session_id2) do
+  defp pair_users(queue_key, session_id1, session_id2) do
     OmeglePhoenix.SessionLock.with_locks([session_id1, session_id2], fn ->
-      OmeglePhoenix.Redis.command(["ZREM", @queue_key, session_id1])
-      OmeglePhoenix.Redis.command(["ZREM", @queue_key, session_id2])
+      OmeglePhoenix.Redis.command(["ZREM", queue_key, session_id1])
+      OmeglePhoenix.Redis.command(["ZREM", queue_key, session_id2])
 
       with {:ok, session1} <- OmeglePhoenix.SessionManager.get_session(session_id1),
            {:ok, session2} <- OmeglePhoenix.SessionManager.get_session(session_id2),
@@ -276,13 +280,16 @@ defmodule OmeglePhoenix.Matchmaker do
         true
 
       _ ->
-        case OmeglePhoenix.Redis.command(["GET", @lock_key]) do
-          {:ok, ^node_name} ->
-            OmeglePhoenix.Redis.command(["PEXPIRE", @lock_key, Integer.to_string(@lock_ttl_ms)])
-            true
-
-          _ ->
-            false
+        case OmeglePhoenix.Redis.command([
+               "EVAL",
+               @renew_lock_script,
+               "1",
+               @lock_key,
+               node_name,
+               Integer.to_string(@lock_ttl_ms)
+             ]) do
+          {:ok, 1} -> true
+          _ -> false
         end
     end
   end
@@ -378,4 +385,13 @@ defmodule OmeglePhoenix.Matchmaker do
     do: :erlang.float_to_binary(value, [:compact])
 
   defp safe_string(_value, default), do: default
+
+  defp queue_key(%{"mode" => mode}), do: queue_key(mode)
+  defp queue_key(%{mode: mode}), do: queue_key(mode)
+
+  defp queue_key(mode) when mode in ["lobby", "text", "video"] do
+    "#{@mode_queue_prefix}:#{mode}"
+  end
+
+  defp queue_key(_mode), do: "#{@mode_queue_prefix}:text"
 end
