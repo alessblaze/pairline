@@ -26,11 +26,26 @@ type Server struct {
 	redis        *redis.Client
 	sharedSecret string
 	jwtSecret    string
+	serviceName  string
+	enableAdmin  bool
+	enablePublic bool
 }
 
 const adminCSRFCookieName = "admin_csrf_token"
 
 func NewServer() *Server {
+	return newServer(true, true, "omegle-go-service")
+}
+
+func NewPublicServer() *Server {
+	return newServer(true, false, "omegle-go-public")
+}
+
+func NewAdminServer() *Server {
+	return newServer(false, true, "omegle-go-admin")
+}
+
+func newServer(enablePublic, enableAdmin bool, serviceName string) *Server {
 	db := storage.NewDatabase()
 	redisClient := redis.NewClient()
 
@@ -39,12 +54,15 @@ func NewServer() *Server {
 		log.Fatal("SHARED_SECRET environment variable is required")
 	}
 
-	jwtSecret := os.Getenv("JWT_SECRET")
-	if jwtSecret == "" {
-		log.Fatal("JWT_SECRET environment variable is required")
-	}
-	if len(jwtSecret) < 32 {
-		log.Fatal("JWT_SECRET must be at least 32 characters")
+	jwtSecret := ""
+	if enableAdmin {
+		jwtSecret = os.Getenv("JWT_SECRET")
+		if jwtSecret == "" {
+			log.Fatal("JWT_SECRET environment variable is required")
+		}
+		if len(jwtSecret) < 32 {
+			log.Fatal("JWT_SECRET must be at least 32 characters")
+		}
 	}
 
 	s := &Server{
@@ -52,6 +70,9 @@ func NewServer() *Server {
 		redis:        redisClient,
 		sharedSecret: sharedSecret,
 		jwtSecret:    jwtSecret,
+		serviceName:  serviceName,
+		enableAdmin:  enableAdmin,
+		enablePublic: enablePublic,
 		router:       gin.New(),
 	}
 
@@ -60,10 +81,15 @@ func NewServer() *Server {
 		log.Fatalf("Failed to configure trusted proxies: %v", err)
 	}
 
-	s.syncActiveBansToRedis()
+	if enablePublic || enableAdmin {
+		s.syncActiveBansToRedis()
+	}
+
 	s.setupRoutes()
 
-	handlers.Hub.StartBackgroundGC(redisClient)
+	if enablePublic {
+		handlers.Signaling.Start(redisClient)
+	}
 
 	return s
 }
@@ -160,37 +186,41 @@ func (s *Server) setupRoutes() {
 
 	s.router.Use(cors.New(corsConfig))
 
-	s.router.GET("/health", handlers.HealthHandlerGin)
+	s.router.GET("/health", handlers.HealthHandlerGin(s.serviceName))
 
-	admin := s.router.Group("/api/v1/admin")
-	{
-		admin.POST("/login", handlers.LoginHandlerGin)
-
-		adminAuth := admin.Group("")
-		adminAuth.Use(s.JWTAuthMiddleware())
-		adminAuth.Use(AdminCSRFMiddleware(allowedOrigins))
+	if s.enableAdmin {
+		admin := s.router.Group("/api/v1/admin")
 		{
-			adminAuth.GET("/reports", handlers.GetReportsHandlerGin)
-			adminAuth.PUT("/reports/:id", handlers.UpdateReportHandlerGin)
-			adminAuth.GET("/bans", handlers.GetBansHandlerGin)
-			adminAuth.POST("/ban", handlers.CreateBanHandlerGin)
-			adminAuth.DELETE("/ban/:session_id", handlers.DeleteBanHandlerGin)
+			admin.POST("/login", handlers.LoginHandlerGin)
 
-			adminAuth.Use(s.RoleAuthMiddleware([]string{"admin", "root"}))
-			adminAuth.POST("/accounts", handlers.CreateAdminHandlerGin)
-			adminAuth.DELETE("/accounts/:username", handlers.DeleteAdminHandlerGin)
+			adminAuth := admin.Group("")
+			adminAuth.Use(s.JWTAuthMiddleware())
+			adminAuth.Use(AdminCSRFMiddleware(allowedOrigins))
+			{
+				adminAuth.GET("/reports", handlers.GetReportsHandlerGin)
+				adminAuth.PUT("/reports/:id", handlers.UpdateReportHandlerGin)
+				adminAuth.GET("/bans", handlers.GetBansHandlerGin)
+				adminAuth.POST("/ban", handlers.CreateBanHandlerGin(s.redis))
+				adminAuth.DELETE("/ban/:session_id", handlers.DeleteBanHandlerGin(s.redis))
+
+				adminAuth.Use(s.RoleAuthMiddleware([]string{"admin", "root"}))
+				adminAuth.POST("/accounts", handlers.CreateAdminHandlerGin)
+				adminAuth.DELETE("/accounts/:username", handlers.DeleteAdminHandlerGin)
+			}
 		}
 	}
 
-	webrtc := s.router.Group("/api/v1/webrtc")
-	{
-		webrtc.GET("/ws", handlers.WebRTCWebSocketHandlerGin(s.redis))
-		webrtc.GET("/turn", handlers.GetTURNCredentials)
-	}
+	if s.enablePublic {
+		webrtc := s.router.Group("/api/v1/webrtc")
+		{
+			webrtc.GET("/ws", handlers.WebRTCWebSocketHandlerGin(s.redis))
+			webrtc.GET("/turn", handlers.GetTURNCredentials(s.redis))
+		}
 
-	moderation := s.router.Group("/api/v1/moderation")
-	{
-		moderation.POST("/report", handlers.CreateReportHandlerGin)
+		moderation := s.router.Group("/api/v1/moderation")
+		{
+			moderation.POST("/report", handlers.CreateReportHandlerGin(s.redis))
+		}
 	}
 }
 

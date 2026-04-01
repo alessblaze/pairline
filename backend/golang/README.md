@@ -1,6 +1,6 @@
 # Go Backend
 
-Go service for moderation, admin APIs, and TURN credential generation.
+Go services for public WebRTC/report traffic and separate admin APIs.
 
 ## Local development
 
@@ -11,7 +11,25 @@ go mod download
 go run .
 ```
 
-The default port is `8082`.
+The legacy combined binary defaults to port `8082`.
+
+## Binary layout
+
+- `go run .`
+  Starts the legacy combined binary with both public and admin routes.
+- `go run ./cmd/public`
+  Starts the public binary only:
+  - `GET /health`
+  - `POST /api/v1/moderation/report`
+  - `GET /api/v1/webrtc/ws`
+  - `GET /api/v1/webrtc/turn`
+- `go run ./cmd/admin`
+  Starts the admin binary only:
+  - `GET /health`
+  - `POST /api/v1/admin/login`
+  - `GET /api/v1/admin/reports`
+  - `POST /api/v1/admin/ban`
+  - account-management routes
 
 ## Environment
 
@@ -26,18 +44,26 @@ Copy `.env.example` to `.env` and review:
 - `CORS_ORIGIN`
 - `TRUSTED_PROXY_CIDRS`
 
+`JWT_SECRET` is only required for the admin or combined binaries.
+
 ## Useful commands
 
 ```bash
 go run .
+go run ./cmd/public
+go run ./cmd/admin
 GOCACHE=/tmp/go-build go test ./...
 ```
 
 ## Main routes
 
-- `GET /health`
-- `POST /api/v1/moderation/report`
-- `POST /api/v1/admin/login`
-- `GET /api/v1/admin/reports`
-- `POST /api/v1/admin/ban`
-- `GET /api/v1/webrtc/turn`
+- Public:
+  - `GET /health`
+  - `POST /api/v1/moderation/report`
+  - `GET /api/v1/webrtc/ws`
+  - `GET /api/v1/webrtc/turn`
+- Admin:
+  - `GET /health`
+  - `POST /api/v1/admin/login`
+  - `GET /api/v1/admin/reports`
+  - `POST /api/v1/admin/ban`

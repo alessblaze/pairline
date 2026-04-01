@@ -29,12 +29,14 @@ import (
 
 const adminCSRFCookieName = "admin_csrf_token"
 
-func HealthHandlerGin(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"status":    "ok",
-		"service":   "omegle-go-service",
-		"timestamp": time.Now().UnixMilli(),
-	})
+func HealthHandlerGin(serviceName string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"status":    "ok",
+			"service":   serviceName,
+			"timestamp": time.Now().UnixMilli(),
+		})
+	}
 }
 
 func LoginHandlerGin(c *gin.Context) {
@@ -191,266 +193,268 @@ func UpdateReportHandlerGin(c *gin.Context) {
 	})
 }
 
-func CreateReportHandlerGin(c *gin.Context) {
-	// Per-endpoint request size limit: reports with chat logs can be larger but still bounded
-	if c.Request.ContentLength > 262144 { // 256 KB
-		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "Request too large"})
-		return
+func CreateReportHandlerGin(redisClient *redis.Client) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Per-endpoint request size limit: reports with chat logs can be larger but still bounded
+		if c.Request.ContentLength > 262144 { // 256 KB
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "Request too large"})
+			return
+		}
+
+		var req struct {
+			ReporterSessionID string          `json:"reporter_session_id" binding:"required,uuid"`
+			ReporterToken     string          `json:"reporter_token" binding:"required,max=128"`
+			ReportedSessionID string          `json:"reported_session_id" binding:"required,uuid"`
+			Reason            string          `json:"reason" binding:"required,max=100"`
+			Description       string          `json:"description" binding:"max=500"`
+			ChatLog           json.RawMessage `json:"chat_log"`
+		}
+
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request parameters"})
+			return
+		}
+
+		if req.ReportedSessionID == req.ReporterSessionID {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot report your own session"})
+			return
+		}
+
+		req.Reason = stripHTML(req.Reason)
+		req.Description = stripHTML(req.Description)
+
+		db := storage.NewDatabase()
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
+
+		if !verifySessionToken(ctx, redisClient, req.ReporterSessionID, req.ReporterToken) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid session token"})
+			return
+		}
+
+		if !sessionCanReportPeer(ctx, redisClient, req.ReporterSessionID, req.ReportedSessionID) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Reports are only allowed for your current or recent chat partner"})
+			return
+		}
+
+		rawReporterIP, _ := redisClient.GetClient().Get(ctx, "session:"+req.ReporterSessionID+":ip").Result()
+		rawReportedIP, _ := redisClient.GetClient().Get(ctx, "session:"+req.ReportedSessionID+":ip").Result()
+
+		reporterIP := normalizeIP(rawReporterIP)
+		reportedIP := normalizeIP(rawReportedIP)
+
+		if reporterIP == "" {
+			reporterIP = getRequestClientIP(c)
+		}
+
+		chatLogStr, err := normalizeChatLog(req.ChatLog)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		report := storage.Report{
+			ReporterSessionID: req.ReporterSessionID,
+			ReportedSessionID: req.ReportedSessionID,
+			ReporterIP:        reporterIP,
+			ReportedIP:        reportedIP,
+			Reason:            req.Reason,
+			Description:       req.Description,
+			ChatLog:           chatLogStr,
+			Status:            "pending",
+			CreatedAt:         time.Now(),
+		}
+
+		if err := db.GetDB().WithContext(ctx).Create(&report).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create report"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status": "created",
+		})
 	}
-
-	var req struct {
-		ReporterSessionID string          `json:"reporter_session_id" binding:"required,uuid"`
-		ReporterToken     string          `json:"reporter_token" binding:"required,max=128"`
-		ReportedSessionID string          `json:"reported_session_id" binding:"required,uuid"`
-		Reason            string          `json:"reason" binding:"required,max=100"`
-		Description       string          `json:"description" binding:"max=500"`
-		ChatLog           json.RawMessage `json:"chat_log"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request parameters"})
-		return
-	}
-
-	if req.ReportedSessionID == req.ReporterSessionID {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot report your own session"})
-		return
-	}
-
-	req.Reason = stripHTML(req.Reason)
-	req.Description = stripHTML(req.Description)
-
-	db := storage.NewDatabase()
-	redisClient := redis.NewClient()
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-	defer cancel()
-
-	if !verifySessionToken(ctx, redisClient, req.ReporterSessionID, req.ReporterToken) {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid session token"})
-		return
-	}
-
-	if !sessionCanReportPeer(ctx, redisClient, req.ReporterSessionID, req.ReportedSessionID) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Reports are only allowed for your current or recent chat partner"})
-		return
-	}
-
-	rawReporterIP, _ := redisClient.GetClient().Get(ctx, "session:"+req.ReporterSessionID+":ip").Result()
-	rawReportedIP, _ := redisClient.GetClient().Get(ctx, "session:"+req.ReportedSessionID+":ip").Result()
-
-	reporterIP := normalizeIP(rawReporterIP)
-	reportedIP := normalizeIP(rawReportedIP)
-
-	if reporterIP == "" {
-		reporterIP = getRequestClientIP(c)
-	}
-
-	chatLogStr, err := normalizeChatLog(req.ChatLog)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	report := storage.Report{
-		ReporterSessionID: req.ReporterSessionID,
-		ReportedSessionID: req.ReportedSessionID,
-		ReporterIP:        reporterIP,
-		ReportedIP:        reportedIP,
-		Reason:            req.Reason,
-		Description:       req.Description,
-		ChatLog:           chatLogStr,
-		Status:            "pending",
-		CreatedAt:         time.Now(),
-	}
-
-	if err := db.GetDB().WithContext(ctx).Create(&report).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create report"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"status": "created",
-	})
 }
 
-func CreateBanHandlerGin(c *gin.Context) {
-	// Per-endpoint request size limit: prevent DoS through large payloads
-	if c.Request.ContentLength > 4096 {
-		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "Request too large"})
-		return
-	}
+func CreateBanHandlerGin(redisClient *redis.Client) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Per-endpoint request size limit: prevent DoS through large payloads
+		if c.Request.ContentLength > 4096 {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "Request too large"})
+			return
+		}
 
-	var req struct {
-		SessionID  string `json:"session_id" binding:"omitempty,uuid"`
-		IP         string `json:"ip" binding:"omitempty,max=45"`
-		Reason     string `json:"reason" binding:"required,max=200"`
-		ExpiryDate string `json:"expiry_date"`
-	}
+		var req struct {
+			SessionID  string `json:"session_id" binding:"omitempty,uuid"`
+			IP         string `json:"ip" binding:"omitempty,max=45"`
+			Reason     string `json:"reason" binding:"required,max=200"`
+			ExpiryDate string `json:"expiry_date"`
+		}
 
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request parameters"})
-		return
-	}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request parameters"})
+			return
+		}
 
-	if req.SessionID == "" && req.IP == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing session_id or ip"})
-		return
-	}
+		if req.SessionID == "" && req.IP == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Missing session_id or ip"})
+			return
+		}
 
-	if req.IP != "" && net.ParseIP(req.IP) == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid IP address format"})
-		return
-	}
-
-	req.Reason = stripHTML(req.Reason)
-
-	db := storage.NewDatabase()
-	redisClient := redis.NewClient()
-
-	username, ok := getContextString(c, "username")
-	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-		return
-	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-	defer cancel()
-
-	var ipAddress string
-	var sessionID string
-	var expiresAt *time.Time
-
-	if req.SessionID != "" {
-		sessionID = req.SessionID
-		raw, _ := redisClient.GetClient().Get(ctx, "session:"+req.SessionID+":ip").Result()
-		ipAddress = normalizeIP(raw)
-	} else {
-		ipAddress = normalizeIP(req.IP)
-		if ipAddress == "" {
+		if req.IP != "" && net.ParseIP(req.IP) == nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid IP address format"})
 			return
 		}
-	}
 
-	if ipAddress != "" {
-		if isPrivateOrLocalIP(ipAddress) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot ban internal/local IP address"})
+		req.Reason = stripHTML(req.Reason)
+
+		db := storage.NewDatabase()
+
+		username, ok := getContextString(c, "username")
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 			return
 		}
-	}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
 
-	if req.ExpiryDate != "" {
-		parsedExpiry, err := time.Parse(time.RFC3339, req.ExpiryDate)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid expiry_date"})
+		var ipAddress string
+		var sessionID string
+		var expiresAt *time.Time
+
+		if req.SessionID != "" {
+			sessionID = req.SessionID
+			raw, _ := redisClient.GetClient().Get(ctx, "session:"+req.SessionID+":ip").Result()
+			ipAddress = normalizeIP(raw)
+		} else {
+			ipAddress = normalizeIP(req.IP)
+			if ipAddress == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid IP address format"})
+				return
+			}
+		}
+
+		if ipAddress != "" {
+			if isPrivateOrLocalIP(ipAddress) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot ban internal/local IP address"})
+				return
+			}
+		}
+
+		if req.ExpiryDate != "" {
+			parsedExpiry, err := time.Parse(time.RFC3339, req.ExpiryDate)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid expiry_date"})
+				return
+			}
+
+			if !parsedExpiry.After(time.Now()) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "expiry_date must be in the future"})
+				return
+			}
+
+			if time.Until(parsedExpiry) > 365*24*time.Hour {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "expiry_date cannot exceed 1 year"})
+				return
+			}
+
+			expiresAt = &parsedExpiry
+		}
+
+		var existingBan storage.Ban
+		lookup := db.GetDB().WithContext(ctx).Where("is_active = ? AND (expires_at IS NULL OR expires_at > ?)", true, time.Now())
+
+		switch {
+		case sessionID != "" && ipAddress != "":
+			lookup = lookup.Where("(session_id = ? OR ip_address = ?)", sessionID, ipAddress)
+		case sessionID != "":
+			lookup = lookup.Where("session_id = ?", sessionID)
+		default:
+			lookup = lookup.Where("ip_address = ?", ipAddress)
+		}
+
+		if err := lookup.Order("created_at DESC").First(&existingBan).Error; err == nil {
+			c.JSON(http.StatusOK, gin.H{
+				"status": "already_banned",
+				"ban_id": existingBan.ID,
+			})
+			return
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check existing bans"})
 			return
 		}
 
-		if !parsedExpiry.After(time.Now()) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "expiry_date must be in the future"})
+		ban := storage.Ban{
+			SessionID:        sessionID,
+			IPAddress:        ipAddress,
+			Reason:           req.Reason,
+			BannedByUsername: username,
+			CreatedAt:        time.Now(),
+			ExpiresAt:        expiresAt,
+			IsActive:         true,
+		}
+
+		result := db.GetDB().WithContext(ctx).Create(&ban).Error
+		if result != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create ban"})
 			return
 		}
 
-		if time.Until(parsedExpiry) > 365*24*time.Hour {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "expiry_date cannot exceed 1 year"})
-			return
+		redisTTL := time.Duration(0)
+		if expiresAt != nil {
+			redisTTL = time.Until(*expiresAt)
 		}
 
-		expiresAt = &parsedExpiry
-	}
+		if sessionID != "" {
+			err := redisClient.GetClient().Set(ctx, "ban:"+sessionID, req.Reason, redisTTL).Err()
+			if err != nil {
+				log.Printf("Failed to store ban in Redis: %v", err)
+			}
 
-	var existingBan storage.Ban
-	lookup := db.GetDB().WithContext(ctx).Where("is_active = ? AND (expires_at IS NULL OR expires_at > ?)", true, time.Now())
+			err = redisClient.PublishBanAction(ctx, sessionID, ipAddress, req.Reason)
+			if err != nil {
+				log.Printf("Failed to publish ban action: %v", err)
+			}
+		}
 
-	switch {
-	case sessionID != "" && ipAddress != "":
-		lookup = lookup.Where("(session_id = ? OR ip_address = ?)", sessionID, ipAddress)
-	case sessionID != "":
-		lookup = lookup.Where("session_id = ?", sessionID)
-	default:
-		lookup = lookup.Where("ip_address = ?", ipAddress)
-	}
+		if ipAddress != "" {
+			err := redisClient.GetClient().Set(ctx, "ban:ip:"+ipAddress, req.Reason, redisTTL).Err()
+			if err != nil {
+				log.Printf("Failed to store IP ban in Redis: %v", err)
+			}
 
-	if err := lookup.Order("created_at DESC").First(&existingBan).Error; err == nil {
+			err = redisClient.PublishBanIPAction(ctx, ipAddress, req.Reason)
+			if err != nil {
+				log.Printf("Failed to publish ban IP action: %v", err)
+			}
+		}
+
+		reviewedAt := time.Now()
+		reportUpdate := db.GetDB().WithContext(ctx).Model(&storage.Report{}).
+			Where("status = ?", "pending")
+
+		switch {
+		case sessionID != "" && ipAddress != "":
+			reportUpdate = reportUpdate.Where("(reported_session_id = ? OR reported_ip = ?)", sessionID, ipAddress)
+		case sessionID != "":
+			reportUpdate = reportUpdate.Where("reported_session_id = ?", sessionID)
+		case ipAddress != "":
+			reportUpdate = reportUpdate.Where("reported_ip = ?", ipAddress)
+		}
+
+		if err := reportUpdate.Updates(map[string]interface{}{
+			"status":               "approved",
+			"reviewed_by_username": username,
+			"reviewed_at":          reviewedAt,
+		}).Error; err != nil {
+			log.Printf("Failed to auto-approve related reports after ban: %v", err)
+		}
+
 		c.JSON(http.StatusOK, gin.H{
-			"status": "already_banned",
-			"ban_id": existingBan.ID,
+			"status": "banned",
+			"ban_id": ban.ID,
 		})
-		return
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check existing bans"})
-		return
 	}
-
-	ban := storage.Ban{
-		SessionID:        sessionID,
-		IPAddress:        ipAddress,
-		Reason:           req.Reason,
-		BannedByUsername: username,
-		CreatedAt:        time.Now(),
-		ExpiresAt:        expiresAt,
-		IsActive:         true,
-	}
-
-	result := db.GetDB().WithContext(ctx).Create(&ban).Error
-	if result != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create ban"})
-		return
-	}
-
-	redisTTL := time.Duration(0)
-	if expiresAt != nil {
-		redisTTL = time.Until(*expiresAt)
-	}
-
-	if sessionID != "" {
-		err := redisClient.GetClient().Set(ctx, "ban:"+sessionID, req.Reason, redisTTL).Err()
-		if err != nil {
-			log.Printf("Failed to store ban in Redis: %v", err)
-		}
-
-		err = redisClient.PublishBanAction(ctx, sessionID, ipAddress, req.Reason)
-		if err != nil {
-			log.Printf("Failed to publish ban action: %v", err)
-		}
-	}
-
-	if ipAddress != "" {
-		err := redisClient.GetClient().Set(ctx, "ban:ip:"+ipAddress, req.Reason, redisTTL).Err()
-		if err != nil {
-			log.Printf("Failed to store IP ban in Redis: %v", err)
-		}
-
-		err = redisClient.PublishBanIPAction(ctx, ipAddress, req.Reason)
-		if err != nil {
-			log.Printf("Failed to publish ban IP action: %v", err)
-		}
-	}
-
-	reviewedAt := time.Now()
-	reportUpdate := db.GetDB().WithContext(ctx).Model(&storage.Report{}).
-		Where("status = ?", "pending")
-
-	switch {
-	case sessionID != "" && ipAddress != "":
-		reportUpdate = reportUpdate.Where("(reported_session_id = ? OR reported_ip = ?)", sessionID, ipAddress)
-	case sessionID != "":
-		reportUpdate = reportUpdate.Where("reported_session_id = ?", sessionID)
-	case ipAddress != "":
-		reportUpdate = reportUpdate.Where("reported_ip = ?", ipAddress)
-	}
-
-	if err := reportUpdate.Updates(map[string]interface{}{
-		"status":               "approved",
-		"reviewed_by_username": username,
-		"reviewed_at":          reviewedAt,
-	}).Error; err != nil {
-		log.Printf("Failed to auto-approve related reports after ban: %v", err)
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"status": "banned",
-		"ban_id": ban.ID,
-	})
 }
 
 func GetBansHandlerGin(c *gin.Context) {
@@ -504,89 +508,90 @@ func GetBansHandlerGin(c *gin.Context) {
 	})
 }
 
-func DeleteBanHandlerGin(c *gin.Context) {
-	banIdentifier := c.Param("session_id")
+func DeleteBanHandlerGin(redisClient *redis.Client) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		banIdentifier := c.Param("session_id")
 
-	// Validate that banIdentifier is a valid UUID to prevent injection
-	if !uuidRe.MatchString(banIdentifier) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ban identifier format"})
-		return
-	}
+		// Validate that banIdentifier is a valid UUID to prevent injection
+		if !uuidRe.MatchString(banIdentifier) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ban identifier format"})
+			return
+		}
 
-	db := storage.NewDatabase()
-	redisClient := redis.NewClient()
+		db := storage.NewDatabase()
 
-	username, ok := getContextString(c, "username")
-	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-		return
-	}
-	now := time.Now()
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-	defer cancel()
+		username, ok := getContextString(c, "username")
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			return
+		}
+		now := time.Now()
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
 
-	var ban storage.Ban
-	result := db.GetDB().WithContext(ctx).
-		Where("id = ? AND is_active = ?", banIdentifier, true).
-		First(&ban).Error
-
-	if errors.Is(result, gorm.ErrRecordNotFound) {
-		result = db.GetDB().WithContext(ctx).
-			Where("session_id = ? AND is_active = ?", banIdentifier, true).
-			Order("created_at DESC").
+		var ban storage.Ban
+		result := db.GetDB().WithContext(ctx).
+			Where("id = ? AND is_active = ?", banIdentifier, true).
 			First(&ban).Error
-	}
 
-	if result != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Ban not found"})
-		return
-	}
-
-	result = db.GetDB().WithContext(ctx).Model(&storage.Ban{}).
-		Where("id = ?", ban.ID).
-		Updates(map[string]interface{}{
-			"is_active":            false,
-			"unbanned_at":          now,
-			"unbanned_by_username": username,
-		}).Error
-
-	if result != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to unban"})
-		return
-	}
-
-	if ban.SessionID != "" {
-		err := redisClient.GetClient().Del(ctx, "ban:"+ban.SessionID).Err()
-		if err != nil {
-			log.Printf("Failed to delete ban from Redis: %v", err)
+		if errors.Is(result, gorm.ErrRecordNotFound) {
+			result = db.GetDB().WithContext(ctx).
+				Where("session_id = ? AND is_active = ?", banIdentifier, true).
+				Order("created_at DESC").
+				First(&ban).Error
 		}
-	}
 
-	if ban.IPAddress != "" {
-		err := redisClient.GetClient().Del(ctx, "ban:ip:"+ban.IPAddress).Err()
-		if err != nil {
-			log.Printf("Failed to delete IP ban from Redis: %v", err)
+		if result != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Ban not found"})
+			return
 		}
-	}
 
-	if ban.SessionID != "" {
-		err := redisClient.PublishUnbanAction(ctx, ban.SessionID, ban.IPAddress)
-		if err != nil {
-			log.Printf("Failed to publish unban action: %v", err)
+		result = db.GetDB().WithContext(ctx).Model(&storage.Ban{}).
+			Where("id = ?", ban.ID).
+			Updates(map[string]interface{}{
+				"is_active":            false,
+				"unbanned_at":          now,
+				"unbanned_by_username": username,
+			}).Error
+
+		if result != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to unban"})
+			return
 		}
-	}
 
-	if ban.IPAddress != "" {
-		err := redisClient.PublishUnbanIPAction(ctx, ban.IPAddress)
-		if err != nil {
-			log.Printf("Failed to publish unban IP action: %v", err)
+		if ban.SessionID != "" {
+			err := redisClient.GetClient().Del(ctx, "ban:"+ban.SessionID).Err()
+			if err != nil {
+				log.Printf("Failed to delete ban from Redis: %v", err)
+			}
 		}
-	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"status": "unbanned",
-		"ban_id": ban.ID,
-	})
+		if ban.IPAddress != "" {
+			err := redisClient.GetClient().Del(ctx, "ban:ip:"+ban.IPAddress).Err()
+			if err != nil {
+				log.Printf("Failed to delete IP ban from Redis: %v", err)
+			}
+		}
+
+		if ban.SessionID != "" {
+			err := redisClient.PublishUnbanAction(ctx, ban.SessionID, ban.IPAddress)
+			if err != nil {
+				log.Printf("Failed to publish unban action: %v", err)
+			}
+		}
+
+		if ban.IPAddress != "" {
+			err := redisClient.PublishUnbanIPAction(ctx, ban.IPAddress)
+			if err != nil {
+				log.Printf("Failed to publish unban IP action: %v", err)
+			}
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status": "unbanned",
+			"ban_id": ban.ID,
+		})
+	}
 }
 
 func CreateAdminHandlerGin(c *gin.Context) {
