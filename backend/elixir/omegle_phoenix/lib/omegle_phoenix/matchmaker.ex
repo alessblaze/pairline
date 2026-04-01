@@ -369,8 +369,14 @@ defmodule OmeglePhoenix.Matchmaker do
 
   defp normalize_preferences(preferences) when is_map(preferences) do
     %{
-      "mode" => safe_string(Map.get(preferences, "mode", "text"), "text"),
-      "interests" => safe_string(Map.get(preferences, "interests", ""), "")
+      "mode" =>
+        Map.get(preferences, "mode", "text")
+        |> safe_string("text")
+        |> normalize_mode("text"),
+      "interests" =>
+        Map.get(preferences, "interests", "")
+        |> safe_string("")
+        |> String.slice(0, 255)
     }
   end
 
@@ -385,6 +391,9 @@ defmodule OmeglePhoenix.Matchmaker do
     do: :erlang.float_to_binary(value, [:compact])
 
   defp safe_string(_value, default), do: default
+
+  defp normalize_mode(mode, _default) when mode in ["lobby", "text", "video"], do: mode
+  defp normalize_mode(_mode, default), do: default
 
   defp queue_key(%{"mode" => mode}), do: queue_key(mode)
   defp queue_key(%{mode: mode}), do: queue_key(mode)

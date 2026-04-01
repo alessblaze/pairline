@@ -386,9 +386,14 @@ defmodule OmeglePhoenix.SessionManager do
 
   defp normalize_preferences(preferences) when is_map(preferences) do
     %{
-      "mode" => safe_string(Map.get(preferences, "mode", Map.get(preferences, :mode, "text")), "text"),
+      "mode" =>
+        Map.get(preferences, "mode", Map.get(preferences, :mode, "text"))
+        |> safe_string("text")
+        |> normalize_mode("text"),
       "interests" =>
-        safe_string(Map.get(preferences, "interests", Map.get(preferences, :interests, "")), "")
+        Map.get(preferences, "interests", Map.get(preferences, :interests, ""))
+        |> safe_string("")
+        |> String.slice(0, 255)
     }
   end
 
@@ -406,6 +411,9 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   defp normalize_status(_value), do: :waiting
+
+  defp normalize_mode(mode, _default) when mode in ["lobby", "text", "video"], do: mode
+  defp normalize_mode(_mode, default), do: default
 
   defp safe_string(nil, default), do: default
   defp safe_string(value, _default) when is_binary(value), do: value

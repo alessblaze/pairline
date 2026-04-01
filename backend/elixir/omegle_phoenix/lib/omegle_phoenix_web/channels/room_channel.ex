@@ -9,10 +9,15 @@ defmodule OmeglePhoenixWeb.RoomChannel do
     {:ok,
      assign(socket,
        mode: mode,
+       last_typing_at: nil,
        partner_id: nil,
        msg_count: 0,
        window_start: System.system_time(:millisecond)
      )}
+  end
+
+  def join("room:" <> _mode, _payload, _socket) do
+    {:error, %{reason: "Unsupported room"}}
   end
 
   @impl true
@@ -45,7 +50,7 @@ defmodule OmeglePhoenixWeb.RoomChannel do
     end
   end
 
-  def handle_in("start", %{"data" => data}, socket) do
+  def handle_in("start", %{"data" => data}, socket) when is_map(data) do
     socket = teardown_existing_session(socket)
     client_ip = socket.assigns[:client_ip] || "unknown"
     preferences = build_preferences(socket, Map.get(data, "preferences", %{}))
@@ -74,6 +79,10 @@ defmodule OmeglePhoenixWeb.RoomChannel do
     end
   end
 
+  def handle_in("start", _payload, socket) do
+    {:reply, {:error, %{reason: "Invalid start payload"}}, socket}
+  end
+
   def handle_in("skip", _payload, socket) do
     session_id = socket.assigns[:session_id]
 
@@ -95,7 +104,7 @@ defmodule OmeglePhoenixWeb.RoomChannel do
     end
   end
 
-  def handle_in("message", %{"data" => data}, socket) do
+  def handle_in("message", %{"data" => data}, socket) when is_map(data) do
     session_id = socket.assigns[:session_id]
     partner_id = socket.assigns[:partner_id]
 
@@ -129,25 +138,41 @@ defmodule OmeglePhoenixWeb.RoomChannel do
     end
   end
 
-  def handle_in("typing", %{"data" => data}, socket) do
+  def handle_in("message", _payload, socket) do
+    {:reply, {:error, %{reason: "Invalid message payload"}}, socket}
+  end
+
+  def handle_in("typing", %{"data" => data}, socket) when is_map(data) do
     session_id = socket.assigns[:session_id]
     partner_id = socket.assigns[:partner_id]
 
     if is_nil(session_id) or is_nil(partner_id) do
       {:noreply, socket}
     else
-      is_typing = Map.get(data, "typing", false)
+      case Map.fetch(data, "typing") do
+        {:ok, is_typing} when is_boolean(is_typing) ->
+          {socket, allowed} = check_typing_rate_limit(socket)
 
-      OmeglePhoenix.Router.send_message(partner_id, %{
-        type: "typing",
-        from: session_id,
-        data: %{typing: is_typing}
-      })
+          if allowed do
+            OmeglePhoenix.Router.send_message(partner_id, %{
+              type: "typing",
+              from: session_id,
+              data: %{typing: is_typing}
+            })
 
-      :telemetry.execute([:omegle_phoenix, :room, :typing_sent], %{count: 1}, %{session_id: session_id, typing: is_typing})
+            :telemetry.execute([:omegle_phoenix, :room, :typing_sent], %{count: 1}, %{session_id: session_id, typing: is_typing})
+          end
 
-      {:noreply, socket}
+          {:noreply, socket}
+
+        _ ->
+          {:reply, {:error, %{reason: "Invalid typing payload"}}, socket}
+      end
     end
+  end
+
+  def handle_in("typing", _payload, socket) do
+    {:reply, {:error, %{reason: "Invalid typing payload"}}, socket}
   end
 
   def handle_in("webrtc_ready", _payload, socket) do
@@ -159,32 +184,50 @@ defmodule OmeglePhoenixWeb.RoomChannel do
                {:error, %{reason: "No partner"}}
 
              true ->
-               {:ok, updated_session} =
-                 OmeglePhoenix.SessionManager.update_session(session_id, %{signaling_ready: true})
+               with {:ok, updated_session} <-
+                      OmeglePhoenix.SessionManager.update_session(session_id, %{signaling_ready: true}) do
+                 case OmeglePhoenix.SessionManager.get_session(updated_session.partner_id) do
+                   {:ok, partner_session}
+                   when partner_session.signaling_ready == true and
+                          updated_session.webrtc_started != true and
+                          partner_session.webrtc_started != true ->
+                     OmeglePhoenix.Router.send_message(session_id, %{
+                       type: "webrtc_start",
+                       peer_id: updated_session.partner_id
+                     })
 
-               case OmeglePhoenix.SessionManager.get_session(updated_session.partner_id) do
-                 {:ok, partner_session}
-                 when partner_session.signaling_ready == true and
-                        updated_session.webrtc_started != true and
-                        partner_session.webrtc_started != true ->
-                   OmeglePhoenix.Router.send_message(session_id, %{
-                     type: "webrtc_start",
-                     peer_id: updated_session.partner_id
-                   })
+                     OmeglePhoenix.Router.send_message(updated_session.partner_id, %{
+                       type: "webrtc_start",
+                       peer_id: session_id
+                     })
 
-                   OmeglePhoenix.Router.send_message(updated_session.partner_id, %{
-                     type: "webrtc_start",
-                     peer_id: session_id
-                   })
+                     _ = OmeglePhoenix.SessionManager.update_session(session_id, %{webrtc_started: true})
+                     _ =
+                       OmeglePhoenix.SessionManager.update_session(updated_session.partner_id, %{webrtc_started: true})
 
-                   OmeglePhoenix.SessionManager.update_session(session_id, %{webrtc_started: true})
-                   OmeglePhoenix.SessionManager.update_session(updated_session.partner_id, %{webrtc_started: true})
-                   :telemetry.execute([:omegle_phoenix, :room, :webrtc_started], %{count: 1}, %{session_id: session_id, partner_id: updated_session.partner_id})
-                   {:ok, %{type: "webrtc_ready"}}
+                     :telemetry.execute(
+                       [:omegle_phoenix, :room, :webrtc_started],
+                       %{count: 1},
+                       %{session_id: session_id, partner_id: updated_session.partner_id}
+                     )
 
-                 _ ->
-                   :telemetry.execute([:omegle_phoenix, :room, :webrtc_ready], %{count: 1}, %{session_id: session_id})
-                   {:ok, %{type: "webrtc_ready"}}
+                     {:ok, %{type: "webrtc_ready"}}
+
+                   _ ->
+                     :telemetry.execute(
+                       [:omegle_phoenix, :room, :webrtc_ready],
+                       %{count: 1},
+                       %{session_id: session_id}
+                     )
+
+                     {:ok, %{type: "webrtc_ready"}}
+                 end
+               else
+                 {:error, :not_found} ->
+                   {:error, %{reason: "Session not found"}}
+
+                 {:error, _reason} ->
+                   {:error, %{reason: "Failed to update session"}}
                end
            end
          end) do
@@ -255,7 +298,7 @@ defmodule OmeglePhoenixWeb.RoomChannel do
       case socket.assigns[:mode] do
         "text" -> "text"
         "video" -> "video"
-        _ -> Map.get(safe_prefs, "mode", "lobby")
+        _ -> normalize_mode(Map.get(safe_prefs, "mode"), "lobby")
       end
 
     Map.put(safe_prefs, "mode", mode)
@@ -272,12 +315,13 @@ defmodule OmeglePhoenixWeb.RoomChannel do
       if key in @allowed_preference_keys do
         limit = if key == "interests", do: 255, else: 50
 
-        val =
-          if is_binary(v),
-            do: String.slice(v, 0, limit),
-            else: to_string(v) |> String.slice(0, limit)
+        case normalize_preference_value(v, limit) do
+          nil ->
+            acc
 
-        Map.put(acc, key, val)
+          val ->
+            Map.put(acc, key, val)
+        end
       else
         acc
       end
@@ -285,6 +329,41 @@ defmodule OmeglePhoenixWeb.RoomChannel do
   end
 
   defp validate_preferences(_), do: %{}
+
+  defp normalize_preference_value(value, limit) do
+    case preference_to_string(value) do
+      nil -> nil
+      string -> String.slice(string, 0, limit)
+    end
+  end
+
+  defp preference_to_string(value) when is_binary(value), do: value
+  defp preference_to_string(value) when is_boolean(value), do: to_string(value)
+  defp preference_to_string(value) when is_integer(value), do: Integer.to_string(value)
+
+  defp preference_to_string(value) when is_float(value),
+    do: :erlang.float_to_binary(value, [:compact])
+
+  defp preference_to_string(value) when is_atom(value), do: Atom.to_string(value)
+
+  defp preference_to_string(value) when is_list(value) do
+    if Enum.all?(value, &preference_scalar?/1) do
+      value
+      |> Enum.map(&preference_to_string/1)
+      |> Enum.join(",")
+    else
+      nil
+    end
+  end
+
+  defp preference_to_string(_value), do: nil
+
+  defp preference_scalar?(value) do
+    is_binary(value) or is_boolean(value) or is_integer(value) or is_float(value) or is_atom(value)
+  end
+
+  defp normalize_mode(mode, _default) when mode in ["lobby", "text", "video"], do: mode
+  defp normalize_mode(_mode, default), do: default
 
   defp teardown_existing_session(socket) do
     if session_id = socket.assigns[:session_id] do
@@ -408,6 +487,17 @@ defmodule OmeglePhoenixWeb.RoomChannel do
       else
         {assign(socket, :msg_count, new_count), true}
       end
+    end
+  end
+
+  defp check_typing_rate_limit(socket) do
+    now = System.system_time(:millisecond)
+    last_typing_at = socket.assigns[:last_typing_at]
+
+    if is_integer(last_typing_at) and now - last_typing_at < 250 do
+      {socket, false}
+    else
+      {assign(socket, :last_typing_at, now), true}
     end
   end
 end

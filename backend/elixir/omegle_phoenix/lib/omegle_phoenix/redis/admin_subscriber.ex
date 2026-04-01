@@ -18,6 +18,8 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
 
   @impl true
   def handle_info(:connect, state) do
+    stop_connection(state.connection)
+
     case start_subscription(state.channel) do
       {:ok, connection} ->
         {:noreply, %{state | connection: connection}}
@@ -25,7 +27,7 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
       {:error, reason} ->
         Logger.error("Failed to subscribe to admin channel #{state.channel}: #{inspect(reason)}")
         Process.send_after(self(), :connect, 1_000)
-        {:noreply, state}
+        {:noreply, %{state | connection: nil}}
     end
   end
 
