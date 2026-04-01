@@ -26,6 +26,8 @@ var allowedSignalTypes = map[string]struct{}{
 	"ice":    {},
 }
 
+var errSessionAlreadyOwned = errors.New("session signaling already connected elsewhere")
+
 const (
 	writeWait         = 10 * time.Second
 	pongWait          = 60 * time.Second
@@ -118,16 +120,18 @@ func (h *RedisSignalingHub) Register(sessionID string, conn *websocket.Conn) (*S
 	client := &SignalingClient{Conn: conn}
 
 	h.Lock()
-	h.Clients[sessionID] = client
-	h.Unlock()
+	defer h.Unlock()
+
+	if _, exists := h.Clients[sessionID]; exists {
+		return nil, nil, errSessionAlreadyOwned
+	}
 
 	pending, err := h.claimSession(sessionID)
 	if err != nil {
-		h.Lock()
-		delete(h.Clients, sessionID)
-		h.Unlock()
 		return nil, nil, err
 	}
+
+	h.Clients[sessionID] = client
 
 	return client, pending, nil
 }
@@ -264,16 +268,12 @@ func (h *RedisSignalingHub) runOwnerRefresh() {
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		pipe := h.redis.GetClient().Pipeline()
 		for _, sessionID := range sessionIDs {
-			pipe.Set(ctx, ownerKey(sessionID), h.instanceID, ownerTTL)
+			if err := h.refreshOwner(ctx, sessionID); err != nil {
+				log.Printf("Failed refreshing Redis signaling ownership for %s: %v", sessionID, err)
+			}
 		}
-		_, err := pipe.Exec(ctx)
 		cancel()
-
-		if err != nil {
-			log.Printf("Failed refreshing Redis signaling ownership: %v", err)
-		}
 	}
 }
 
@@ -302,24 +302,66 @@ func (h *RedisSignalingHub) claimSession(sessionID string) ([][]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	pipe := h.redis.GetClient().TxPipeline()
-	pipe.Set(ctx, ownerKey(sessionID), h.instanceID, ownerTTL)
-	pipe.Del(ctx, readyKey(sessionID))
-	pendingCmd := pipe.LRange(ctx, pendingKey(sessionID), 0, maxPendingMsgs-1)
-	pipe.Del(ctx, pendingKey(sessionID))
-
-	if _, err := pipe.Exec(ctx); err != nil {
-		return nil, err
-	}
-
-	rawPending, err := pendingCmd.Result()
+	expectedOwner, takeoverAllowed, err := h.claimPreconditions(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
 
+	const claimScript = `
+local owner = redis.call("GET", KEYS[1])
+if owner and owner ~= ARGV[1] then
+  if not (ARGV[5] == "1" and owner == ARGV[4]) then
+    return {"owned", owner}
+  end
+end
+redis.call("SET", KEYS[1], ARGV[1], "EX", ARGV[2])
+redis.call("DEL", KEYS[2])
+local pending = redis.call("LRANGE", KEYS[3], 0, tonumber(ARGV[3]) - 1)
+redis.call("DEL", KEYS[3])
+table.insert(pending, 1, "ok")
+return pending
+`
+
+	result, err := h.redis.GetClient().Eval(
+		ctx,
+		claimScript,
+		[]string{ownerKey(sessionID), readyKey(sessionID), pendingKey(sessionID)},
+		h.instanceID,
+		int(ownerTTL/time.Second),
+		maxPendingMsgs,
+		expectedOwner,
+		boolToLuaFlag(takeoverAllowed),
+	).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	values, ok := result.([]interface{})
+	if !ok || len(values) == 0 {
+		return nil, errors.New("unexpected Redis claim response")
+	}
+
+	status, ok := values[0].(string)
+	if !ok {
+		return nil, errors.New("unexpected Redis claim status")
+	}
+
+	if status == "owned" {
+		return nil, errSessionAlreadyOwned
+	}
+
+	if status != "ok" {
+		return nil, errors.New("unexpected Redis claim status")
+	}
+
+	rawPending := values[1:]
 	pending := make([][]byte, 0, len(rawPending))
 	for _, item := range rawPending {
-		pending = append(pending, []byte(item))
+		value, ok := item.(string)
+		if !ok {
+			return nil, errors.New("unexpected Redis pending payload")
+		}
+		pending = append(pending, []byte(value))
 	}
 
 	return pending, nil
@@ -342,6 +384,68 @@ end
 return 0
 `
 	return h.redis.GetClient().Eval(ctx, compareDeleteScript, []string{key}, h.instanceID).Err()
+}
+
+func (h *RedisSignalingHub) refreshOwner(ctx context.Context, sessionID string) error {
+	const refreshOwnerScript = `
+local owner = redis.call("GET", KEYS[1])
+if owner == ARGV[1] then
+  return redis.call("EXPIRE", KEYS[1], ARGV[2])
+end
+if not owner then
+  redis.call("SET", KEYS[1], ARGV[1], "EX", ARGV[2])
+  return 1
+end
+return 0
+`
+	result, err := h.redis.GetClient().Eval(
+		ctx,
+		refreshOwnerScript,
+		[]string{ownerKey(sessionID)},
+		h.instanceID,
+		int(ownerTTL/time.Second),
+	).Result()
+	if err != nil {
+		return err
+	}
+
+	switch value := result.(type) {
+	case int64:
+		if value == 0 {
+			return errSessionAlreadyOwned
+		}
+	case int:
+		if value == 0 {
+			return errSessionAlreadyOwned
+		}
+	}
+
+	return nil
+}
+
+func (h *RedisSignalingHub) claimPreconditions(ctx context.Context, sessionID string) (string, bool, error) {
+	currentOwner, err := h.redis.GetClient().Get(ctx, ownerKey(sessionID)).Result()
+	if err == nil {
+		if currentOwner == h.instanceID {
+			return currentOwner, false, nil
+		}
+
+		counts, countErr := h.redis.GetClient().PubSubNumSub(ctx, signalChannel(currentOwner)).Result()
+		if countErr != nil {
+			return "", false, countErr
+		}
+
+		return currentOwner, counts[signalChannel(currentOwner)] == 0, nil
+	}
+
+	return "", false, nil
+}
+
+func boolToLuaFlag(value bool) string {
+	if value {
+		return "1"
+	}
+	return "0"
 }
 
 func ownerKey(sessionID string) string {
@@ -456,6 +560,18 @@ func WebRTCWebSocketHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 			if err := json.Unmarshal(messageData, &msg); err != nil {
 				log.Printf("Invalid WebRTC WS payload from %s: %v", sessionID, err)
 				continue
+			}
+
+			ownershipCtx, ownershipCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			if err := Signaling.refreshOwner(ownershipCtx, sessionID); err != nil {
+				ownershipCancel()
+				if errors.Is(err, errSessionAlreadyOwned) {
+					log.Printf("WebRTC WS closing stale signaling owner for session %s", sessionID)
+					break
+				}
+				log.Printf("WebRTC WS could not refresh signaling ownership for %s: %v", sessionID, err)
+			} else {
+				ownershipCancel()
 			}
 
 			if err := validateSignalingMessage(msg); err != nil {

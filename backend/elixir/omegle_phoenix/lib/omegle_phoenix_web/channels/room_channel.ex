@@ -4,10 +4,12 @@ defmodule OmeglePhoenixWeb.RoomChannel do
   @max_messages_per_window 30
   @rate_window_ms 5_000
   @session_refresh_ms 60_000
+  @owner_refresh_ms 10_000
 
   @impl true
   def join("room:" <> mode, _payload, socket) when mode in ["lobby", "text", "video"] do
     schedule_session_refresh()
+    schedule_owner_refresh()
 
     {:ok,
      assign(socket,
@@ -25,60 +27,40 @@ defmodule OmeglePhoenixWeb.RoomChannel do
 
   @impl true
   def handle_in("search", _payload, socket) do
-    socket = teardown_existing_session(socket)
-    client_ip = socket.assigns[:client_ip] || "unknown"
-    preferences = build_preferences(socket, %{})
+    case teardown_existing_session(socket) do
+      {:error, reason, socket} ->
+        {:reply, {:error, %{reason: reason}}, socket}
 
-    case OmeglePhoenix.SessionManager.ip_ban_reason(client_ip) do
-      nil ->
-        session_id = UUID.uuid4()
+      {:ok, socket} ->
+        client_ip = socket.assigns[:client_ip] || "unknown"
+        preferences = build_preferences(socket, %{})
 
-        case OmeglePhoenix.SessionManager.create_session(session_id, client_ip, preferences) do
-          {:ok, session} ->
-            OmeglePhoenix.Router.register(session_id, self())
-            OmeglePhoenix.Matchmaker.join_queue(session_id, preferences)
+        case OmeglePhoenix.SessionManager.ip_ban_reason(client_ip) do
+          nil ->
+            create_and_queue_session(socket, client_ip, preferences, "searching")
 
-            {:reply,
-             {:ok, %{type: "searching", session_id: session_id, session_token: session.token}},
-             socket
-             |> assign(:session_id, session_id)
-             |> assign(:partner_id, nil)}
-
-          {:error, _reason} ->
-            {:reply, {:error, %{reason: "Failed to create session"}}, socket}
+          reason ->
+            {:reply, {:error, %{type: "banned", data: %{reason: reason}}}, socket}
         end
-
-      reason ->
-        {:reply, {:error, %{type: "banned", data: %{reason: reason}}}, socket}
     end
   end
 
   def handle_in("start", %{"data" => data}, socket) when is_map(data) do
-    socket = teardown_existing_session(socket)
-    client_ip = socket.assigns[:client_ip] || "unknown"
-    preferences = build_preferences(socket, Map.get(data, "preferences", %{}))
+    case teardown_existing_session(socket) do
+      {:error, reason, socket} ->
+        {:reply, {:error, %{reason: reason}}, socket}
 
-    case OmeglePhoenix.SessionManager.ip_ban_reason(client_ip) do
-      nil ->
-        session_id = UUID.uuid4()
+      {:ok, socket} ->
+        client_ip = socket.assigns[:client_ip] || "unknown"
+        preferences = build_preferences(socket, Map.get(data, "preferences", %{}))
 
-        case OmeglePhoenix.SessionManager.create_session(session_id, client_ip, preferences) do
-          {:ok, session} ->
-            OmeglePhoenix.Router.register(session_id, self())
-            OmeglePhoenix.Matchmaker.join_queue(session_id, preferences)
+        case OmeglePhoenix.SessionManager.ip_ban_reason(client_ip) do
+          nil ->
+            create_and_queue_session(socket, client_ip, preferences, "connected")
 
-            {:reply,
-             {:ok, %{type: "connected", session_id: session_id, session_token: session.token}},
-             socket
-             |> assign(:session_id, session_id)
-             |> assign(:partner_id, nil)}
-
-          {:error, _reason} ->
-            {:reply, {:error, %{reason: "Failed to create session"}}, socket}
+          reason ->
+            {:reply, {:error, %{type: "banned", data: %{reason: reason}}}, socket}
         end
-
-      reason ->
-        {:reply, {:error, %{type: "banned", data: %{reason: reason}}}, socket}
     end
   end
 
@@ -92,13 +74,25 @@ defmodule OmeglePhoenixWeb.RoomChannel do
     case with_session_partner_lock(session_id, fn session ->
            if session && session.partner_id do
              reset_match(session_id, session.partner_id, "partner skipped")
-             OmeglePhoenix.Matchmaker.join_queue(session_id, session.preferences)
 
-             :telemetry.execute([:omegle_phoenix, :room, :skipped], %{count: 1}, %{
-               session_id: session_id
-             })
+             case OmeglePhoenix.Matchmaker.join_queue(session_id, session.preferences) do
+               :ok ->
+                 :telemetry.execute([:omegle_phoenix, :room, :skipped], %{count: 1}, %{
+                   session_id: session_id
+                 })
 
-             {:ok, %{type: "skipped"}}
+                 {:ok, %{type: "skipped"}}
+
+               {:error, _reason} ->
+                 _ =
+                   OmeglePhoenix.SessionManager.update_session(session_id, %{
+                     status: :disconnecting,
+                     signaling_ready: false,
+                     webrtc_started: false
+                   })
+
+                 {:error, %{reason: "Matchmaking unavailable"}}
+             end
            else
              {:error, %{reason: "No partner to skip"}}
            end
@@ -129,17 +123,28 @@ defmodule OmeglePhoenixWeb.RoomChannel do
           content = Map.get(data, "content")
 
           if is_binary(content) and byte_size(content) <= 2_000 do
-            OmeglePhoenix.Router.send_message(partner_id, %{
-              type: "message",
-              from: session_id,
-              data: %{content: content}
-            })
+            case with_current_partner(session_id, partner_id, fn ->
+                   OmeglePhoenix.Router.send_message(partner_id, %{
+                     type: "message",
+                     from: session_id,
+                     data: %{content: content}
+                   })
 
-            :telemetry.execute([:omegle_phoenix, :room, :message_sent], %{count: 1}, %{
-              session_id: session_id
-            })
+                   :telemetry.execute([:omegle_phoenix, :room, :message_sent], %{count: 1}, %{
+                     session_id: session_id
+                   })
 
-            {:noreply, socket}
+                   {:ok, :sent}
+                 end) do
+              {:ok, :sent} ->
+                {:noreply, socket}
+
+              {:error, %{reason: "Partner changed"}} ->
+                {:reply, {:error, %{reason: "Partner changed"}}, assign(socket, :partner_id, nil)}
+
+              {:error, payload} ->
+                {:reply, {:error, payload}, socket}
+            end
           else
             {:reply, {:error, %{reason: "Invalid message content"}}, socket}
           end
@@ -164,16 +169,26 @@ defmodule OmeglePhoenixWeb.RoomChannel do
           {socket, allowed} = check_typing_rate_limit(socket)
 
           if allowed do
-            OmeglePhoenix.Router.send_message(partner_id, %{
-              type: "typing",
-              from: session_id,
-              data: %{typing: is_typing}
-            })
+            case with_current_partner(session_id, partner_id, fn ->
+                   OmeglePhoenix.Router.send_message(partner_id, %{
+                     type: "typing",
+                     from: session_id,
+                     data: %{typing: is_typing}
+                   })
 
-            :telemetry.execute([:omegle_phoenix, :room, :typing_sent], %{count: 1}, %{
-              session_id: session_id,
-              typing: is_typing
-            })
+                   :telemetry.execute([:omegle_phoenix, :room, :typing_sent], %{count: 1}, %{
+                     session_id: session_id,
+                     typing: is_typing
+                   })
+
+                   {:ok, :sent}
+                 end) do
+              {:ok, :sent} ->
+                :ok
+
+              {:error, _payload} ->
+                :ok
+            end
           end
 
           {:noreply, socket}
@@ -264,27 +279,37 @@ defmodule OmeglePhoenixWeb.RoomChannel do
     session_id = socket.assigns[:session_id]
 
     case with_session_partner_lock(session_id, fn session ->
-           if session do
-             case session.partner_id do
-               nil ->
-                 OmeglePhoenix.Matchmaker.leave_queue(session_id)
+           cond do
+             is_nil(session) ->
+               {:ok, %{type: "stopped"}}
 
-                 OmeglePhoenix.SessionManager.update_session(session_id, %{
-                   status: :waiting,
-                   signaling_ready: false,
-                   webrtc_started: false
+             is_nil(session.partner_id) ->
+               with :ok <- OmeglePhoenix.Matchmaker.leave_queue(session_id),
+                    {:ok, _updated_session} <-
+                      OmeglePhoenix.SessionManager.update_session(session_id, %{
+                        status: :waiting,
+                        signaling_ready: false,
+                        webrtc_started: false
+                      }) do
+                 :telemetry.execute([:omegle_phoenix, :room, :stopped], %{count: 1}, %{
+                   session_id: session_id
                  })
 
-               partner_id ->
-                 reset_match(session_id, partner_id, "partner cancelled")
-             end
+                 {:ok, %{type: "stopped"}}
+               else
+                 {:error, _reason} ->
+                   {:error, %{reason: "Failed to stop matchmaking"}}
+               end
 
-             :telemetry.execute([:omegle_phoenix, :room, :stopped], %{count: 1}, %{
-               session_id: session_id
-             })
+             true ->
+               reset_match(session_id, session.partner_id, "partner cancelled")
+
+               :telemetry.execute([:omegle_phoenix, :room, :stopped], %{count: 1}, %{
+                 session_id: session_id
+               })
+
+               {:ok, %{type: "stopped"}}
            end
-
-           {:ok, %{type: "stopped"}}
          end) do
       {:ok, payload} ->
         {:reply, {:ok, payload}, assign(socket, :partner_id, nil)}
@@ -299,16 +324,20 @@ defmodule OmeglePhoenixWeb.RoomChannel do
 
     case close_session(session_id, "partner disconnected") do
       :ok ->
-        {:reply, {:ok, %{type: "disconnected"}}, socket}
+        {:reply, {:ok, %{type: "disconnected"}}, clear_session_assigns(socket)}
 
       {:error, :not_found} ->
         {:reply, {:error, %{reason: "Session not found"}}, socket}
+
+      {:error, %{reason: reason}} ->
+        {:reply, {:error, %{reason: reason}}, socket}
     end
   end
 
   def handle_in("ping", _payload, socket) do
     if session_id = socket.assigns[:session_id] do
       _ = OmeglePhoenix.SessionManager.refresh_session(session_id)
+      _ = OmeglePhoenix.Router.refresh_owner(session_id, self())
     end
 
     {:reply, {:ok, %{type: "pong"}}, socket}
@@ -395,10 +424,19 @@ defmodule OmeglePhoenixWeb.RoomChannel do
 
   defp teardown_existing_session(socket) do
     if session_id = socket.assigns[:session_id] do
-      _ = close_session(session_id, "partner disconnected")
-    end
+      case close_session(session_id, "partner disconnected") do
+        :ok ->
+          {:ok, clear_session_assigns(socket)}
 
-    socket
+        {:error, :not_found} ->
+          {:ok, clear_session_assigns(socket)}
+
+        {:error, %{reason: reason}} ->
+          {:error, reason, socket}
+      end
+    else
+      {:ok, socket}
+    end
   end
 
   @impl true
@@ -408,6 +446,15 @@ defmodule OmeglePhoenixWeb.RoomChannel do
     end
 
     schedule_session_refresh()
+    {:noreply, socket}
+  end
+
+  def handle_info(:refresh_owner, socket) do
+    if session_id = socket.assigns[:session_id] do
+      _ = OmeglePhoenix.Router.refresh_owner(session_id, self())
+    end
+
+    schedule_owner_refresh()
     {:noreply, socket}
   end
 
@@ -463,9 +510,25 @@ defmodule OmeglePhoenixWeb.RoomChannel do
           reset_match(session_id, session.partner_id, reason)
         end
 
-        OmeglePhoenix.Matchmaker.leave_queue(session_id)
+        case OmeglePhoenix.Matchmaker.leave_queue(session_id) do
+          :ok ->
+            :ok
+
+          {:error, _reason} ->
+            return_error = {:error, %{reason: "Failed to leave matchmaking queue"}}
+            throw({:close_session_error, return_error})
+        end
+
         OmeglePhoenix.Router.unregister(session_id)
-        OmeglePhoenix.SessionManager.delete_session(session_id)
+
+        case OmeglePhoenix.SessionManager.delete_session(session_id) do
+          :ok ->
+            :ok
+
+          {:error, _reason} ->
+            return_error = {:error, %{reason: "Failed to delete session"}}
+            throw({:close_session_error, return_error})
+        end
 
         :telemetry.execute([:omegle_phoenix, :room, :disconnected], %{count: 1}, %{
           session_id: session_id
@@ -476,15 +539,17 @@ defmodule OmeglePhoenixWeb.RoomChannel do
         {:error, :not_found}
       end
     end)
+  catch
+    {:close_session_error, error} ->
+      error
   end
 
   defp reset_match(session_id, partner_id, disconnect_reason) do
-    OmeglePhoenix.Router.notify_disconnect(partner_id, disconnect_reason)
-
     with {:ok, session} <- OmeglePhoenix.SessionManager.get_session(session_id),
          {:ok, partner_session} <- OmeglePhoenix.SessionManager.get_session(partner_id),
          {:ok, _updated_session, _updated_partner} <-
            OmeglePhoenix.SessionManager.reset_pair(session, partner_session) do
+      OmeglePhoenix.Router.notify_disconnect(partner_id, disconnect_reason)
       :ok
     else
       _ -> :ok
@@ -536,6 +601,63 @@ defmodule OmeglePhoenixWeb.RoomChannel do
     end
   end
 
+  defp with_current_partner(session_id, expected_partner_id, fun) do
+    with_session_partner_lock(session_id, fn session ->
+      cond do
+        is_nil(session) ->
+          {:error, %{reason: "Session not found"}}
+
+        is_nil(session.partner_id) or session.status != :matched ->
+          {:error, %{reason: "No partner"}}
+
+        session.partner_id != expected_partner_id ->
+          {:error, %{reason: "Partner changed"}}
+
+        true ->
+          case OmeglePhoenix.SessionManager.get_session(expected_partner_id) do
+            {:ok, partner_session}
+            when partner_session.partner_id == session_id and partner_session.status == :matched ->
+              fun.()
+
+            _ ->
+              {:error, %{reason: "Partner changed"}}
+          end
+      end
+    end)
+  end
+
+  defp create_and_queue_session(socket, client_ip, preferences, connected_type) do
+    session_id = UUID.uuid4()
+
+    case OmeglePhoenix.SessionManager.create_session(session_id, client_ip, preferences) do
+      {:ok, session} ->
+        OmeglePhoenix.Router.register(session_id, self())
+
+        case OmeglePhoenix.Matchmaker.join_queue(session_id, preferences) do
+          :ok ->
+            {:reply,
+             {:ok, %{type: connected_type, session_id: session_id, session_token: session.token}},
+             socket
+             |> assign(:session_id, session_id)
+             |> assign(:partner_id, nil)}
+
+          {:error, _reason} ->
+            OmeglePhoenix.Router.unregister(session_id)
+            _ = OmeglePhoenix.SessionManager.delete_session(session_id)
+            {:reply, {:error, %{reason: "Matchmaking unavailable"}}, socket}
+        end
+
+      {:error, _reason} ->
+        {:reply, {:error, %{reason: "Failed to create session"}}, socket}
+    end
+  end
+
+  defp clear_session_assigns(socket) do
+    socket
+    |> assign(:session_id, nil)
+    |> assign(:partner_id, nil)
+  end
+
   defp check_rate_limit(socket) do
     now = System.system_time(:millisecond)
     window_start = socket.assigns[:window_start] || now
@@ -568,5 +690,9 @@ defmodule OmeglePhoenixWeb.RoomChannel do
 
   defp schedule_session_refresh do
     Process.send_after(self(), :refresh_session, @session_refresh_ms)
+  end
+
+  defp schedule_owner_refresh do
+    Process.send_after(self(), :refresh_owner, @owner_refresh_ms)
   end
 end

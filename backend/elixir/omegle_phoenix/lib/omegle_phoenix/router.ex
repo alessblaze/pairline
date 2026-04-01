@@ -17,7 +17,14 @@ defmodule OmeglePhoenix.Router do
       {:error, :must_register_from_owner_process}
     else
       :ok = Phoenix.PubSub.subscribe(OmeglePhoenix.PubSub, topic(session_id))
+      refresh_owner(session_id, pid)
+    end
+  end
 
+  def refresh_owner(session_id, pid) when is_binary(session_id) and is_pid(pid) do
+    if pid != self() do
+      {:error, :must_refresh_from_owner_process}
+    else
       OmeglePhoenix.Redis.command([
         "SETEX",
         "session:#{session_id}:owner_node",

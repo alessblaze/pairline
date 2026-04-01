@@ -18,26 +18,42 @@ defmodule OmeglePhoenix.Matchmaker do
   def join_queue(session_id, preferences) do
     timestamp = System.system_time(:millisecond)
 
-    OmeglePhoenix.Redis.command([
-      "ZADD",
-      queue_key(preferences),
-      to_string(timestamp),
-      session_id
-    ])
+    case OmeglePhoenix.Redis.command([
+           "ZADD",
+           queue_key(preferences),
+           to_string(timestamp),
+           session_id
+         ]) do
+      {:ok, _result} ->
+        :telemetry.execute([:omegle_phoenix, :matchmaking, :queued], %{count: 1}, %{
+          session_id: session_id
+        })
 
-    :telemetry.execute([:omegle_phoenix, :matchmaking, :queued], %{count: 1}, %{
-      session_id: session_id
-    })
+        :ok
 
-    :ok
+      {:error, reason} = error ->
+        Logger.warning("Failed to queue #{session_id}: #{inspect(reason)}")
+        error
+    end
   end
 
   def leave_queue(session_id) do
-    Enum.each(queue_keys(), fn queue_key ->
-      OmeglePhoenix.Redis.command(["ZREM", queue_key, session_id])
-    end)
+    commands =
+      Enum.map(queue_keys(), fn queue_key ->
+        ["ZREM", queue_key, session_id]
+      end)
 
-    :ok
+    case OmeglePhoenix.Redis.pipeline(commands) do
+      {:ok, _results} ->
+        :ok
+
+      {:error, reason} = error ->
+        Logger.warning(
+          "Failed to remove #{session_id} from matchmaking queues: #{inspect(reason)}"
+        )
+
+        error
+    end
   end
 
   def check_match(session_id) do
@@ -81,10 +97,14 @@ defmodule OmeglePhoenix.Matchmaker do
   @impl true
   def handle_info(:check_matches, state) do
     if match_leader?() do
+      renewer = start_leader_renewer()
+
       try do
         Enum.each(queue_keys(), &do_matching/1)
       rescue
         e -> Logger.error("Matching error: #{inspect(e)}")
+      after
+        stop_renewer(renewer)
       end
     end
 
@@ -312,7 +332,7 @@ defmodule OmeglePhoenix.Matchmaker do
     case OmeglePhoenix.SessionManager.get_session(session_id) do
       {:ok, session} ->
         if pairable_session?(session) do
-          join_queue(session_id, session.preferences)
+          _ = join_queue(session_id, session.preferences)
         else
           :ok
         end
@@ -413,4 +433,47 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   defp queue_key(_mode), do: "#{@mode_queue_prefix}:text"
+
+  defp start_leader_renewer do
+    parent = self()
+    node_name = Atom.to_string(Node.self())
+    ttl_ms = OmeglePhoenix.Config.get_match_leader_ttl_ms()
+
+    spawn(fn ->
+      parent_ref = Process.monitor(parent)
+      leader_renew_loop(node_name, ttl_ms, parent_ref)
+    end)
+  end
+
+  defp leader_renew_loop(node_name, ttl_ms, parent_ref) do
+    receive do
+      :stop ->
+        :ok
+
+      {:DOWN, ^parent_ref, :process, _pid, _reason} ->
+        :ok
+    after
+      max(div(ttl_ms, 2), 250) ->
+        _ = renew_leader(node_name, ttl_ms)
+        leader_renew_loop(node_name, ttl_ms, parent_ref)
+    end
+  end
+
+  defp renew_leader(node_name, ttl_ms) do
+    OmeglePhoenix.Redis.command([
+      "EVAL",
+      @renew_lock_script,
+      "1",
+      @lock_key,
+      node_name,
+      Integer.to_string(ttl_ms)
+    ])
+  end
+
+  defp stop_renewer(nil), do: :ok
+
+  defp stop_renewer(pid) when is_pid(pid) do
+    send(pid, :stop)
+    :ok
+  end
 end

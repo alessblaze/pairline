@@ -4,6 +4,12 @@ defmodule OmeglePhoenix.SessionLock do
   """
 
   @lock_ttl_ms 5_000
+  @renew_script """
+  if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('PEXPIRE', KEYS[1], ARGV[2])
+  end
+  return 0
+  """
   @unlock_script """
   if redis.call('GET', KEYS[1]) == ARGV[1] then
     return redis.call('DEL', KEYS[1])
@@ -29,10 +35,12 @@ defmodule OmeglePhoenix.SessionLock do
     case acquire_all(ordered_ids, lock_token, []) do
       :ok ->
         started_at = System.monotonic_time()
+        renewer = start_lock_renewer(ordered_ids, lock_token)
 
         try do
           fun.()
         after
+          stop_renewer(renewer)
           release_all(Enum.reverse(ordered_ids), lock_token)
 
           :telemetry.execute(
@@ -75,6 +83,48 @@ defmodule OmeglePhoenix.SessionLock do
 
   defp release_all(session_ids, token) do
     Enum.each(session_ids, &release_lock(&1, token))
+  end
+
+  defp start_lock_renewer(session_ids, token) do
+    parent = self()
+
+    spawn(fn ->
+      parent_ref = Process.monitor(parent)
+      renew_loop(session_ids, token, parent_ref)
+    end)
+  end
+
+  defp renew_loop(session_ids, token, parent_ref) do
+    receive do
+      :stop ->
+        :ok
+
+      {:DOWN, ^parent_ref, :process, _pid, _reason} ->
+        :ok
+    after
+      max(div(@lock_ttl_ms, 2), 250) ->
+        Enum.each(session_ids, &renew_lock(&1, token))
+        renew_loop(session_ids, token, parent_ref)
+    end
+  end
+
+  defp stop_renewer(pid) when is_pid(pid) do
+    send(pid, :stop)
+    :ok
+  end
+
+  defp renew_lock(session_id, token) do
+    _ =
+      OmeglePhoenix.Redis.command([
+        "EVAL",
+        @renew_script,
+        "1",
+        lock_key(session_id),
+        token,
+        Integer.to_string(@lock_ttl_ms)
+      ])
+
+    :ok
   end
 
   defp release_lock(session_id, token) do

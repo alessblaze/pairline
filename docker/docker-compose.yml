@@ -1,0 +1,278 @@
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: pairline-nginx
+    depends_on:
+      - phoenix1
+      - phoenix2
+      - golang-public-1
+      - golang-public-2
+      - golang-admin
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    networks:
+      pairline_cluster:
+        ipv4_address: 172.30.0.10
+    volumes:
+      - ./nginx/pairline.conf:/etc/nginx/conf.d/default.conf:ro
+
+  redis:
+    image: redis:7-alpine
+    container_name: pairline-redis
+    command: redis-server --appendonly yes --requirepass pairline-dev-redis-password
+    networks:
+      pairline_cluster:
+        ipv4_address: 172.30.0.20
+    volumes:
+      - redis_cluster_data:/data
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: pairline-postgres
+    environment:
+      POSTGRES_DB: omegle
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d omegle"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      pairline_cluster:
+        ipv4_address: 172.30.0.30
+    volumes:
+      - postgres_cluster_data:/var/lib/postgresql/data
+
+  phoenix1:
+    image: hexpm/elixir:1.17.3-erlang-27.1.2-debian-bookworm-20260316-slim
+    container_name: pairline-phoenix1
+    hostname: phoenix1
+    working_dir: /app
+    depends_on:
+      - redis
+    environment:
+      PORT: "8080"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: pairline-dev-redis-password
+      SHARED_SECRET: pairline-dev-shared-secret
+      SECRET_KEY_BASE: pairline-dev-secret-key-base
+      CORS_ORIGINS: http://localhost:8080,http://127.0.0.1:8080,https://kalogar.negro.sbs
+      TRUSTED_PROXY_CIDRS: 127.0.0.0/8,::1/128,172.16.0.0/12
+      NODE_NAME: phoenix1
+      NODE_COOKIE: pairline-dev-cookie
+      CLUSTER_NODES: phoenix1@phoenix1,phoenix2@phoenix2
+      NODE_DISTRIBUTION: short
+      CLUSTER_CONNECT_INTERVAL_MS: "2000"
+      REAPER_INTERVAL_MS: "5000"
+      SKIP_DOTENV: "1"
+      MIX_ENV: dev
+    networks:
+      pairline_cluster:
+        ipv4_address: 172.30.0.11
+    volumes:
+      - ../backend/elixir/omegle_phoenix:/app
+      - phoenix1_deps:/app/deps
+      - phoenix1_build:/app/_build
+      - phoenix1_hex:/root/.hex
+      - phoenix1_rebar:/root/.cache/rebar3
+    command:
+      - /bin/bash
+      - -lc
+      - |
+        mix local.hex --force &&
+        mix local.rebar --force &&
+        mix deps.get &&
+        ./start.sh
+
+  phoenix2:
+    image: hexpm/elixir:1.17.3-erlang-27.1.2-debian-bookworm-20260316-slim
+    container_name: pairline-phoenix2
+    hostname: phoenix2
+    working_dir: /app
+    depends_on:
+      - redis
+    environment:
+      PORT: "8081"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: pairline-dev-redis-password
+      SHARED_SECRET: pairline-dev-shared-secret
+      SECRET_KEY_BASE: pairline-dev-secret-key-base
+      CORS_ORIGINS: http://localhost:8080,http://127.0.0.1:8080,https://kalogar.negro.sbs
+      TRUSTED_PROXY_CIDRS: 127.0.0.0/8,::1/128,172.16.0.0/12
+      NODE_NAME: phoenix2
+      NODE_COOKIE: pairline-dev-cookie
+      CLUSTER_NODES: phoenix1@phoenix1,phoenix2@phoenix2
+      NODE_DISTRIBUTION: short
+      CLUSTER_CONNECT_INTERVAL_MS: "2000"
+      REAPER_INTERVAL_MS: "5000"
+      SKIP_DOTENV: "1"
+      MIX_ENV: dev
+    networks:
+      pairline_cluster:
+        ipv4_address: 172.30.0.12
+    volumes:
+      - ../backend/elixir/omegle_phoenix:/app
+      - phoenix2_deps:/app/deps
+      - phoenix2_build:/app/_build
+      - phoenix2_hex:/root/.hex
+      - phoenix2_rebar:/root/.cache/rebar3
+    command:
+      - /bin/bash
+      - -lc
+      - |
+        mix local.hex --force &&
+        mix local.rebar --force &&
+        mix deps.get &&
+        ./start.sh
+
+  golang-public-1:
+    image: golang:1.26.1-bookworm
+    container_name: pairline-golang-public-1
+    working_dir: /app
+    depends_on:
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: "8081"
+      HOST: "0.0.0.0"
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: omegle
+      POSTGRES_SSLMODE: disable
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: pairline-dev-redis-password
+      SHARED_SECRET: pairline-dev-shared-secret
+      JWT_SECRET: pairline-dev-jwt-secret-must-be-32-characters-long
+      ROOT_ADMIN_USERNAME: admin
+      ROOT_ADMIN_PASSWORD: adminpassword123
+      CORS_ORIGIN: http://localhost:8080,http://127.0.0.1:8080,https://kalogar.negro.sbs
+      TRUSTED_PROXY_CIDRS: 127.0.0.0/8,::1/128,172.16.0.0/12
+      GOCACHE: /tmp/go-build
+    networks:
+      pairline_cluster:
+        ipv4_address: 172.30.0.40
+    volumes:
+      - ../backend/golang:/app
+      - golang_mod_cache:/go/pkg/mod
+      - golang_build_cache:/tmp/go-build
+    command:
+      - /bin/bash
+      - -lc
+      - |
+        /usr/local/go/bin/go mod download &&
+        /usr/local/go/bin/go run ./cmd/public
+
+  golang-public-2:
+    image: golang:1.26.1-bookworm
+    container_name: pairline-golang-public-2
+    working_dir: /app
+    depends_on:
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: "8081"
+      HOST: "0.0.0.0"
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: omegle
+      POSTGRES_SSLMODE: disable
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: pairline-dev-redis-password
+      SHARED_SECRET: pairline-dev-shared-secret
+      JWT_SECRET: pairline-dev-jwt-secret-must-be-32-characters-long
+      ROOT_ADMIN_USERNAME: admin
+      ROOT_ADMIN_PASSWORD: adminpassword123
+      CORS_ORIGIN: http://localhost:8080,http://127.0.0.1:8080
+      TRUSTED_PROXY_CIDRS: 127.0.0.0/8,::1/128,172.16.0.0/12
+      GOCACHE: /tmp/go-build
+    networks:
+      pairline_cluster:
+        ipv4_address: 172.30.0.42
+    volumes:
+      - ../backend/golang:/app
+      - golang_mod_cache:/go/pkg/mod
+      - golang_build_cache:/tmp/go-build
+    command:
+      - /bin/bash
+      - -lc
+      - |
+        /usr/local/go/bin/go mod download &&
+        /usr/local/go/bin/go run ./cmd/public
+
+  golang-admin:
+    image: golang:1.26.1-bookworm
+    container_name: pairline-golang-admin
+    working_dir: /app
+    depends_on:
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: "8082"
+      HOST: "0.0.0.0"
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: omegle
+      POSTGRES_SSLMODE: disable
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: pairline-dev-redis-password
+      SHARED_SECRET: pairline-dev-shared-secret
+      JWT_SECRET: pairline-dev-jwt-secret-must-be-32-characters-long
+      ROOT_ADMIN_USERNAME: admin
+      ROOT_ADMIN_PASSWORD: adminpassword123
+      CORS_ORIGIN: http://localhost:8080,http://127.0.0.1:8080
+      TRUSTED_PROXY_CIDRS: 127.0.0.0/8,::1/128,172.16.0.0/12
+      GOCACHE: /tmp/go-build
+    networks:
+      pairline_cluster:
+        ipv4_address: 172.30.0.41
+    volumes:
+      - ../backend/golang:/app
+      - golang_mod_cache:/go/pkg/mod
+      - golang_build_cache:/tmp/go-build
+    command:
+      - /bin/bash
+      - -lc
+      - |
+        /usr/local/go/bin/go mod download &&
+        /usr/local/go/bin/go run ./cmd/admin
+
+volumes:
+  redis_cluster_data:
+  postgres_cluster_data:
+  phoenix1_deps:
+  phoenix1_build:
+  phoenix1_hex:
+  phoenix1_rebar:
+  phoenix2_deps:
+  phoenix2_build:
+  phoenix2_hex:
+  phoenix2_rebar:
+  golang_mod_cache:
+  golang_build_cache:
+
+networks:
+  pairline_cluster:
+    name: pairline_cluster
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24

@@ -139,6 +139,10 @@ func (s *Server) syncActiveBansToRedis() {
 	}
 
 	log.Printf("Synced %d active ban keys to Redis from Postgres", syncedKeys)
+
+	if err := s.reconcileBanKeys(ctx, bans); err != nil {
+		log.Printf("Failed reconciling Redis bans: %v", err)
+	}
 }
 
 func (s *Server) startBanSyncLoop() {
@@ -169,6 +173,51 @@ func banSyncIntervalSeconds() int {
 	}
 
 	return value
+}
+
+func (s *Server) reconcileBanKeys(ctx context.Context, bans []storage.Ban) error {
+	activeKeys := make(map[string]struct{}, len(bans)*2)
+	now := time.Now()
+
+	for _, ban := range bans {
+		if ban.ExpiresAt != nil && !ban.ExpiresAt.After(now) {
+			continue
+		}
+		if ban.SessionID != "" {
+			activeKeys["ban:"+ban.SessionID] = struct{}{}
+		}
+		if ban.IPAddress != "" {
+			activeKeys["ban:ip:"+ban.IPAddress] = struct{}{}
+		}
+	}
+
+	var cursor uint64
+	for {
+		keys, nextCursor, err := s.redis.GetClient().Scan(ctx, cursor, "ban:*", 200).Result()
+		if err != nil {
+			return err
+		}
+
+		staleKeys := make([]string, 0)
+		for _, key := range keys {
+			if _, ok := activeKeys[key]; !ok {
+				staleKeys = append(staleKeys, key)
+			}
+		}
+
+		if len(staleKeys) > 0 {
+			if err := s.redis.GetClient().Del(ctx, staleKeys...).Err(); err != nil {
+				return err
+			}
+		}
+
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
+	}
+
+	return nil
 }
 
 func SecurityHeadersMiddleware() gin.HandlerFunc {
