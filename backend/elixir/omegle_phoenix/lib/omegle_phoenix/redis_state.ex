@@ -42,24 +42,58 @@ defmodule OmeglePhoenix.RedisState do
   return 1
   """
 
+  # KEYS
+  # 1  session1:data
+  # 2  session1:ip
+  # 3  session1:token
+  # 4  session1:owner
+  # 5  session2:data
+  # 6  session2:ip
+  # 7  session2:token
+  # 8  session2:owner
+  # 9  active_sessions
+  # 10 ip_sessions(session1.ip)
+  # 11 ip_sessions(session2.ip)
+  # 12 match(session1.id)
+  # 13 match(session2.id)
+  #
+  # ARGV
+  # 1 ttl
+  # 2 session1.id
+  # 3 session1.ip
+  # 4 session1.hashed_token
+  # 5 session1.encoded
+  # 6 session2.id
+  # 7 session2.ip
+  # 8 session2.hashed_token
+  # 9 session2.encoded
   @reset_pair_script """
   redis.call('SETEX', KEYS[1], ARGV[1], ARGV[5])
   redis.call('SETEX', KEYS[2], ARGV[1], ARGV[3])
   redis.call('SETEX', KEYS[3], ARGV[1], ARGV[4])
-  redis.call('SETEX', KEYS[7], ARGV[1], ARGV[9])
-  redis.call('SETEX', KEYS[8], ARGV[1], ARGV[7])
-  redis.call('SETEX', KEYS[9], ARGV[1], ARGV[8])
-  redis.call('SADD', KEYS[11], ARGV[2], ARGV[6])
-  redis.call('SADD', KEYS[12], ARGV[2])
-  redis.call('SADD', KEYS[13], ARGV[6])
-  if redis.call('EXISTS', KEYS[4]) == 1 then redis.call('EXPIRE', KEYS[4], ARGV[1]) end
-  if redis.call('EXISTS', KEYS[10]) == 1 then redis.call('EXPIRE', KEYS[10], ARGV[1]) end
-  redis.call('DEL', KEYS[15], KEYS[16])
+
+  redis.call('SETEX', KEYS[5], ARGV[1], ARGV[9])
+  redis.call('SETEX', KEYS[6], ARGV[1], ARGV[7])
+  redis.call('SETEX', KEYS[7], ARGV[1], ARGV[8])
+
+  if redis.call('EXISTS', KEYS[4]) == 1 then
+    redis.call('EXPIRE', KEYS[4], ARGV[1])
+  end
+
+  if redis.call('EXISTS', KEYS[8]) == 1 then
+    redis.call('EXPIRE', KEYS[8], ARGV[1])
+  end
+
+  redis.call('SADD', KEYS[9], ARGV[2], ARGV[6])
+  redis.call('SADD', KEYS[10], ARGV[2])
+  redis.call('SADD', KEYS[11], ARGV[6])
+
+  redis.call('DEL', KEYS[12], KEYS[13])
   return 1
   """
 
   def persist_session(session, ttl_seconds, opts \\ []) do
-    ttl = Integer.to_string(ttl_seconds)
+    ttl = normalize_ttl!(ttl_seconds)
     hashed_token = hashed_token(session.token)
 
     command = [
@@ -102,8 +136,8 @@ defmodule OmeglePhoenix.RedisState do
   end
 
   def pair_sessions(session1, session2, ttl_seconds, recent_ttl_seconds, opts \\ []) do
-    ttl = Integer.to_string(ttl_seconds)
-    recent_ttl = Integer.to_string(recent_ttl_seconds)
+    ttl = normalize_ttl!(ttl_seconds)
+    recent_ttl = normalize_ttl!(recent_ttl_seconds)
 
     command = [
       "EVAL",
@@ -142,18 +176,16 @@ defmodule OmeglePhoenix.RedisState do
   end
 
   def reset_pair(session1, session2, ttl_seconds, opts \\ []) do
-    ttl = Integer.to_string(ttl_seconds)
+    ttl = normalize_ttl!(ttl_seconds)
 
     command = [
       "EVAL",
       @reset_pair_script,
-      "16",
+      "13",
       session_key(session1.id),
       session_ip_key(session1.id),
       session_token_key(session1.id),
       session_owner_key(session1.id),
-      "dummy5",
-      "dummy6",
       session_key(session2.id),
       session_ip_key(session2.id),
       session_token_key(session2.id),
@@ -161,7 +193,6 @@ defmodule OmeglePhoenix.RedisState do
       active_sessions_key(),
       ip_sessions_key(session1.ip),
       ip_sessions_key(session2.ip),
-      "dummy14",
       match_key(session1.id),
       match_key(session2.id),
       ttl,
@@ -198,19 +229,38 @@ defmodule OmeglePhoenix.RedisState do
     case OmeglePhoenix.Redis.command(command) do
       {:ok, _result} = ok ->
         if Keyword.get(opts, :telemetry, true) do
-          :telemetry.execute([:omegle_phoenix, :redis_state, :success], %{count: 1}, %{operation: hd(command)})
+          :telemetry.execute(
+            [:omegle_phoenix, :redis_state, :success],
+            %{count: 1},
+            %{operation: hd(command)}
+          )
         end
 
         ok
 
       {:error, reason} = error ->
         if Keyword.get(opts, :telemetry, true) do
-          :telemetry.execute([:omegle_phoenix, :redis_state, :failure], %{count: 1}, %{operation: hd(command), reason: inspect(reason)})
+          :telemetry.execute(
+            [:omegle_phoenix, :redis_state, :failure],
+            %{count: 1},
+            %{operation: hd(command), reason: inspect(reason)}
+          )
         end
 
         error
     end
   end
+
+  defp normalize_ttl!(ttl) when is_integer(ttl) and ttl > 0, do: Integer.to_string(ttl)
+
+  defp normalize_ttl!(ttl) when is_binary(ttl) do
+    case Integer.parse(ttl) do
+      {n, ""} when n > 0 -> Integer.to_string(n)
+      _ -> raise ArgumentError, "invalid Redis TTL: #{inspect(ttl)}"
+    end
+  end
+
+  defp normalize_ttl!(ttl), do: raise(ArgumentError, "invalid Redis TTL: #{inspect(ttl)}")
 
   defp encode_session(session), do: session |> serialize_session() |> Jason.encode!()
 
