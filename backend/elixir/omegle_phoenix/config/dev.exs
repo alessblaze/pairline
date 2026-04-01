@@ -7,7 +7,7 @@ config :omegle_phoenix, OmeglePhoenixWeb.Endpoint,
         do: {0, 0, 0, 0, 0, 0, 0, 0},
         else: {0, 0, 0, 0}
       ),
-    port: 8080
+    port: String.to_integer(System.get_env("PORT") || "8080")
   ],
   check_origin:
     String.split(

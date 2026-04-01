@@ -5,7 +5,8 @@ defmodule OmeglePhoenix.Matchmaker do
   defstruct match_timer: nil
 
   @queue_key "matchmaking_queue"
-
+  @lock_key "matchmaking:leader"
+  @lock_ttl_ms 500
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
@@ -38,6 +39,8 @@ defmodule OmeglePhoenix.Matchmaker do
       to_string(timestamp),
       session_id
     ])
+
+    :telemetry.execute([:omegle_phoenix, :matchmaking, :queued], %{count: 1}, %{session_id: session_id})
 
     {:reply, :ok, state}
   end
@@ -75,10 +78,12 @@ defmodule OmeglePhoenix.Matchmaker do
 
   @impl true
   def handle_info(:check_matches, state) do
-    try do
-      do_matching()
-    rescue
-      e -> Logger.error("Matching error: #{inspect(e)}")
+    if match_leader?() do
+      try do
+        do_matching()
+      rescue
+        e -> Logger.error("Matching error: #{inspect(e)}")
+      end
     end
 
     Process.send_after(self(), :check_matches, 100)
@@ -111,14 +116,8 @@ defmodule OmeglePhoenix.Matchmaker do
           case OmeglePhoenix.SessionManager.get_session(session_id) do
             {:ok, session} when session.status == :waiting ->
               OmeglePhoenix.SessionManager.update_session(session_id, %{status: :disconnecting})
-
-              case OmeglePhoenix.Router.find_process(session_id) do
-                {:ok, pid} ->
-                  send(pid, :timeout)
-
-                _ ->
-                  :ok
-              end
+              OmeglePhoenix.Router.notify_timeout(session_id)
+              :telemetry.execute([:omegle_phoenix, :matchmaking, :timeout], %{count: 1}, %{session_id: session_id})
 
             _ ->
               :ok
@@ -216,50 +215,90 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   defp pair_users(session_id1, session_id2) do
-    OmeglePhoenix.Redis.command(["ZREM", @queue_key, session_id1])
-    OmeglePhoenix.Redis.command(["ZREM", @queue_key, session_id2])
+    OmeglePhoenix.SessionLock.with_locks([session_id1, session_id2], fn ->
+      OmeglePhoenix.Redis.command(["ZREM", @queue_key, session_id1])
+      OmeglePhoenix.Redis.command(["ZREM", @queue_key, session_id2])
 
-    with {:ok, session1} <- OmeglePhoenix.SessionManager.get_session(session_id1),
-         {:ok, session2} <- OmeglePhoenix.SessionManager.get_session(session_id2),
-         true <- session1.status == :waiting,
-         true <- session2.status == :waiting do
-      if session1.ban_status or session2.ban_status do
-        {:error, :user_banned}
+      with {:ok, session1} <- OmeglePhoenix.SessionManager.get_session(session_id1),
+           {:ok, session2} <- OmeglePhoenix.SessionManager.get_session(session_id2),
+           true <- pairable_session?(session1),
+           true <- pairable_session?(session2) do
+        if session1.ban_status or session2.ban_status do
+          {:error, :user_banned}
+        else
+          case OmeglePhoenix.SessionManager.pair_sessions(session1, session2) do
+            {:ok, _updated_session1, _updated_session2, common_interests} ->
+              OmeglePhoenix.Router.notify_match(session_id1, session_id2, common_interests)
+              OmeglePhoenix.Router.notify_match(session_id2, session_id1, common_interests)
+              :telemetry.execute(
+                [:omegle_phoenix, :matchmaking, :matched],
+                %{count: 1},
+                %{session_id: session_id1, partner_id: session_id2, common_interests: length(common_interests)}
+              )
+
+              :ok
+
+            {:error, reason} ->
+              {:error, reason}
+          end
+        end
       else
-        common_interests = get_common_interests(session1.preferences, session2.preferences)
+        {:error, :not_found} ->
+          Logger.warning(
+            "Matchmaker: session disappeared during pairing (#{session_id1} or #{session_id2})"
+          )
 
-        OmeglePhoenix.SessionManager.update_session(session_id1, %{
-          status: :matched,
-          partner_id: session_id2,
-          last_partner_id: session_id2
-        })
+          :ok
 
-        OmeglePhoenix.SessionManager.update_session(session_id2, %{
-          status: :matched,
-          partner_id: session_id1,
-          last_partner_id: session_id1
-        })
+        false ->
+          requeue_if_waiting(session_id1)
+          requeue_if_waiting(session_id2)
+          :ok
 
-        OmeglePhoenix.Redis.command(["SETEX", "match:#{session_id1}", "3600", session_id2])
-        OmeglePhoenix.Redis.command(["SETEX", "match:#{session_id2}", "3600", session_id1])
-        OmeglePhoenix.Redis.command(["SETEX", "recent_match:#{session_id1}", "900", session_id2])
-        OmeglePhoenix.Redis.command(["SETEX", "recent_match:#{session_id2}", "900", session_id1])
-
-        notify_match(session_id1, session_id2, common_interests)
-        notify_match(session_id2, session_id1, common_interests)
-
-        :ok
+        _ ->
+          :ok
       end
-    else
-      {:error, :not_found} ->
-        Logger.warning(
-          "Matchmaker: session disappeared during pairing (#{session_id1} or #{session_id2})"
-        )
+    end)
+  end
 
-        :ok
+  defp match_leader? do
+    node_name = Atom.to_string(Node.self())
 
-      false ->
-        :ok
+    case OmeglePhoenix.Redis.command([
+           "SET",
+           @lock_key,
+           node_name,
+           "PX",
+           Integer.to_string(@lock_ttl_ms),
+           "NX"
+         ]) do
+      {:ok, "OK"} ->
+        true
+
+      _ ->
+        case OmeglePhoenix.Redis.command(["GET", @lock_key]) do
+          {:ok, ^node_name} ->
+            OmeglePhoenix.Redis.command(["PEXPIRE", @lock_key, Integer.to_string(@lock_ttl_ms)])
+            true
+
+          _ ->
+            false
+        end
+    end
+  end
+
+  defp pairable_session?(session) do
+    session.status == :waiting and is_nil(session.partner_id)
+  end
+
+  defp requeue_if_waiting(session_id) do
+    case OmeglePhoenix.SessionManager.get_session(session_id) do
+      {:ok, session} ->
+        if pairable_session?(session) do
+          join_queue(session_id, session.preferences)
+        else
+          :ok
+        end
 
       _ ->
         :ok
@@ -321,22 +360,6 @@ defmodule OmeglePhoenix.Matchmaker do
     |> MapSet.new()
   end
 
-  defp get_common_interests(p1, p2) do
-    p1 = normalize_preferences(p1)
-    p2 = normalize_preferences(p2)
-
-    i1 = Map.get(p1, "interests", "") |> String.trim()
-    i2 = Map.get(p2, "interests", "") |> String.trim()
-
-    if i1 != "" and i2 != "" do
-      set1 = parse_interests(i1)
-      set2 = parse_interests(i2)
-      MapSet.intersection(set1, set2) |> MapSet.to_list()
-    else
-      []
-    end
-  end
-
   defp normalize_preferences(preferences) when is_map(preferences) do
     %{
       "mode" => safe_string(Map.get(preferences, "mode", "text"), "text"),
@@ -355,14 +378,4 @@ defmodule OmeglePhoenix.Matchmaker do
     do: :erlang.float_to_binary(value, [:compact])
 
   defp safe_string(_value, default), do: default
-
-  defp notify_match(session_id, partner_session_id, common_interests) do
-    case OmeglePhoenix.Router.find_process(session_id) do
-      {:ok, pid} ->
-        send(pid, {:match, partner_session_id, common_interests})
-
-      {:error, :not_found} ->
-        :ok
-    end
-  end
 end

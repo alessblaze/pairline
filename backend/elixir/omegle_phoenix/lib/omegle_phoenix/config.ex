@@ -47,4 +47,20 @@ defmodule OmeglePhoenix.Config do
   def get_cors_origins do
     get("CORS_ORIGINS", "")
   end
+
+  def get_cluster_nodes do
+    get("CLUSTER_NODES", "")
+    |> String.split(",", trim: true)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.map(&String.to_atom/1)
+  end
+
+  def get_cluster_connect_interval_ms do
+    get("CLUSTER_CONNECT_INTERVAL_MS", "5000") |> String.to_integer()
+  end
+
+  def get_reaper_interval_ms do
+    get("REAPER_INTERVAL_MS", "10000") |> String.to_integer()
+  end
 end

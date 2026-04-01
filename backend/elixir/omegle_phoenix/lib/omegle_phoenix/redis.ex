@@ -57,22 +57,24 @@ defmodule OmeglePhoenix.Redis do
   @impl true
   def handle_call({:command, cmd}, _from, state) do
     [conn | rest] = state.pool
+    {result, conn, state} = exec_command_with_reconnect(conn, cmd, state)
     new_pool = rest ++ [conn]
-    result = Redix.command(conn, cmd)
     {:reply, result, %{state | pool: new_pool}}
   end
 
   def handle_call({:pipeline, commands}, _from, state) do
     [conn | rest] = state.pool
+    {result, conn, state} = exec_pipeline_with_reconnect(conn, commands, state)
     new_pool = rest ++ [conn]
-    result = Redix.pipeline(conn, commands)
     {:reply, result, %{state | pool: new_pool}}
   end
 
   def handle_call({:publish, channel, message}, _from, state) do
     [conn | rest] = state.pool
+    {result, conn, state} =
+      exec_command_with_reconnect(conn, ["PUBLISH", channel, Jason.encode!(message)], state)
+
     new_pool = rest ++ [conn]
-    result = Redix.command(conn, ["PUBLISH", channel, Jason.encode!(message)])
     {:reply, result, %{state | pool: new_pool}}
   end
 
@@ -213,6 +215,44 @@ defmodule OmeglePhoenix.Redis do
       {:ok, pid} -> pid
       {:error, reason} -> raise "Redis connection failed: #{inspect(reason)}"
     end
+  end
+
+  defp exec_command_with_reconnect(conn, cmd, state) do
+    case Redix.command(conn, cmd) do
+      {:error, %Redix.ConnectionError{reason: :closed}} ->
+        reconnect_and_retry(conn, state, fn new_conn -> Redix.command(new_conn, cmd) end)
+
+      result ->
+        {result, conn, state}
+    end
+  end
+
+  defp exec_pipeline_with_reconnect(conn, commands, state) do
+    case Redix.pipeline(conn, commands) do
+      {:error, %Redix.ConnectionError{reason: :closed}} ->
+        reconnect_and_retry(conn, state, fn new_conn -> Redix.pipeline(new_conn, commands) end)
+
+      result ->
+        {result, conn, state}
+    end
+  end
+
+  defp reconnect_and_retry(conn, state, callback) do
+    host = OmeglePhoenix.Config.get_redis_host()
+    port = OmeglePhoenix.Config.get_redis_port()
+    password = OmeglePhoenix.Config.get_redis_password()
+
+    Logger.warning("Redis connection closed; reconnecting pooled connection")
+
+    try do
+      Redix.stop(conn)
+    rescue
+      _ -> :ok
+    end
+
+    new_conn = connect(host, port, password)
+    result = callback.(new_conn)
+    {result, new_conn, state}
   end
 
   defp start_subscription(host, port, password, channel) do
