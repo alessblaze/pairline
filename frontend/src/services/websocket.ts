@@ -147,6 +147,10 @@ export class WebSocketClient {
     this.channel.on('timeout', (payload: Omit<Message, 'type'>) => {
       this.dispatchMessage({ type: 'timeout', ...payload });
     });
+
+    this.channel.on('banned', (payload: Omit<Message, 'type'>) => {
+      this.dispatchMessage({ type: 'banned', ...payload });
+    });
   }
 
   private handleReconnect() {
