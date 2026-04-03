@@ -37,6 +37,7 @@ export function useVideoChat(wsUrl: string) {
   const [status, setStatus] = useState<'idle' | 'searching' | 'connected' | 'disconnected'>('idle');
   const [messages, setMessages] = useState<Array<{ id: string; text: string; sender: 'me' | 'peer' | 'system'; timestamp: number }>>([]);
   const [peerTyping, setPeerTyping] = useState(false);
+  const peerTypingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showReconnectMessage, setShowReconnectMessage] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
@@ -727,6 +728,7 @@ export function useVideoChat(wsUrl: string) {
         setReportPeerId(peerIdMatch || null);
         setStatus('connected');
         setShowReconnectMessage(false);
+        setPeerTyping(false);
         signalingReadySentRef.current = false;
         negotiationStartedRef.current = false;
         peerIdRef.current = peerIdMatch || null;
@@ -806,6 +808,17 @@ export function useVideoChat(wsUrl: string) {
       case 'typing':
         if (message.data?.typing !== undefined) {
           setPeerTyping(message.data.typing);
+          // Safety net: auto-clear if typing: false is never received (network loss, rate-limit)
+          if (peerTypingTimeoutRef.current) {
+            clearTimeout(peerTypingTimeoutRef.current);
+            peerTypingTimeoutRef.current = null;
+          }
+          if (message.data.typing) {
+            peerTypingTimeoutRef.current = setTimeout(() => {
+              setPeerTyping(false);
+              peerTypingTimeoutRef.current = null;
+            }, 4000);
+          }
         }
         break;
 
@@ -886,6 +899,7 @@ export function useVideoChat(wsUrl: string) {
         console.log('Peer disconnected');
         setStatus('disconnected');
         setPeerId(null);
+        setPeerTyping(false);
         setMessages(prev => [...prev, {
           id: crypto.randomUUID(),
           text: 'Stranger has disconnected.',
@@ -905,6 +919,7 @@ export function useVideoChat(wsUrl: string) {
         const videoBanReason = message.data?.reason || (message as any).reason || 'Banned by an administrator';
         console.error('You have been banned:', videoBanReason);
         setStatus('disconnected');
+        setPeerTyping(false);
         setMessages(prev => [...prev, {
           id: crypto.randomUUID(),
           text: `You have been banned: ${videoBanReason}`,
@@ -933,6 +948,7 @@ export function useVideoChat(wsUrl: string) {
         console.log('Matchmaking timeout');
         setStatus('disconnected');
         setPeerId(null);
+        setPeerTyping(false);
         setMessages(prev => [...prev, {
           id: crypto.randomUUID(),
           text: 'Matchmaking timeout: No strangers are available right now.',
@@ -1013,6 +1029,7 @@ export function useVideoChat(wsUrl: string) {
       setPeerId(null);
       setReportPeerId(null);
       setMessages([]);
+      setPeerTyping(false);
       setStatus('searching');
 
       // Clean up WebRTC state for the next connection
@@ -1037,6 +1054,7 @@ export function useVideoChat(wsUrl: string) {
     wsClient.send('disconnect', {});
     setStatus('disconnected');
     setPeerId(null);
+    setPeerTyping(false);
     setMessages(prev => [...prev, {
       id: crypto.randomUUID(),
       text: 'You have disconnected.',
@@ -1077,6 +1095,10 @@ export function useVideoChat(wsUrl: string) {
     pendingWebrtcStartRef.current = null;
     sessionTokenRef.current = null;
     turnFetchPromiseRef.current = null;
+    if (peerTypingTimeoutRef.current) {
+      clearTimeout(peerTypingTimeoutRef.current);
+      peerTypingTimeoutRef.current = null;
+    }
     if (goWsConnectTimeoutRef.current !== null) {
       window.clearTimeout(goWsConnectTimeoutRef.current);
       goWsConnectTimeoutRef.current = null;
