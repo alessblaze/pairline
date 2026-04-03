@@ -148,7 +148,7 @@ func (h *RedisSignalingHub) Unregister(sessionID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	_ = h.compareAndDelete(ctx, ownerKey(sessionID))
+	_ = h.compareAndDelete(ctx, ownerKey(sessionID), h.instanceID)
 	_ = h.redis.GetClient().Del(ctx, readyKey(sessionID)).Err()
 }
 
@@ -196,7 +196,7 @@ func (h *RedisSignalingHub) SendOrQueue(targetSessionID string, payload []byte) 
 			}
 
 			if publishErr == nil && delivered == 0 {
-				_ = h.compareAndDelete(ctx, ownerKey(targetSessionID))
+				_ = h.compareAndDelete(ctx, ownerKey(targetSessionID), owner)
 			}
 		}
 	}
@@ -376,14 +376,14 @@ func (h *RedisSignalingHub) enqueuePending(ctx context.Context, sessionID string
 	return err
 }
 
-func (h *RedisSignalingHub) compareAndDelete(ctx context.Context, key string) error {
+func (h *RedisSignalingHub) compareAndDelete(ctx context.Context, key string, expected string) error {
 	const compareDeleteScript = `
 if redis.call("GET", KEYS[1]) == ARGV[1] then
   return redis.call("DEL", KEYS[1])
 end
 return 0
 `
-	return h.redis.GetClient().Eval(ctx, compareDeleteScript, []string{key}, h.instanceID).Err()
+	return h.redis.GetClient().Eval(ctx, compareDeleteScript, []string{key}, expected).Err()
 }
 
 func (h *RedisSignalingHub) refreshOwner(ctx context.Context, sessionID string) error {

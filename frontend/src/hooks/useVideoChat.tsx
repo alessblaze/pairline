@@ -1028,6 +1028,8 @@ export function useVideoChat(wsUrl: string) {
       pendingWebrtcStartRef.current = null;
       signalingReadySentRef.current = false;
       negotiationStartedRef.current = false;
+      turnFetchedRef.current = false;
+      iceRestartPendingRef.current = false;
     }
   };
 

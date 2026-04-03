@@ -34,5 +34,13 @@ defmodule OmeglePhoenixWeb.Endpoint do
 
   plug(Plug.MethodOverride)
   plug(Plug.Head)
+
+  plug :security_headers
   plug(OmeglePhoenixWeb.Router)
+
+  defp security_headers(conn, _opts) do
+    conn
+    |> Plug.Conn.put_resp_header("x-content-type-options", "nosniff")
+    |> Plug.Conn.put_resp_header("x-frame-options", "DENY")
+  end
 end

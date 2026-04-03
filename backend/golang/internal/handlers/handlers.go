@@ -108,7 +108,11 @@ func GetReportsHandlerGin(c *gin.Context) {
 			limit = 1000
 		} else {
 			if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
-				limit = parsed
+				if parsed > 1000 {
+					limit = 1000
+				} else {
+					limit = parsed
+				}
 			}
 		}
 	}
@@ -474,7 +478,11 @@ func GetBansHandlerGin(c *gin.Context) {
 			limit = 1000
 		} else {
 			if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
-				limit = parsed
+				if parsed > 1000 {
+					limit = 1000
+				} else {
+					limit = parsed
+				}
 			}
 		}
 	}
@@ -570,7 +578,7 @@ func DeleteBanHandlerGin(redisClient *redis.Client) gin.HandlerFunc {
 			}
 
 			if ban.SessionID != "" {
-				if activeBan, err := latestActiveBan(tx, "session_id = ?", ban.SessionID, now); err != nil {
+				if activeBan, err := latestActiveBan(tx, "session_id", ban.SessionID, now); err != nil {
 					return err
 				} else {
 					remainingSessionBan = activeBan
@@ -578,7 +586,7 @@ func DeleteBanHandlerGin(redisClient *redis.Client) gin.HandlerFunc {
 			}
 
 			if ban.IPAddress != "" {
-				if activeBan, err := latestActiveBan(tx, "ip_address = ?", ban.IPAddress, now); err != nil {
+				if activeBan, err := latestActiveBan(tx, "ip_address", ban.IPAddress, now); err != nil {
 					return err
 				} else {
 					remainingIPBan = activeBan
@@ -1047,9 +1055,16 @@ func activeBanLookup(tx *gorm.DB, sessionID, ipAddress string, now time.Time) *g
 	}
 }
 
-func latestActiveBan(tx *gorm.DB, clause string, value string, now time.Time) (*storage.Ban, error) {
+// allowedBanLookupColumns prevents SQL injection by restricting the column
+// parameter to a known-safe allowlist rather than accepting a raw WHERE clause.
+var allowedBanLookupColumns = map[string]bool{"session_id": true, "ip_address": true}
+
+func latestActiveBan(tx *gorm.DB, column string, value string, now time.Time) (*storage.Ban, error) {
+	if !allowedBanLookupColumns[column] {
+		return nil, errors.New("invalid ban lookup column")
+	}
 	var ban storage.Ban
-	err := tx.Where(clause+" AND is_active = ? AND (expires_at IS NULL OR expires_at > ?)", value, true, now).
+	err := tx.Where(column+" = ? AND is_active = ? AND (expires_at IS NULL OR expires_at > ?)", value, true, now).
 		Order("created_at DESC").
 		First(&ban).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {

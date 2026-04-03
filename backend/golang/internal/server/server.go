@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -245,6 +246,74 @@ func LimitBodySizeMiddleware() gin.HandlerFunc {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Login rate limiter – sliding window, 10 attempts per 15 minutes per IP
+// ---------------------------------------------------------------------------
+
+var (
+	loginRateLimits  = make(map[string][]time.Time)
+	loginRateMu      sync.Mutex
+	loginCleanupOnce sync.Once
+)
+
+func startLoginRateLimitCleanup() {
+	loginCleanupOnce.Do(func() {
+		go func() {
+			for {
+				time.Sleep(5 * time.Minute)
+				cutoff := time.Now().Add(-15 * time.Minute)
+				loginRateMu.Lock()
+				for ip, timestamps := range loginRateLimits {
+					var fresh []time.Time
+					for _, ts := range timestamps {
+						if ts.After(cutoff) {
+							fresh = append(fresh, ts)
+						}
+					}
+					if len(fresh) == 0 {
+						delete(loginRateLimits, ip)
+					} else {
+						loginRateLimits[ip] = fresh
+					}
+				}
+				loginRateMu.Unlock()
+			}
+		}()
+	})
+}
+
+func LoginRateLimitMiddleware(maxAttempts int, window time.Duration) gin.HandlerFunc {
+	startLoginRateLimitCleanup()
+	return func(c *gin.Context) {
+		ip := c.ClientIP()
+		now := time.Now()
+		cutoff := now.Add(-window)
+
+		loginRateMu.Lock()
+		timestamps := loginRateLimits[ip]
+		var fresh []time.Time
+		for _, ts := range timestamps {
+			if ts.After(cutoff) {
+				fresh = append(fresh, ts)
+			}
+		}
+
+		if len(fresh) >= maxAttempts {
+			loginRateMu.Unlock()
+			c.Header("Retry-After", strconv.Itoa(int(window.Seconds())))
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many login attempts, try again later"})
+			c.Abort()
+			return
+		}
+
+		fresh = append(fresh, now)
+		loginRateLimits[ip] = fresh
+		loginRateMu.Unlock()
+
+		c.Next()
+	}
+}
+
 func (s *Server) setupRoutes() {
 	s.router.Use(gin.Logger())
 	s.router.Use(gin.Recovery())
@@ -272,7 +341,7 @@ func (s *Server) setupRoutes() {
 	if s.enableAdmin {
 		admin := s.router.Group("/api/v1/admin")
 		{
-			admin.POST("/login", handlers.LoginHandlerGin)
+			admin.POST("/login", LoginRateLimitMiddleware(10, 15*time.Minute), handlers.LoginHandlerGin)
 
 			adminAuth := admin.Group("")
 			adminAuth.Use(s.JWTAuthMiddleware())

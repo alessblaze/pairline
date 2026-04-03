@@ -29,9 +29,15 @@ func CORS(allowedOrigins string) mux.MiddlewareFunc {
 						break
 					}
 				}
-				// If no match, do NOT reflect the origin (prevents open CORS)
+				// If no match, omit Access-Control-Allow-Origin entirely.
+				// Setting it to "" is invalid per the CORS spec and
+				// results in undefined browser behavior.
 				if !matched {
-					w.Header().Set("Access-Control-Allow-Origin", "")
+					// Also block the preflight from succeeding
+					if r.Method == "OPTIONS" {
+						w.WriteHeader(http.StatusForbidden)
+						return
+					}
 				}
 			}
 

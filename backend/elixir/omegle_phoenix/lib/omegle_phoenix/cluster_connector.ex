@@ -51,7 +51,9 @@ defmodule OmeglePhoenix.ClusterConnector do
       else
         case Node.connect(target_node) do
           true ->
-            Logger.info("Connected Phoenix node #{inspect(current_node)} -> #{inspect(target_node)}")
+            Logger.info(
+              "Connected Phoenix node #{inspect(current_node)} -> #{inspect(target_node)}"
+            )
 
           false ->
             Logger.warning(

@@ -133,7 +133,10 @@ defmodule OmeglePhoenix.Router do
   end
 
   defp dispatch_local(session_id, message) do
-    Logger.debug("Router dispatching locally for session: #{session_id}, message: #{inspect(message)}")
+    Logger.debug(
+      "Router dispatching locally for session: #{session_id}, message: #{inspect(message)}"
+    )
+
     Phoenix.PubSub.local_broadcast(
       OmeglePhoenix.PubSub,
       topic(session_id),

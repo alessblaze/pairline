@@ -31,7 +31,10 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
     end
   end
 
-  def handle_info({:redix_pubsub, _pid, _ref, :message, %{channel: channel, payload: message}}, state) do
+  def handle_info(
+        {:redix_pubsub, _pid, _ref, :message, %{channel: channel, payload: message}},
+        state
+      ) do
     handle_admin_message(channel, message, state.channel)
     {:noreply, state}
   end
@@ -84,7 +87,8 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
     end
   end
 
-  defp handle_admin_message(channel, message, expected_channel) when channel == expected_channel do
+  defp handle_admin_message(channel, message, expected_channel)
+       when channel == expected_channel do
     case Jason.decode(message) do
       {:ok, %{"action" => action} = data} ->
         handle_admin_action(action, data)
@@ -156,7 +160,9 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
   end
 
   defp handle_admin_action("server_shutdown", _data) do
-    Logger.warning("Server shutdown action received via Redis but rejected - not supported via pub/sub")
+    Logger.warning(
+      "Server shutdown action received via Redis but rejected - not supported via pub/sub"
+    )
   end
 
   defp handle_admin_action(action, data) do

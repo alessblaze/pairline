@@ -30,7 +30,6 @@ type User struct {
 	Role     string
 }
 
-
 func JWTAuth(jwtSecret string, db *storage.Database) mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -108,7 +107,6 @@ func contains(slice []string, item string) bool {
 	}
 	return false
 }
-
 
 func verifyJWT(token string, jwtSecret string) (string, string, error) {
 	parts := strings.Split(token, ".")
@@ -191,7 +189,6 @@ func GenerateJWT(username, role, jwtSecret string, expiresHours int) (string, er
 
 	return signatureInput + "." + signature, nil
 }
-
 
 func sendError(w http.ResponseWriter, message string, status int) {
 	w.Header().Set("Content-Type", "application/json")

@@ -56,7 +56,7 @@ const actionButtonClass =
 
 function buildAdminHeaders(includeJSON = false) {
   const headers: Record<string, string> = {};
-  const csrfToken = window.localStorage.getItem('admin_csrf') || '';
+  const csrfToken = window.sessionStorage.getItem('admin_csrf') || '';
 
   if (includeJSON) {
     headers['Content-Type'] = 'application/json';
@@ -151,7 +151,7 @@ export function AdminPanel() {
   const storeCSRFFromResponse = async (response: Response) => {
     const csrfToken = response.headers.get('X-CSRF-Token');
     if (csrfToken) {
-      localStorage.setItem('admin_csrf', csrfToken);
+      sessionStorage.setItem('admin_csrf', csrfToken);
     }
   };
 
@@ -168,7 +168,7 @@ export function AdminPanel() {
       if (response.ok) {
         const data = await response.json();
         if (data.csrf_token) {
-          localStorage.setItem('admin_csrf', data.csrf_token);
+          sessionStorage.setItem('admin_csrf', data.csrf_token);
         }
         setToken('true');
         localStorage.setItem('admin_auth', 'true');
@@ -185,7 +185,7 @@ export function AdminPanel() {
   const logout = () => {
     setToken(null);
     localStorage.removeItem('admin_auth');
-    localStorage.removeItem('admin_csrf');
+    sessionStorage.removeItem('admin_csrf');
     setReports([]);
     navigate('/admin-login');
   };

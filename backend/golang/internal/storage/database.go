@@ -215,7 +215,7 @@ func createRootAdmin(db *gorm.DB) error {
 }
 
 func HashPassword(password string) (string, error) {
-	bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	bytes, err := bcrypt.GenerateFromPassword([]byte(password), 14)
 	return string(bytes), err
 }
 
