@@ -92,6 +92,85 @@ defmodule OmeglePhoenix.RedisState do
   return 1
   """
 
+  # Atomically ban a session: checks idempotency, sets ban fields, nils partner_id,
+  # cleans up match key, and returns the old partner_id (or "nil"/"already_banned"/"not_found").
+  # KEYS[1] = session:data:<session_id>
+  # KEYS[2] = match:<session_id>
+  # ARGV[1] = ttl, ARGV[2] = ban_reason, ARGV[3] = current_timestamp
+  @emergency_ban_script """
+  local data = redis.call('GET', KEYS[1])
+  if not data then
+    return "not_found"
+  end
+  local session = cjson.decode(data)
+  if session["ban_status"] == true then
+    return "already_banned"
+  end
+  local old_partner_id = session["partner_id"]
+  session["ban_status"] = true
+  session["ban_reason"] = ARGV[2]
+  session["status"] = "disconnecting"
+  session["partner_id"] = cjson.null
+  session["last_activity"] = tonumber(ARGV[3])
+  redis.call('SETEX', KEYS[1], ARGV[1], cjson.encode(session))
+  redis.call('DEL', KEYS[2])
+  if old_partner_id and type(old_partner_id) == "string" then
+    return old_partner_id
+  else
+    return "nil"
+  end
+  """
+
+  # Atomically disconnect a session (admin action): sets status to disconnecting,
+  # nils partner_id, returns old partner_id.
+  # KEYS[1] = session:data:<session_id>
+  # KEYS[2] = match:<session_id>
+  # ARGV[1] = ttl, ARGV[2] = current_timestamp
+  @emergency_disconnect_script """
+  local data = redis.call('GET', KEYS[1])
+  if not data then
+    return "not_found"
+  end
+  local session = cjson.decode(data)
+  local old_partner_id = session["partner_id"]
+  session["status"] = "disconnecting"
+  session["partner_id"] = cjson.null
+  session["last_activity"] = tonumber(ARGV[2])
+  redis.call('SETEX', KEYS[1], ARGV[1], cjson.encode(session))
+  redis.call('DEL', KEYS[2])
+  if old_partner_id and type(old_partner_id) == "string" then
+    return old_partner_id
+  else
+    return "nil"
+  end
+  """
+
+  # Atomically disconnect a partner: only resets the partner session if their
+  # partner_id still points at the expected peer (prevents disrupting a new match
+  # formed during the race window). Cleans up the partner's match key.
+  # KEYS[1] = session:data:<partner_id>
+  # KEYS[2] = match:<partner_id>
+  # ARGV[1] = ttl, ARGV[2] = current_timestamp, ARGV[3] = expected_peer_id
+  @disconnect_partner_script """
+  local data = redis.call('GET', KEYS[1])
+  if not data then
+    return "not_found"
+  end
+  local session = cjson.decode(data)
+  local current_partner = session["partner_id"]
+  if type(current_partner) ~= "string" or current_partner ~= ARGV[3] then
+    return "partner_changed"
+  end
+  session["partner_id"] = cjson.null
+  session["status"] = "waiting"
+  session["signaling_ready"] = false
+  session["webrtc_started"] = false
+  session["last_activity"] = tonumber(ARGV[2])
+  redis.call('SETEX', KEYS[1], ARGV[1], cjson.encode(session))
+  redis.call('DEL', KEYS[2])
+  return "ok"
+  """
+
   def persist_session(session, ttl_seconds, opts \\ []) do
     ttl = normalize_ttl!(ttl_seconds)
     hashed_token = hashed_token(session.token)
@@ -204,6 +283,59 @@ defmodule OmeglePhoenix.RedisState do
       session2.ip,
       hashed_token(session2.token),
       encode_session(session2)
+    ]
+
+    exec(command, opts)
+  end
+
+  def atomic_emergency_ban(session_id, reason, ttl_seconds, opts \\ []) do
+    ttl = normalize_ttl!(ttl_seconds)
+    now = Integer.to_string(System.system_time(:second))
+
+    command = [
+      "EVAL",
+      @emergency_ban_script,
+      "2",
+      session_key(session_id),
+      match_key(session_id),
+      ttl,
+      reason,
+      now
+    ]
+
+    exec(command, opts)
+  end
+
+  def atomic_emergency_disconnect(session_id, ttl_seconds, opts \\ []) do
+    ttl = normalize_ttl!(ttl_seconds)
+    now = Integer.to_string(System.system_time(:second))
+
+    command = [
+      "EVAL",
+      @emergency_disconnect_script,
+      "2",
+      session_key(session_id),
+      match_key(session_id),
+      ttl,
+      now
+    ]
+
+    exec(command, opts)
+  end
+
+  def atomic_disconnect_partner(partner_id, expected_peer_id, ttl_seconds, opts \\ []) do
+    ttl = normalize_ttl!(ttl_seconds)
+    now = Integer.to_string(System.system_time(:second))
+
+    command = [
+      "EVAL",
+      @disconnect_partner_script,
+      "2",
+      session_key(partner_id),
+      match_key(partner_id),
+      ttl,
+      now,
+      expected_peer_id
     ]
 
     exec(command, opts)

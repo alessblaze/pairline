@@ -1,5 +1,6 @@
 defmodule OmeglePhoenixWeb.RoomChannel do
   use Phoenix.Channel
+  require Logger
 
   @max_messages_per_window 30
   @rate_window_ms 5_000
@@ -113,7 +114,9 @@ defmodule OmeglePhoenixWeb.RoomChannel do
       {:reply, {:error, %{reason: "No active session"}}, socket}
     else
       if is_nil(partner_id) do
-        {:reply, {:error, %{reason: "No partner"}}, socket}
+        # Return ok to swallow error for in-flight messages sent right at disconnect time
+        Logger.debug("Swallowed in-flight message from #{session_id}: no partner assigned")
+        {:reply, {:ok, %{status: "ignored"}}, socket}
       else
         {socket, allowed} = check_rate_limit(socket)
 
@@ -140,7 +143,13 @@ defmodule OmeglePhoenixWeb.RoomChannel do
                 {:noreply, socket}
 
               {:error, %{reason: "Partner changed"}} ->
-                {:reply, {:error, %{reason: "Partner changed"}}, assign(socket, :partner_id, nil)}
+                # In-flight race, visually do nothing instead of rendering an error.
+                Logger.debug("Swallowed in-flight message from #{session_id}: partner changed")
+                {:reply, {:ok, %{status: "ignored"}}, assign(socket, :partner_id, nil)}
+
+              {:error, %{type: "ignored", reason: _}} ->
+                Logger.debug("Swallowed in-flight message from #{session_id}: post-disconnect")
+                {:reply, {:ok, %{status: "ignored"}}, assign(socket, :partner_id, nil)}
 
               {:error, payload} ->
                 {:reply, {:error, payload}, socket}
@@ -608,7 +617,7 @@ defmodule OmeglePhoenixWeb.RoomChannel do
           {:error, %{reason: "Session not found"}}
 
         is_nil(session.partner_id) or session.status != :matched ->
-          {:error, %{reason: "No partner"}}
+          {:error, %{type: "ignored", reason: "Partner changed"}}
 
         session.partner_id != expected_partner_id ->
           {:error, %{reason: "Partner changed"}}

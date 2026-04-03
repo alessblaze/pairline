@@ -166,25 +166,45 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   def emergency_ban(session_id, reason) do
-    with {:ok, session} <-
-           update_session(session_id, %{
-             ban_status: true,
-             ban_reason: reason,
-             status: :disconnecting
-           }) do
-      OmeglePhoenix.Matchmaker.leave_queue(session_id)
-      OmeglePhoenix.Router.notify_banned(session_id, reason)
-      disconnect_partner(session)
-      {:ok, session}
+    case OmeglePhoenix.RedisState.atomic_emergency_ban(session_id, reason, ttl_seconds()) do
+      {:ok, "not_found"} ->
+        {:error, :not_found}
+
+      {:ok, "already_banned"} ->
+        {:ok, %{id: session_id, ban_status: true, ban_reason: reason}}
+
+      {:ok, old_partner_id} ->
+        OmeglePhoenix.Matchmaker.leave_queue(session_id)
+        OmeglePhoenix.Router.notify_banned(session_id, reason)
+
+        if old_partner_id != "nil" do
+          disconnect_known_partner(old_partner_id, session_id)
+        end
+
+        {:ok, %{id: session_id, ban_status: true, ban_reason: reason}}
+
+      {:error, err} ->
+        {:error, err}
     end
   end
 
   def emergency_disconnect(session_id) do
-    with {:ok, session} <- update_session(session_id, %{status: :disconnecting}) do
-      OmeglePhoenix.Matchmaker.leave_queue(session_id)
-      OmeglePhoenix.Router.notify_disconnect(session_id, "disconnected by administrator")
-      disconnect_partner(session)
-      {:ok, session}
+    case OmeglePhoenix.RedisState.atomic_emergency_disconnect(session_id, ttl_seconds()) do
+      {:ok, "not_found"} ->
+        {:error, :not_found}
+
+      {:ok, old_partner_id} ->
+        OmeglePhoenix.Matchmaker.leave_queue(session_id)
+        OmeglePhoenix.Router.notify_disconnect(session_id, "disconnected by administrator")
+
+        if old_partner_id != "nil" do
+          disconnect_known_partner(old_partner_id, session_id)
+        end
+
+        {:ok, %{id: session_id}}
+
+      {:error, err} ->
+        {:error, err}
     end
   end
 
@@ -351,14 +371,26 @@ defmodule OmeglePhoenix.SessionManager do
     Map.put(session, :last_activity, System.system_time(:second))
   end
 
-  defp disconnect_partner(%{partner_id: nil}), do: :ok
+  defp disconnect_known_partner(nil, _origin_session_id), do: :ok
 
-  defp disconnect_partner(session) do
-    with {:ok, partner_session} <- get_session(session.partner_id),
-         {:ok, _updated_session, _updated_partner} <- reset_pair(session, partner_session) do
-      OmeglePhoenix.Router.notify_disconnect(session.partner_id, "partner disconnected")
-    else
-      _ -> :ok
+  defp disconnect_known_partner(partner_id, origin_session_id) do
+    # Atomic: only resets the partner if they still point at origin_session_id.
+    # Prevents disrupting a new match the partner may have formed during the gap.
+    case OmeglePhoenix.RedisState.atomic_disconnect_partner(
+           partner_id,
+           origin_session_id,
+           ttl_seconds()
+         ) do
+      {:ok, "ok"} ->
+        OmeglePhoenix.Router.notify_disconnect(partner_id, "partner disconnected")
+        :ok
+
+      {:ok, _} ->
+        # "not_found" or "partner_changed" — nothing to do
+        :ok
+
+      {:error, _} ->
+        :ok
     end
   end
 
