@@ -175,7 +175,14 @@ defmodule OmeglePhoenixWeb.RoomChannel do
     else
       case Map.fetch(data, "typing") do
         {:ok, is_typing} when is_boolean(is_typing) ->
-          {socket, allowed} = check_typing_rate_limit(socket)
+          # Never rate-limit typing: false — if the stop signal is dropped,
+          # the partner's typing indicator stays permanently stuck.
+          {socket, allowed} =
+            if is_typing do
+              check_typing_rate_limit(socket)
+            else
+              {socket, true}
+            end
 
           if allowed do
             case with_current_partner(session_id, partner_id, fn ->
