@@ -2,66 +2,10 @@ import { useNavigate } from 'react-router-dom';
 import { ThemeToggle } from './ThemeToggle';
 import promoVideo from '../assets/promo.mp4';
 import promoImg from '../assets/promo.png';
+import promoFeaturesImg from '../assets/promofeatures.png';
 
 export function LandingPage() {
   const navigate = useNavigate();
-
-  const features = [
-    {
-      icon: (
-        <svg className="w-8 h-8 drop-shadow-md" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75Z" />
-        </svg>
-      ),
-      title: 'Massive Concurrency',
-      description: 'Elixir/Phoenix handles millions of concurrent WebSocket connections. Go backend processes WebRTC signaling with minimal latency.'
-    },
-    {
-      icon: (
-        <svg className="w-8 h-8 drop-shadow-md" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 20.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
-        </svg>
-      ),
-      title: 'Horizontal Scaling',
-      description: 'Stateless architecture with Redis pub/sub. Scale horizontally across multiple instances without losing connections.'
-    },
-    {
-      icon: (
-        <svg className="w-8 h-8 drop-shadow-md" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12c0 1.268-.63 2.39-1.593 3.068a3.745 3.745 0 0 1-1.043 3.296 3.745 3.745 0 0 1-3.296 1.043A3.745 3.745 0 0 1 12 21c-1.268 0-2.39-.63-3.068-1.593a3.746 3.746 0 0 1-3.296-1.043 3.745 3.745 0 0 1-1.043-3.296A3.745 3.745 0 0 1 3 12c0-1.268.63-2.39 1.593-3.068a3.745 3.745 0 0 1 1.043-3.296 3.746 3.746 0 0 1 3.296-1.043A3.746 3.746 0 0 1 12 3c1.268 0 2.39.63 3.068 1.593a3.746 3.746 0 0 1 3.296 1.043 3.745 3.745 0 0 1 1.043 3.296A3.745 3.745 0 0 1 21 12Z" />
-        </svg>
-      ),
-      title: 'Built-in Moderation',
-      description: 'Comprehensive admin panel with real-time moderation. Report system, IP/session bans, and chat log review.'
-    },
-    {
-      icon: (
-        <svg className="w-8 h-8 drop-shadow-md" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 0 0 2.25-2.25V6.75a2.25 2.25 0 0 0-2.25-2.25H6.75A2.25 2.25 0 0 0 4.5 6.75v10.5a2.25 2.25 0 0 0 2.25 2.25Z" />
-        </svg>
-      ),
-      title: 'Distributed Architecture',
-      description: 'Separate services for matching, signaling, and moderation. Each component scales independently based on load.'
-    },
-    {
-      icon: (
-        <svg className="w-8 h-8 drop-shadow-md" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M14.25 9.75 16.5 12l-2.25 2.25m-4.5 0L7.5 12l2.25-2.25M6 20.25h12A2.25 2.25 0 0 0 20.25 18V6A2.25 2.25 0 0 0 18 3.75H6A2.25 2.25 0 0 0 3.75 6v12A2.25 2.25 0 0 0 6 20.25Z" />
-        </svg>
-      ),
-      title: 'Beta',
-      description: ' Production-minded beta with active hardening, graceful operations, and continuous improvements to monitoring, auth flow, and edge defenses. '
-    },
-    {
-      icon: (
-        <svg className="w-8 h-8 drop-shadow-md" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
-        </svg>
-      ),
-      title: 'Secure by Design',
-      description: 'Validation-first architecture with bounded inputs, sanitized output, CSRF defenses, trusted proxy controls, and hardened session security.'
-    }
-  ];
 
   return (
     <div className="relative w-full min-h-screen flex flex-col overflow-x-hidden font-nunito bg-slate-50 dark:bg-slate-950 transition-colors duration-500">
@@ -162,23 +106,23 @@ export function LandingPage() {
 
       {/* Top Video Header */}
       <div className="w-full relative bg-gray-950 flex justify-center items-center">
-         <video 
-           src={promoVideo} 
-           autoPlay 
-           loop 
-           muted 
-           playsInline 
-           className="w-full h-auto block"
-         />
+        <video
+          src={promoVideo}
+          autoPlay
+          loop
+          muted
+          playsInline
+          className="w-full h-auto block"
+        />
       </div>
 
       {/* Hero Interactive Section with User's Promo Image */}
       <section className="relative z-10 w-full flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-950">
         <div className="relative w-full flex flex-col items-center">
           {/* Full-width responsive image */}
-          <img 
-            src={promoImg} 
-            alt="Pairline" 
+          <img
+            src={promoImg}
+            alt="Pairline"
             className="w-full h-auto object-contain"
           />
 
@@ -209,52 +153,27 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* Features Section */}
-      <section className="relative z-10 px-4 sm:px-6 lg:px-8 py-16 sm:py-24">
-        <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-16">
-            <h2 className="text-4xl sm:text-5xl font-anime font-extrabold text-slate-800 dark:text-white mb-6">
-              Supercharged Experience
-            </h2>
-            <p className="text-xl text-slate-600 dark:text-slate-300 font-bold max-w-2xl mx-auto">
-              Enterprise-grade architecture crafted with magical precision for millions of concurrent connections.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 px-4">
-            {features.map((feature, index) => (
-              <div
-                key={index}
-                className="glass-card p-8 flex flex-col items-start gap-5"
-              >
-                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-pink-400 to-indigo-500 flex items-center justify-center text-white shadow-lg shadow-pink-300/30 border-2 border-white/50">
-                  {feature.icon}
-                </div>
-                <div className="flex-1 w-full">
-                  <h3 className="text-2xl font-anime font-extrabold text-slate-800 dark:text-white mb-3">
-                    {feature.title}
-                  </h3>
-                  <p className="text-slate-600 dark:text-slate-300 font-semibold leading-relaxed text-base">
-                    {feature.description}
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
+      {/* Features Section with User Promo Features Image & Footer */}
+      <section className="relative z-10 w-full bg-slate-50 dark:bg-slate-950 mt-4 sm:mt-8">
+        <div className="w-full relative">
+          <img
+            src={promoFeaturesImg}
+            alt="Pairline Features"
+            className="w-full h-auto block"
+          />
+          {/* Footer Overlaid on Image with Gradient Shadow */}
+          <footer className="absolute bottom-0 left-0 right-0 w-full px-4 sm:px-6 lg:px-8 pt-16 sm:pt-32 pb-4 sm:pb-10 bg-gradient-to-t from-black/80 via-black/40 to-transparent">
+            <div className="max-w-6xl mx-auto text-center">
+              <p className="text-xs sm:text-base font-bold text-white mb-1 sm:mb-2 font-anime drop-shadow-md">
+                With ❤️ From Aless
+              </p>
+              <p className="text-[10px] sm:text-sm font-semibold text-slate-200 drop-shadow-md">
+                © 2024 Pairline. All rights reserved. Let your dreams take flight!
+              </p>
+            </div>
+          </footer>
         </div>
       </section>
-
-      {/* Footer */}
-      <footer className="relative z-10 px-4 sm:px-6 lg:px-8 py-10 border-t border-slate-200 dark:border-slate-800 mt-auto">
-        <div className="max-w-6xl mx-auto text-center">
-          <p className="text-base font-bold text-slate-700 dark:text-slate-300 mb-2 font-anime">
-            With ❤️ From Aless
-          </p>
-          <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">
-            © 2024 Pairline. All rights reserved. Let your dreams take flight!
-          </p>
-        </div>
-      </footer>
     </div>
   );
 }
