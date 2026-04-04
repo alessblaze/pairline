@@ -28,23 +28,29 @@ defmodule OmeglePhoenixWeb.RoomChannel do
 
   @impl true
   def handle_in("search", %{"data" => data}, socket) when is_map(data) do
-    case teardown_existing_session(socket) do
-      {:error, reason, socket} ->
-        {:reply, {:error, %{reason: reason}}, socket}
+    {socket, allowed} = check_rate_limit(socket)
 
-      {:ok, socket} ->
-        with_captcha_verified(socket, data, fn socket ->
-          preferences = build_preferences(socket, %{})
-          client_ip = socket.assigns[:client_ip] || "unknown"
+    if not allowed do
+      {:reply, {:error, %{reason: "Rate limit exceeded"}}, socket}
+    else
+      case teardown_existing_session(socket) do
+        {:error, reason, socket} ->
+          {:reply, {:error, %{reason: reason}}, socket}
 
-          case OmeglePhoenix.SessionManager.ip_ban_reason(client_ip) do
-            nil ->
-              create_and_queue_session(socket, client_ip, preferences, "searching")
+        {:ok, socket} ->
+          with_captcha_verified(socket, data, fn socket ->
+            preferences = build_preferences(socket, %{})
+            client_ip = socket.assigns[:client_ip] || "unknown"
 
-            reason ->
-              {:reply, {:error, %{type: "banned", data: %{reason: reason}}}, socket}
-          end
-        end)
+            case OmeglePhoenix.SessionManager.ip_ban_reason(client_ip) do
+              nil ->
+                create_and_queue_session(socket, client_ip, preferences, "searching")
+
+              reason ->
+                {:reply, {:error, %{type: "banned", data: %{reason: reason}}}, socket}
+            end
+          end)
+      end
     end
   end
 
@@ -53,23 +59,29 @@ defmodule OmeglePhoenixWeb.RoomChannel do
   end
 
   def handle_in("start", %{"data" => data}, socket) when is_map(data) do
-    case teardown_existing_session(socket) do
-      {:error, reason, socket} ->
-        {:reply, {:error, %{reason: reason}}, socket}
+    {socket, allowed} = check_rate_limit(socket)
 
-      {:ok, socket} ->
-        with_captcha_verified(socket, data, fn socket ->
-          preferences = build_preferences(socket, Map.get(data, "preferences", %{}))
-          client_ip = socket.assigns[:client_ip] || "unknown"
+    if not allowed do
+      {:reply, {:error, %{reason: "Rate limit exceeded"}}, socket}
+    else
+      case teardown_existing_session(socket) do
+        {:error, reason, socket} ->
+          {:reply, {:error, %{reason: reason}}, socket}
 
-          case OmeglePhoenix.SessionManager.ip_ban_reason(client_ip) do
-            nil ->
-              create_and_queue_session(socket, client_ip, preferences, "connected")
+        {:ok, socket} ->
+          with_captcha_verified(socket, data, fn socket ->
+            preferences = build_preferences(socket, Map.get(data, "preferences", %{}))
+            client_ip = socket.assigns[:client_ip] || "unknown"
 
-            reason ->
-              {:reply, {:error, %{type: "banned", data: %{reason: reason}}}, socket}
-          end
-        end)
+            case OmeglePhoenix.SessionManager.ip_ban_reason(client_ip) do
+              nil ->
+                create_and_queue_session(socket, client_ip, preferences, "connected")
+
+              reason ->
+                {:reply, {:error, %{type: "banned", data: %{reason: reason}}}, socket}
+            end
+          end)
+      end
     end
   end
 

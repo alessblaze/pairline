@@ -2,8 +2,10 @@ defmodule OmeglePhoenix.Turnstile do
   require Logger
 
   @verify_url "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+  @max_token_size 2_048
+  @min_token_size 100
 
-  def verify(token, remoteip) when is_binary(token) and byte_size(token) > 0 do
+  def verify(token, remoteip) when is_binary(token) and byte_size(token) >= @min_token_size and byte_size(token) <= @max_token_size do
     secret = System.get_env("TURNSTILE_SECRET_KEY")
 
     if is_nil(secret) or secret == "" do

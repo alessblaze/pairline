@@ -43,18 +43,19 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
 
   // Reset captchaVerified when WebSocket reconnects (new socket = fresh captcha state)
   useEffect(() => {
-    if (!connected) {
+    if (!connected && captchaVerified) {
       setCaptchaVerified(false);
     }
-  }, [connected]);
+  }, [connected, captchaVerified]);
 
   // Reset captchaVerified if the backend rejected our token
   useEffect(() => {
+    if (!captchaVerified) return;
     const lastMsg = messages[messages.length - 1];
     if (lastMsg?.sender === 'system' && lastMsg?.text?.includes('CAPTCHA')) {
       setCaptchaVerified(false);
     }
-  }, [messages]);
+  }, [messages, captchaVerified]);
 
   const [input, setInput] = useState('');
   const [interestTags, setInterestTags] = useState<string[]>([]);
