@@ -16,6 +16,8 @@ export function EntryModal({ onClose, onConfirm }: EntryModalProps) {
 
   const siteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY
     || (import.meta.env.DEV ? '1x00000000000000000000AA' : '');
+  const termsUrl = import.meta.env.VITE_TERMS_URL || '#';
+  const privacyUrl = import.meta.env.VITE_PRIVACY_URL || '#';
 
   const handleConfirm = () => {
     if (turnstileToken && termsAccepted) {
@@ -45,7 +47,7 @@ export function EntryModal({ onClose, onConfirm }: EntryModalProps) {
             className="w-5 h-5 text-indigo-600 rounded border-gray-300 focus:ring-indigo-600 dark:bg-slate-800 dark:border-slate-600 focus:ring-offset-slate-900 cursor-pointer"
           />
           <label htmlFor="terms" className="text-sm text-gray-700 dark:text-gray-300 cursor-pointer font-nunito leading-tight">
-            I have read and agree to the <a href="#" className="text-indigo-600 dark:text-indigo-400 hover:underline">Terms of Service</a> and <a href="#" className="text-indigo-600 dark:text-indigo-400 hover:underline">Privacy Policy</a>. I am 18+ years old.
+            I have read and agree to the <a href={termsUrl} target="_blank" rel="noopener noreferrer" className="text-indigo-600 dark:text-indigo-400 hover:underline">Terms of Service</a> and <a href={privacyUrl} target="_blank" rel="noopener noreferrer" className="text-indigo-600 dark:text-indigo-400 hover:underline">Privacy Policy</a>. I am 18+ years old.
           </label>
         </div>
 
