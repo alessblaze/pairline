@@ -4,6 +4,7 @@ import promoVideo from '../assets/promo.webm';
 import promoPoster from '../assets/promo-poster.webp';
 import promoImg from '../assets/promo.webp';
 import promoFeaturesImg from '../assets/promofeatures.webp';
+import albertImg from '../assets/aless.webp';
 
 export function LandingPage() {
   const navigate = useNavigate();
@@ -155,7 +156,7 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* Features Section with User Promo Features Image & Footer */}
+      {/* Features Section */}
       <section className="relative z-10 w-full bg-slate-50 dark:bg-slate-950">
         <div className="w-full relative">
           <img
@@ -163,17 +164,26 @@ export function LandingPage() {
             alt="Pairline Features"
             className="w-full h-auto block"
           />
-          {/* Footer Overlaid on Image with Gradient Shadow */}
-          <footer className="absolute bottom-0 left-0 right-0 w-full px-4 sm:px-6 lg:px-8 pt-16 sm:pt-32 pb-4 sm:pb-10 bg-gradient-to-t from-black/80 via-black/40 to-transparent">
-            <div className="max-w-6xl mx-auto text-center">
-              <p className="text-xs sm:text-base font-bold text-white mb-1 sm:mb-2 font-anime drop-shadow-md">
-                With ❤️ From Aless
-              </p>
-              <p className="text-[10px] sm:text-sm font-semibold text-slate-200 drop-shadow-md">
-                © 2026 Pairline. All rights reserved. Let your dreams take flight!
-              </p>
+        </div>
+      </section>
+
+      {/* Albert Profile Section */}
+      <section className="relative z-10 w-full bg-slate-50 dark:bg-slate-950">
+        <div className="w-full relative flex flex-col items-center justify-center">
+          <img
+            src={albertImg}
+            alt="Albert Profile Reflection"
+            className="w-full h-auto block"
+          />
+          
+          {/* Subtle Bottom Inner Shadow for Footer Legibility */}
+          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent pt-32 pb-6 px-4 flex flex-col items-center justify-end pointer-events-none">
+            <div className="text-center pointer-events-auto w-full max-w-6xl mx-auto">
+               <p className="text-[10px] sm:text-sm font-semibold text-slate-200 drop-shadow-md">
+                 © 2026 Pairline. All rights reserved. Let your dreams take flight!
+               </p>
             </div>
-          </footer>
+          </div>
         </div>
       </section>
     </div>
