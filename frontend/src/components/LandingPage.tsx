@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { ThemeToggle } from './ThemeToggle';
-import promoVideo from '../assets/promo.mp4';
+import promoVideo from '../assets/promo.webm';
 import promoPoster from '../assets/promo-poster.webp';
 import promoImg from '../assets/promo.webp';
 import promoFeaturesImg from '../assets/promofeatures.webp';
