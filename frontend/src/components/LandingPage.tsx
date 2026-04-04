@@ -154,7 +154,7 @@ export function LandingPage() {
       </section>
 
       {/* Features Section with User Promo Features Image & Footer */}
-      <section className="relative z-10 w-full bg-slate-50 dark:bg-slate-950 mt-4 sm:mt-8">
+      <section className="relative z-10 w-full bg-slate-50 dark:bg-slate-950">
         <div className="w-full relative">
           <img
             src={promoFeaturesImg}
