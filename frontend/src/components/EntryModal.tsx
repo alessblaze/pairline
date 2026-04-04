@@ -9,6 +9,7 @@ interface EntryModalProps {
 
 export function EntryModal({ onClose, onConfirm }: EntryModalProps) {
   const [termsAccepted, setTermsAccepted] = useState(false);
+  const [rulesAccepted, setRulesAccepted] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [widgetReady, setWidgetReady] = useState(false);
   const turnstileRef = useRef<TurnstileInstance | null>(null);
@@ -20,7 +21,7 @@ export function EntryModal({ onClose, onConfirm }: EntryModalProps) {
   const privacyUrl = import.meta.env.VITE_PRIVACY_URL || '#';
 
   const handleConfirm = () => {
-    if (turnstileToken && termsAccepted) {
+    if (turnstileToken && termsAccepted && rulesAccepted) {
       onConfirm(turnstileToken);
     }
   };
@@ -38,17 +39,32 @@ export function EntryModal({ onClose, onConfirm }: EntryModalProps) {
           </button>
         </div>
 
-        <div className="flex items-center gap-3 bg-gray-50 dark:bg-slate-800/50 p-4 rounded-xl border border-gray-100 dark:border-slate-800">
-          <input 
-            type="checkbox" 
-            id="terms" 
-            checked={termsAccepted} 
-            onChange={(e) => setTermsAccepted(e.target.checked)}
-            className="w-5 h-5 text-indigo-600 rounded border-gray-300 focus:ring-indigo-600 dark:bg-slate-800 dark:border-slate-600 focus:ring-offset-slate-900 cursor-pointer"
-          />
-          <label htmlFor="terms" className="text-sm text-gray-700 dark:text-gray-300 cursor-pointer font-nunito leading-tight">
-            I have read and agree to the <a href={termsUrl} target="_blank" rel="noopener noreferrer" className="text-indigo-600 dark:text-indigo-400 hover:underline">Terms of Service</a> and <a href={privacyUrl} target="_blank" rel="noopener noreferrer" className="text-indigo-600 dark:text-indigo-400 hover:underline">Privacy Policy</a>. I am 18+ years old.
-          </label>
+        <div className="flex flex-col gap-3">
+          <div className="flex items-start gap-3 bg-gray-50 dark:bg-slate-800/50 p-4 rounded-xl border border-gray-100 dark:border-slate-800">
+            <input 
+              type="checkbox" 
+              id="terms" 
+              checked={termsAccepted} 
+              onChange={(e) => setTermsAccepted(e.target.checked)}
+              className="w-5 h-5 mt-0.5 text-indigo-600 rounded border-gray-300 focus:ring-indigo-600 dark:bg-slate-800 dark:border-slate-600 focus:ring-offset-slate-900 cursor-pointer shrink-0"
+            />
+            <label htmlFor="terms" className="text-sm text-gray-700 dark:text-gray-300 cursor-pointer font-nunito leading-tight">
+              I have read and agree to the <a href={termsUrl} target="_blank" rel="noopener noreferrer" className="text-indigo-600 dark:text-indigo-400 hover:underline">Terms of Service</a> and <a href={privacyUrl} target="_blank" rel="noopener noreferrer" className="text-indigo-600 dark:text-indigo-400 hover:underline">Privacy Policy</a>. I am 18+ years old.
+            </label>
+          </div>
+
+          <div className="flex items-start gap-3 bg-red-50 dark:bg-red-900/10 p-4 rounded-xl border border-red-100 dark:border-red-900/30">
+            <input 
+              type="checkbox" 
+              id="rules" 
+              checked={rulesAccepted} 
+              onChange={(e) => setRulesAccepted(e.target.checked)}
+              className="w-5 h-5 mt-0.5 text-red-600 rounded border-red-300 focus:ring-red-600 dark:bg-slate-800 dark:border-slate-600 dark:checked:bg-red-600 focus:ring-offset-slate-900 cursor-pointer shrink-0"
+            />
+            <label htmlFor="rules" className="text-sm text-gray-700 dark:text-gray-300 cursor-pointer font-nunito leading-tight">
+              I agree <strong className="text-red-700 dark:text-red-400 font-bold">NOT</strong> to engage in illegal activities, abuse, harassment, or distributing explicit content. Violators will be permanently banned.
+            </label>
+          </div>
         </div>
 
         <div className="flex justify-center my-2">
@@ -93,7 +109,7 @@ export function EntryModal({ onClose, onConfirm }: EntryModalProps) {
           </button>
           <button 
             onClick={handleConfirm}
-            disabled={!turnstileToken || !termsAccepted}
+            disabled={!turnstileToken || !termsAccepted || !rulesAccepted}
             className="px-6 py-2.5 rounded-xl font-bold bg-indigo-600 text-white hover:bg-indigo-700 disabled:bg-gray-300 dark:disabled:bg-slate-700 disabled:text-gray-500 transition-all active:scale-[0.98]"
           >
             Confirm &amp; Continue
