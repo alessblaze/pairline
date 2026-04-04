@@ -1,6 +1,6 @@
 services:
   nginx:
-    image: nginx:1.27-alpine
+    image: nginx:stable
     container_name: pairline-nginx
     depends_on:
       - phoenix1
@@ -18,9 +18,9 @@ services:
       - ./nginx/pairline.conf:/etc/nginx/conf.d/default.conf:ro
 
   redis:
-    image: redis:7-alpine
+    image: valkey/valkey:9-trixie
     container_name: pairline-redis
-    command: redis-server --appendonly yes --requirepass pairline-dev-redis-password
+    command: valkey-server --appendonly yes --requirepass pairline-dev-redis-password
     networks:
       pairline_cluster:
         ipv4_address: 172.30.0.20
