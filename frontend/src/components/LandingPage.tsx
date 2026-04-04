@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { ThemeToggle } from './ThemeToggle';
+import promoVideo from '../assets/promo.mp4';
 
 export function LandingPage() {
   const navigate = useNavigate();
@@ -61,15 +62,6 @@ export function LandingPage() {
     }
   ];
 
-  const techStack = [
-    { name: 'Go' },
-    { name: 'Elixir' },
-    { name: 'React' },
-    { name: 'WebRTC' },
-    { name: 'Redis' },
-    { name: 'PostgreSQL' }
-  ];
-
   return (
     <div className="relative w-full min-h-screen flex flex-col overflow-x-hidden bg-gradient-to-br from-slate-50 via-white to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950">
       {/* Import handwriting font */}
@@ -91,94 +83,73 @@ export function LandingPage() {
         }}
       />
 
-      {/* Navigation */}
-      <nav className="relative z-50 flex items-center justify-between px-4 py-4 sm:py-6">
-        <div className="flex items-center gap-3">
-          <span className="text-3xl sm:text-4xl font-light text-transparent bg-gradient-to-r from-violet-400 via-purple-400 to-purple-500 bg-clip-text leading-normal pr-2 pb-1" style={{ fontFamily: "'Great Vibes', cursive" }}> Pairline </span>
-        </div>
-        <div className="flex items-center gap-4">
-          <a
-            href="https://github.com/alessblaze/pairline"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hidden sm:flex items-center gap-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"
-          >
-            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-              <path fillRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0 0 22 12.017C22 6.484 17.522 2 12 2Z" clipRule="evenodd" />
-            </svg>
-            GitHub
-          </a>
-          <ThemeToggle />
-        </div>
-      </nav>
+      {/* Floating Controls */}
+      <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 p-1.5 rounded-full bg-white/80 dark:bg-slate-800/80 backdrop-blur-md border border-gray-200 dark:border-slate-700 shadow-xl">
+        <a
+          href="https://github.com/alessblaze/pairline"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="hidden sm:flex items-center justify-center w-10 h-10 rounded-full text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 transition-all"
+          title="GitHub"
+        >
+          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+            <path fillRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0 0 22 12.017C22 6.484 17.522 2 12 2Z" clipRule="evenodd" />
+          </svg>
+        </a>
+        <ThemeToggle />
+      </div>
 
       {/* Hero Section */}
-      <section className="relative z-10 flex-1 flex flex-col items-center justify-center px-8 sm:px-12 lg:px-16 py-12 sm:py-20 lg:py-32">
-        <div className="max-w-5xl mx-auto text-center space-y-6 sm:space-y-8">
-          {/* Badge */}
-          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm border border-gray-200 dark:border-slate-700 shadow-sm">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-            </span>
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Open Source & Free</span>
-          </div>
+      <section className="relative z-10 w-full flex flex-col items-center pb-16 lg:pb-32">
+        
+        {/* Video Player Hero */}
+        <div className="w-full relative bg-black max-h-[85vh] overflow-hidden">
+          <video 
+            src={promoVideo} 
+            autoPlay 
+            loop 
+            muted 
+            playsInline 
+            className="w-full h-full object-cover"
+          />
+        </div>
 
+        {/* Content Below Video */}
+        <div className="w-full flex flex-col items-center text-center space-y-6 sm:space-y-8 max-w-3xl mx-auto px-4 sm:px-8 pt-10 sm:pt-16">
           {/* Headline */}
-          <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-extrabold tracking-tight text-gray-900 dark:text-white leading-[1.1] sm:leading-[1.15]">
-            <span className="block">Connect Anonymously</span>
-            <span className="block bg-gradient-to-r from-violet-400 via-purple-400 to-purple-500 bg-clip-text text-transparent">
+          <h1 className="text-4xl sm:text-5xl md:text-6xl font-extrabold tracking-tight text-gray-900 dark:text-white leading-tight">
+            Connect Anonymously <br className="hidden sm:block" />
+            <span className="bg-gradient-to-r from-violet-500 via-purple-500 to-indigo-500 bg-clip-text text-transparent">
               With Anyone, Anywhere
             </span>
           </h1>
 
           {/* Subheadline */}
-          <p className="text-lg sm:text-xl md:text-2xl text-gray-600 dark:text-gray-400 max-w-2xl mx-auto leading-relaxed">
-            An open source random video and text chat platform. No accounts, no tracking, just pure connections.
+          <p className="text-lg sm:text-xl text-gray-600 dark:text-gray-400 max-w-2xl mx-auto leading-relaxed">
+            A random video and text chat platform. No accounts, no tracking, just pure connections.
           </p>
 
           {/* CTA Buttons */}
-          <div className="flex flex-col sm:flex-row gap-4 sm:gap-6 justify-center items-center pt-4 sm:pt-8">
+          <div className="flex flex-col sm:flex-row gap-4 justify-center items-center pt-2 w-full sm:w-auto">
             <button
               onClick={() => navigate('/text')}
-              className="group relative inline-flex items-center gap-3 px-8 py-4 sm:px-10 sm:py-5 rounded-2xl bg-[#5a5ef1] text-white font-semibold text-base sm:text-lg shadow-[0_1px_2px_rgba(0,0,0,0.1),0_12px_24px_-4px_rgba(79,70,229,0.3)] hover:shadow-[0_1px_10px_rgba(79,70,229,0.5),0_15px_30px_-5px_rgba(79,70,229,0.4)] transition-all duration-300 hover:scale-105 active:scale-95 overflow-hidden transform-gpu isolate border-t border-white/20"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-8 py-4 rounded-xl bg-indigo-600 text-white font-semibold text-lg hover:bg-indigo-700 transition-colors shadow-sm hover:shadow-md"
             >
-              <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" />
               </svg>
               Start Text Chat
-              <svg className="w-4 h-4 sm:w-5 sm:h-5 group-hover:translate-x-1 transition-transform duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12h-7" />
-              </svg>
             </button>
 
             <button
               onClick={() => navigate('/video')}
-              className="group relative inline-flex items-center gap-3 px-8 py-4 sm:px-10 sm:py-5 rounded-2xl bg-white/10 dark:bg-white/5 backdrop-blur-md border border-gray-200/50 dark:border-white/10 text-gray-900 dark:text-white font-semibold text-base sm:text-lg hover:bg-white/20 dark:hover:bg-white/10 transition-all duration-300 hover:scale-105 active:scale-95 overflow-hidden shadow-sm"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-8 py-4 rounded-xl bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white font-semibold text-lg hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors shadow-sm hover:shadow-md"
             >
-              <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" />
               </svg>
               Video Chat
-              <svg className="w-4 h-4 sm:w-5 sm:h-5 group-hover:translate-x-1 transition-transform duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12h-7" />
-              </svg>
             </button>
-          </div>
-
-          {/* Tech Stack */}
-          <div className="pt-8 sm:pt-12">
-            <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Built with</p>
-            <div className="flex flex-wrap items-center justify-center gap-3">
-              {techStack.map((tech, index) => (
-                <div
-                  key={index}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-gray-300 text-sm font-medium hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors"
-                >
-                  <span>{tech.name}</span>
-                </div>
-              ))}
-            </div>
           </div>
         </div>
       </section>
@@ -199,19 +170,19 @@ export function LandingPage() {
             {features.map((feature, index) => (
               <div
                 key={index}
-                className="group relative p-8 rounded-2xl bg-white dark:bg-slate-900 border border-gray-100 dark:border-slate-800 hover:border-gray-200 dark:hover:border-slate-700 transition-all duration-300 hover:shadow-lg hover:shadow-gray-200/50 dark:hover:shadow-slate-900/50"
+                className="p-6 rounded-xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-sm"
               >
-                <div className="flex items-start gap-4 mb-6">
-                  <div className="flex-shrink-0 w-12 h-12 rounded-xl bg-gray-50 dark:bg-slate-800 flex items-center justify-center text-gray-700 dark:text-gray-300 group-hover:bg-indigo-50 dark:group-hover:bg-indigo-900/20 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors duration-300">
+                <div className="flex items-start gap-4 mb-4">
+                  <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
                     {feature.icon}
                   </div>
                   <div className="flex-1">
-                    <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white pt-1.5">
                       {feature.title}
                     </h3>
                   </div>
                 </div>
-                <p className="text-gray-600 dark:text-gray-400 leading-relaxed">
+                <p className="text-gray-600 dark:text-gray-400 leading-relaxed text-sm">
                   {feature.description}
                 </p>
               </div>
@@ -220,43 +191,7 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* Open Source Section */}
-      <section className="relative z-10 px-4 sm:px-6 lg:px-8 py-16 sm:py-24 lg:py-32">
-        <div className="max-w-4xl mx-auto">
-          <div className="relative rounded-2xl bg-gray-900 dark:bg-slate-900 p-8 sm:p-12 lg:p-16 text-center border border-gray-200 dark:border-slate-800">
-            <div className="relative z-10">
-              <div className="flex flex-col items-center gap-4 mb-8">
-                <div className="w-16 h-16 sm:w-20 sm:h-20">
-                  <svg className="w-full h-full text-white dark:text-gray-300" fill="currentColor" viewBox="0 0 24 24">
-                    <path fillRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0 0 22 12.017C22 6.484 17.522 2 12 2Z" clipRule="evenodd" />
-                  </svg>
-                </div>
-                <span className="text-white dark:text-gray-300 font-semibold text-lg">Open Source</span>
-              </div>
 
-              <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold text-white dark:text-white mb-4 sm:mb-6">
-                Join the Community
-              </h2>
-              <p className="text-lg sm:text-xl text-gray-300 dark:text-gray-400 mb-8 sm:mb-10 max-w-2xl mx-auto">
-                Star us on GitHub, contribute code, report issues, or help improve the project. Every contribution helps make Pairline better.
-              </p>
-              <div className="flex justify-center">
-                <a
-                  href="https://github.com/alessblaze/pairline"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center justify-center gap-3 px-8 py-4 sm:px-10 sm:py-5 rounded-xl bg-white dark:bg-white text-gray-900 dark:text-gray-900 font-semibold text-base sm:text-lg hover:bg-gray-100 dark:hover:bg-gray-200 transition-colors"
-                >
-                  <svg className="w-6 h-6 sm:w-7 sm:h-7" fill="currentColor" viewBox="0 0 24 24">
-                    <path fillRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0 0 22 12.017C22 6.484 17.522 2 12 2Z" clipRule="evenodd" />
-                  </svg>
-                  View on GitHub
-                </a>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
 
       {/* Footer */}
       <footer className="relative z-10 px-4 sm:px-6 lg:px-8 py-8 sm:py-12 border-t border-gray-200 dark:border-slate-800">
