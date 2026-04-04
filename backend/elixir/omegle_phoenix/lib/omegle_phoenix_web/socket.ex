@@ -22,6 +22,7 @@ defmodule OmeglePhoenixWeb.Socket do
     x_headers = Map.get(connect_info, :x_headers, [])
 
     forwarded_ip =
+      get_header(x_headers, "cf-connecting-ipv6", true) ||
       get_header(x_headers, "cf-connecting-ip", true) ||
         get_header(x_headers, "x-real-ip", true) ||
         get_forwarded_for_ip(x_headers)

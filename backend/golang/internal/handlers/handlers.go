@@ -919,6 +919,7 @@ func getRequestClientIP(c *gin.Context) string {
 	}
 
 	for _, candidate := range []string{
+		c.GetHeader("CF-Connecting-IPv6"),
 		c.GetHeader("CF-Connecting-IP"),
 		c.GetHeader("X-Real-IP"),
 		firstForwardedIP(c.GetHeader("X-Forwarded-For")),
