@@ -228,6 +228,8 @@ Pipfile.lock
 *.tiff
 *.svg
 
+!frontend/src/assets/*
+
 # Archives
 *.zip
 *.tar
