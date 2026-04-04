@@ -4,9 +4,11 @@ import { VideoChat } from './components/VideoChat';
 import { TextChat } from './components/TextChat';
 import { AdminPanel } from './components/AdminPanel';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { VideoDisabled } from './components/VideoDisabled';
 
 function App() {
   const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8080/ws';
+  const enableVideoChat = import.meta.env.VITE_ENABLE_VIDEO_CHAT !== 'false';
 
   return (
     <div className="min-h-screen w-full overflow-x-hidden overflow-y-auto bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-white">
@@ -23,11 +25,16 @@ function App() {
         <Route 
           path="/video" 
           element={
-            <ErrorBoundary>
-              <VideoChat wsUrl={wsUrl} />
-            </ErrorBoundary>
+            enableVideoChat ? (
+              <ErrorBoundary>
+                <VideoChat wsUrl={wsUrl} />
+              </ErrorBoundary>
+            ) : (
+              <Navigate to="/video-disabled" replace />
+            )
           } 
         />
+        <Route path="/video-disabled" element={<VideoDisabled />} />
         <Route path="/admin-login" element={<AdminPanel />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

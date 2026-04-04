@@ -12,8 +12,13 @@ export function LandingPage() {
   const navigate = useNavigate();
   const [showModal, setShowModal] = useState(false);
   const [targetRoute, setTargetRoute] = useState<'/text' | '/video' | null>(null);
+  const enableVideoChat = import.meta.env.VITE_ENABLE_VIDEO_CHAT !== 'false';
 
   const openModal = (route: '/text' | '/video') => {
+    if (route === '/video' && !enableVideoChat) {
+      navigate('/video-disabled');
+      return;
+    }
     setTargetRoute(route);
     setShowModal(true);
   };
