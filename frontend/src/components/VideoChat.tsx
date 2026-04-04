@@ -23,23 +23,10 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
     sendMessage, sendTyping, cameraError
   } = useVideoChat(wsUrl);
 
-  const autoStartedRef = useRef(false);
   // Mirrors the backend's captcha_verified socket flag.
   // Once verified, subsequent searches on the same WS connection skip the modal.
   // Resets when the WebSocket reconnects (new socket = new captcha_verified state).
   const [captchaVerified, setCaptchaVerified] = useState(false);
-
-  useEffect(() => {
-    // Auto-start if an initial token is provided from the landing page.
-    // The ref guard prevents double-firing since startSearch isn't memoized.
-    if (turnstileToken && connected && status === 'idle' && !autoStartedRef.current) {
-      autoStartedRef.current = true;
-      startSearch('', turnstileToken);
-      setCaptchaVerified(true);
-      // Consume router state so back-navigation doesn't re-trigger
-      navigate(location.pathname, { replace: true, state: {} });
-    }
-  }, [turnstileToken, connected, status, startSearch, navigate, location.pathname]);
 
   // Reset captchaVerified when WebSocket reconnects (new socket = fresh captcha state)
   useEffect(() => {
@@ -218,13 +205,22 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
 
   const handleStartSearchClick = useCallback((interestsStr: string) => {
     if (captchaVerified) {
-      // Backend socket already has captcha_verified=true, no token needed
       startSearch(interestsStr);
+    } else if (turnstileToken) {
+      startSearch(interestsStr, turnstileToken);
+      setCaptchaVerified(true);
+      navigate(location.pathname, { replace: true, state: {} });
     } else {
       setPendingInterests(interestsStr);
       setShowEntryModal(true);
     }
-  }, [captchaVerified, startSearch]);
+  }, [
+    captchaVerified,
+    turnstileToken,
+    startSearch,
+    navigate,
+    location.pathname,
+  ]);
 
   const handleModalConfirm = useCallback((token: string) => {
     setShowEntryModal(false);
@@ -262,8 +258,8 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
 
   const statusDot = (
     <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${status === 'connected' ? 'bg-green-500' :
-        status === 'searching' ? 'bg-yellow-500 animate-pulse' :
-          status === 'disconnected' ? 'bg-red-500' : 'bg-gray-400'
+      status === 'searching' ? 'bg-yellow-500 animate-pulse' :
+        status === 'disconnected' ? 'bg-red-500' : 'bg-gray-400'
       }`} />
   );
   const canReportLastChat = !!reportPeerId && messages.some((message) => message.sender !== 'system');
@@ -469,7 +465,7 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
       )}
 
       {showEntryModal && (
-        <EntryModal 
+        <EntryModal
           onClose={() => setShowEntryModal(false)}
           onConfirm={handleModalConfirm}
         />

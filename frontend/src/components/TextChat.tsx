@@ -12,23 +12,10 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
   const turnstileToken = location.state?.turnstileToken as string | undefined;
   const { connected, status, messages, startSearch, stopSearch, disconnect, sendMessage, reportPeerId, sessionId, sessionToken, peerTyping, sendTyping } = useTextChat(wsUrl);
 
-  const autoStartedRef = useRef(false);
   // Mirrors the backend's captcha_verified socket flag.
   // Once verified, subsequent searches on the same WS connection skip the modal.
   // Resets when the WebSocket reconnects (new socket = new captcha_verified state).
   const [captchaVerified, setCaptchaVerified] = useState(false);
-
-  useEffect(() => {
-    // Auto-start if an initial token is provided from the landing page.
-    // The ref guard prevents double-firing since startSearch isn't memoized.
-    if (turnstileToken && connected && status === 'idle' && !autoStartedRef.current) {
-      autoStartedRef.current = true;
-      startSearch('', turnstileToken);
-      setCaptchaVerified(true);
-      // Consume router state so back-navigation doesn't re-trigger
-      navigate(location.pathname, { replace: true, state: {} });
-    }
-  }, [turnstileToken, connected, status, startSearch, navigate, location.pathname]);
 
   // Reset captchaVerified when WebSocket reconnects (new socket = fresh captcha state)
   useEffect(() => {
@@ -153,13 +140,22 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
 
   const handleStartSearchClick = useCallback((interestsStr: string) => {
     if (captchaVerified) {
-      // Backend socket already has captcha_verified=true, no token needed
       startSearch(interestsStr);
+    } else if (turnstileToken) {
+      startSearch(interestsStr, turnstileToken);
+      setCaptchaVerified(true);
+      navigate(location.pathname, { replace: true, state: {} });
     } else {
       setPendingInterests(interestsStr);
       setShowEntryModal(true);
     }
-  }, [captchaVerified, startSearch]);
+  }, [
+    captchaVerified,
+    turnstileToken,
+    startSearch,
+    navigate,
+    location.pathname,
+  ]);
 
   const handleModalConfirm = useCallback((token: string) => {
     setShowEntryModal(false);
@@ -184,8 +180,8 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
               </svg>
             </button>
             <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${status === 'connected' ? 'bg-green-500' :
-                status === 'searching' ? 'bg-yellow-500 animate-pulse' :
-                  status === 'disconnected' ? 'bg-red-500' : 'bg-gray-400'
+              status === 'searching' ? 'bg-yellow-500 animate-pulse' :
+                status === 'disconnected' ? 'bg-red-500' : 'bg-gray-400'
               }`} />
             <span className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white truncate">Live Chat</span>
           </div>
@@ -245,7 +241,7 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
             <div
               key={msg.id}
               className={`flex ${msg.sender === 'system' ? 'justify-center' :
-                  msg.sender === 'me' ? 'justify-end' : 'justify-start'
+                msg.sender === 'me' ? 'justify-end' : 'justify-start'
                 }`}
             >
               {msg.sender === 'system' ? (
@@ -255,8 +251,8 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
               ) : (
                 <div
                   className={`max-w-[85%] sm:max-w-[80%] px-3 py-2 sm:px-4 sm:py-2 rounded-2xl ${msg.sender === 'me'
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white'
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white'
                     }`}
                 >
                   <p className="text-sm sm:text-base whitespace-pre-wrap break-words">{DOMPurify.sanitize(msg.text)}</p>
@@ -288,12 +284,12 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
                 </label>
                 <div className="flex flex-wrap items-center gap-2 p-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl min-h-[50px] focus-within:ring-2 focus-within:ring-indigo-500 transition-all shadow-sm">
                   {interestTags.map((tag, index) => (
-                    <span 
+                    <span
                       key={index}
                       className="flex items-center gap-1.5 px-2.5 py-1 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 text-sm font-medium rounded-lg animate-in zoom-in-95 duration-200"
                     >
                       {tag}
-                      <button 
+                      <button
                         onClick={() => removeTag(index)}
                         className="hover:text-indigo-900 dark:hover:text-white transition-colors"
                       >
@@ -303,16 +299,16 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
                       </button>
                     </span>
                   ))}
-                    <input
-                      type="text"
-                      value={tagInput}
-                      onChange={(e) => setTagInput(e.target.value)}
-                      onKeyDown={handleTagInputKeyDown}
-                      onBlur={addTag}
-                      maxLength={30}
-                      placeholder={interestTags.length === 0 ? "e.g. coding, music, movies..." : ""}
-                      className="flex-1 min-w-[120px] bg-transparent border-none outline-none text-[16px] font-medium dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500"
-                    />
+                  <input
+                    type="text"
+                    value={tagInput}
+                    onChange={(e) => setTagInput(e.target.value)}
+                    onKeyDown={handleTagInputKeyDown}
+                    onBlur={addTag}
+                    maxLength={30}
+                    placeholder={interestTags.length === 0 ? "e.g. coding, music, movies..." : ""}
+                    className="flex-1 min-w-[120px] bg-transparent border-none outline-none text-[16px] font-medium dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500"
+                  />
                 </div>
                 <p className="text-[10px] text-gray-400 dark:text-gray-500 ml-1">
                   Press Enter or Comma to add. Max 10 tags.
@@ -346,52 +342,51 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
             </button>
           )}
 
-      {status === 'connected' && (
-        <div className="flex flex-col gap-2 sm:gap-3">
-          <form onSubmit={handleSend} className="flex gap-2 items-center">
-            <input
-              type="text"
-              value={input}
-              onChange={handleInputChange}
-              placeholder="Type a message..."
-              maxLength={2000}
-              className="flex-1 px-3 py-2 sm:px-4 sm:py-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-xl text-base text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              autoFocus
-            />
-            <button
-              type="submit"
-              disabled={!input.trim()}
-              className="shrink-0 px-4 py-2 sm:px-6 sm:py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 dark:disabled:bg-gray-600 disabled:text-gray-500 text-white font-semibold rounded-xl transition-colors text-sm sm:text-base h-full"
-            >
-              Send
-            </button>
-          </form>
-          {input.length > 0 && (
-            <div className={`text-center text-xs font-medium transition-all duration-200 ${
-              input.length >= 1800 ? 'text-orange-500' : 'text-gray-400 dark:text-gray-500'
-            }`}>
-              {input.length} / 2000 characters
+          {status === 'connected' && (
+            <div className="flex flex-col gap-2 sm:gap-3">
+              <form onSubmit={handleSend} className="flex gap-2 items-center">
+                <input
+                  type="text"
+                  value={input}
+                  onChange={handleInputChange}
+                  placeholder="Type a message..."
+                  maxLength={2000}
+                  className="flex-1 px-3 py-2 sm:px-4 sm:py-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-xl text-base text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  autoFocus
+                />
+                <button
+                  type="submit"
+                  disabled={!input.trim()}
+                  className="shrink-0 px-4 py-2 sm:px-6 sm:py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 dark:disabled:bg-gray-600 disabled:text-gray-500 text-white font-semibold rounded-xl transition-colors text-sm sm:text-base h-full"
+                >
+                  Send
+                </button>
+              </form>
+              {input.length > 0 && (
+                <div className={`text-center text-xs font-medium transition-all duration-200 ${input.length >= 1800 ? 'text-orange-500' : 'text-gray-400 dark:text-gray-500'
+                  }`}>
+                  {input.length} / 2000 characters
+                </div>
+              )}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowReport(true)}
+                  className="flex-1 py-2.5 sm:py-3 bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 font-semibold rounded-xl hover:bg-orange-200 dark:hover:bg-orange-900/50 transition-colors text-sm sm:text-base"
+                >
+                  Report
+                </button>
+                <button
+                  onClick={handleDisconnect}
+                  className={`flex-1 py-2.5 sm:py-3 font-semibold rounded-xl transition-colors text-sm sm:text-base ${confirmStop
+                    ? 'bg-red-600 hover:bg-red-700 text-white'
+                    : 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50'
+                    }`}
+                >
+                  {confirmStop ? 'Tap again to stop' : 'Stop Chat'}
+                </button>
+              </div>
             </div>
           )}
-          <div className="flex gap-2">
-            <button
-              onClick={() => setShowReport(true)}
-              className="flex-1 py-2.5 sm:py-3 bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 font-semibold rounded-xl hover:bg-orange-200 dark:hover:bg-orange-900/50 transition-colors text-sm sm:text-base"
-            >
-              Report
-            </button>
-            <button
-              onClick={handleDisconnect}
-              className={`flex-1 py-2.5 sm:py-3 font-semibold rounded-xl transition-colors text-sm sm:text-base ${confirmStop
-                  ? 'bg-red-600 hover:bg-red-700 text-white'
-                  : 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50'
-                }`}
-            >
-              {confirmStop ? 'Tap again to stop' : 'Stop Chat'}
-            </button>
-          </div>
-        </div>
-      )}
         </div>
       </div>
 
@@ -406,7 +401,7 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
       )}
 
       {showEntryModal && (
-        <EntryModal 
+        <EntryModal
           onClose={() => setShowEntryModal(false)}
           onConfirm={handleModalConfirm}
         />
