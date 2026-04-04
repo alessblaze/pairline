@@ -80,7 +80,7 @@ export class WebSocketClient {
     this.socket = new Socket(this.url);
 
     this.socket.onOpen(() => {
-      console.log('Phoenix socket connected');
+      console.log('You are connected to chat server.');
     });
 
     this.socket.onError((error: unknown) => {
@@ -88,7 +88,9 @@ export class WebSocketClient {
     });
 
     this.socket.onClose((event: unknown) => {
-      console.log('Phoenix socket disconnected', event);
+      if (import.meta.env.VITE_WEBSOCKET_DEBUG === 'true') {
+        console.log('Phoenix socket disconnected', event);
+      }
       this.isConnecting = false;
       this.connectPromise = null;
       this.channel = null;
@@ -156,8 +158,8 @@ export class WebSocketClient {
   private handleReconnect() {
     if (this.reconnectAttempts < this.maxReconnectAttempts && this.shouldReconnect && !this.isConnecting) {
       const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts), 30000);
-      console.log(`Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts + 1}/${this.maxReconnectAttempts})`);
-      
+      console.warn(`Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts + 1}/${this.maxReconnectAttempts})`);
+
       this.reconnectTimeout = setTimeout(() => {
         this.reconnectAttempts++;
         this.connect().catch((error) => {
@@ -212,7 +214,7 @@ export class WebSocketClient {
     this.shouldReconnect = false;
     this.isConnecting = false;
     this.connectPromise = null;
-    
+
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
@@ -224,7 +226,7 @@ export class WebSocketClient {
     this.channel = null;
     this.socket?.disconnect();
     this.socket = null;
-    
+
     this.messageHandlers = [];
     this.closeHandlers = [];
   }
@@ -234,7 +236,9 @@ export class WebSocketClient {
   }
 
   private dispatchMessage(message: Message) {
-    console.log('WebSocket received:', message);
+    if (import.meta.env.VITE_WEBSOCKET_DEBUG === 'true') {
+      console.log('WebSocket received:', message);
+    }
 
     this.messageHandlers.forEach(handler => handler(message));
   }

@@ -74,7 +74,9 @@ export function useVideoChat(wsUrl: string) {
 
   const logWebRTC = (label: string, details?: unknown) => {
     if (!webrtcDebugEnabled) return;
-    console.log(`[WebRTC] ${label}`, details ?? '');
+    if (import.meta.env.VITE_WEBSOCKET_DEBUG === 'true') {
+      console.log(`[WebRTC] ${label}`, details ?? '');
+    }
   };
 
   const logSelectedCandidatePair = async (pc: RTCPeerConnection) => {
@@ -417,7 +419,9 @@ export function useVideoChat(wsUrl: string) {
     };
 
     pc.oniceconnectionstatechange = () => {
-      console.log('WebRTC ICE State:', pc.iceConnectionState);
+      if (import.meta.env.VITE_WEBSOCKET_DEBUG === 'true') {
+        console.log('WebRTC ICE State:', pc.iceConnectionState);
+      }
       logWebRTC('ICE state changed', {
         iceConnectionState: pc.iceConnectionState,
         connectionState: pc.connectionState,
@@ -475,7 +479,9 @@ export function useVideoChat(wsUrl: string) {
     };
 
     pc.ontrack = (event) => {
-      console.log('Received track from peer:', event.track.kind);
+      if (import.meta.env.VITE_WEBSOCKET_DEBUG === 'true') {
+        console.log('Received track from peer:', event.track.kind);
+      }
       logWebRTC('Received remote track', {
         kind: event.track.kind,
         id: event.track.id,
@@ -575,7 +581,9 @@ export function useVideoChat(wsUrl: string) {
       pc.setConfiguration({ iceServers });
       iceRestartPendingRef.current = true;
       pc.restartIce();
-      console.log('TURN upgrade applied, ICE restarting via relay...');
+      if (import.meta.env.VITE_WEBSOCKET_DEBUG === 'true') {
+        console.log('TURN upgrade applied, ICE restarting via relay...');
+      }
     } catch (err) {
       console.error('Failed to apply TURN credentials for fallback:', err);
       iceRestartPendingRef.current = false;
@@ -704,8 +712,9 @@ export function useVideoChat(wsUrl: string) {
       case 'match':
         const peerIdMatch = message.peer_id;
         const common = (message as any).common_interests || [];
-
-        console.log('Matched with peer:', peerIdMatch);
+        if (import.meta.env.VITE_WEBSOCKET_DEBUG === 'true') {
+          console.log('Matched with peer:', peerIdMatch);
+        }
         logWebRTC('Phoenix match received', {
           peerId: peerIdMatch,
           sessionId: sessionIdRef.current
@@ -896,7 +905,9 @@ export function useVideoChat(wsUrl: string) {
 
       case 'disconnect':
       case 'disconnected':
-        console.log('Peer disconnected');
+        if (import.meta.env.VITE_WEBSOCKET_DEBUG === 'true') {
+          console.log('Peer disconnected');
+        }
         setStatus('disconnected');
         setPeerId(null);
         setPeerTyping(false);
@@ -949,7 +960,9 @@ export function useVideoChat(wsUrl: string) {
       }
 
       case 'timeout':
-        console.log('Matchmaking timeout');
+        if (import.meta.env.VITE_WEBSOCKET_DEBUG === 'true') {
+          console.log('Matchmaking timeout');
+        }
         setStatus('disconnected');
         setPeerId(null);
         setPeerTyping(false);

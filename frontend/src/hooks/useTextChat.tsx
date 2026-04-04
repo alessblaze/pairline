@@ -30,16 +30,18 @@ export function useTextChat(wsUrl: string) {
   };
 
   const handleMessage = (message: Message) => {
-    console.log('Received message:', message);
+    if (import.meta.env.VITE_WEBSOCKET_DEBUG === 'true') {
+      console.log('Received message:', message);
+    }
 
     if (message.session_id) {
       setSessionId(message.session_id);
     }
-    
+
     if (message.session_token) {
       setSessionToken(message.session_token);
     }
-    
+
     switch (message.type) {
       case 'match':
         const peerIdMatch = message.peer_id;
@@ -48,7 +50,7 @@ export function useTextChat(wsUrl: string) {
         setReportPeerId(peerIdMatch || null);
         setStatus('connected');
         setShowReconnectMessage(false);
-        
+
         if (common.length > 0) {
           setMessages(prev => [...prev, {
             id: crypto.randomUUID(),
@@ -78,7 +80,9 @@ export function useTextChat(wsUrl: string) {
         break;
 
       case 'disconnected':
-        console.log('Peer disconnected');
+        if (import.meta.env.VITE_WEBSOCKET_DEBUG === 'true') {
+          console.log('Peer disconnected');
+        }
         setStatus('disconnected');
         setPeerId(null);
         setPeerTyping(false);
@@ -119,7 +123,9 @@ export function useTextChat(wsUrl: string) {
         break;
 
       case 'timeout':
-        console.log('Matchmaking timeout');
+        if (import.meta.env.VITE_WEBSOCKET_DEBUG === 'true') {
+          console.log('Matchmaking timeout');
+        }
         setStatus('disconnected');
         setPeerId(null);
         setPeerTyping(false);
@@ -159,7 +165,9 @@ export function useTextChat(wsUrl: string) {
         break;
 
       default:
-        console.log('Unknown message type:', message.type, message);
+        if (import.meta.env.VITE_WEBSOCKET_DEBUG === 'true') {
+          console.log('Unknown message type:', message.type, message);
+        }
     }
   };
 
@@ -238,12 +246,12 @@ export function useTextChat(wsUrl: string) {
       setReportPeerId(null);
       setStatus('searching');
 
-      wsClient.send('start', { 
+      wsClient.send('start', {
         token: turnstileToken,
-        preferences: { 
+        preferences: {
           mode: 'text',
           interests: interests.trim()
-        } 
+        }
       });
     } catch (error) {
       console.error('Failed to start search:', error);
