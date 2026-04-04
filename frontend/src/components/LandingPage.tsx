@@ -168,7 +168,7 @@ export function LandingPage() {
                 With ❤️ From Aless
               </p>
               <p className="text-[10px] sm:text-sm font-semibold text-slate-200 drop-shadow-md">
-                © 2024 Pairline. All rights reserved. Let your dreams take flight!
+                © 2026 Pairline. All rights reserved. Let your dreams take flight!
               </p>
             </div>
           </footer>
