@@ -34,7 +34,6 @@ export function LandingPage() {
     <div className="relative w-full min-h-screen flex flex-col overflow-x-hidden font-nunito bg-slate-50 dark:bg-slate-950 transition-colors duration-500">
       {/* Import fonts and styles */}
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=M+PLUS+Rounded+1c:wght@400;700;800&display=swap');
         .font-nunito { font-family: 'Nunito', sans-serif; }
         .font-anime { font-family: 'M PLUS Rounded 1c', sans-serif; }
 

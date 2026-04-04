@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, memo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useVideoChat } from '../hooks/useVideoChat';
 import { ReportDialog } from './ReportDialog';
@@ -12,6 +12,107 @@ interface VideoChatProps {
 
 const LOCAL_PREVIEW_EDGE_MARGIN = 12;
 
+// ---------------------------------------------------------------------------
+// VideoChatInput — isolated so keystrokes ONLY re-render this small component.
+// ---------------------------------------------------------------------------
+interface VideoChatInputProps {
+  onSend: (text: string) => void;
+  onTyping: (isTyping: boolean) => void;
+  onNext: () => void;
+  onReport: () => void;
+  onDisconnect: () => void;
+  confirmSkip: boolean;
+  confirmStop: boolean;
+}
+
+const VideoChatInput = memo(function VideoChatInput({
+  onSend, onTyping, onNext, onReport, onDisconnect, confirmSkip, confirmStop,
+}: VideoChatInputProps) {
+  const [value, setValue] = useState('');
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+  }, []);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const v = e.target.value;
+    setValue(v);
+    setTimeout(() => {
+      if (v.trim()) {
+        onTyping(true);
+        if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+        typingTimeoutRef.current = setTimeout(() => {
+          onTyping(false);
+          typingTimeoutRef.current = null;
+        }, 2000);
+      } else {
+        onTyping(false);
+        if (typingTimeoutRef.current) {
+          clearTimeout(typingTimeoutRef.current);
+          typingTimeoutRef.current = null;
+        }
+      }
+    }, 0);
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (value.trim()) {
+      onSend(value);
+      setValue('');
+      onTyping(false);
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+        typingTimeoutRef.current = null;
+      }
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      <form onSubmit={handleSubmit} className="flex gap-2 items-center">
+        <input
+          id="video-chat-message-input"
+          type="text"
+          value={value}
+          onChange={handleChange}
+          placeholder="Type a message…"
+          className="flex-1 px-4 py-2.5 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-full text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        />
+        <button type="submit" disabled={!value.trim()} className="p-2.5 bg-indigo-600 text-white rounded-full">
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
+        </button>
+      </form>
+      <div className="grid grid-cols-3 gap-2">
+        <button
+          onClick={onNext}
+          className={`py-2.5 font-semibold rounded-xl text-xs sm:text-sm transition-colors ${
+            confirmSkip ? 'bg-blue-600 text-white shadow-md' : 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50'
+          }`}
+        >
+          {confirmSkip ? 'Sure?' : 'Skip'}
+        </button>
+        <button
+          onClick={onReport}
+          className="py-2.5 font-semibold rounded-xl text-xs sm:text-sm transition-colors bg-orange-50 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 hover:bg-orange-100 dark:hover:bg-orange-900/50"
+        >
+          Report
+        </button>
+        <button
+          onClick={onDisconnect}
+          className={`py-2.5 font-semibold rounded-xl text-xs sm:text-sm transition-colors ${
+            confirmStop ? 'bg-red-600 text-white shadow-md' : 'bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50'
+          }`}
+        >
+          {confirmStop ? 'Confirm' : 'Stop'}
+        </button>
+      </div>
+    </div>
+  );
+});
+
+// ---------------------------------------------------------------------------
 export function VideoChat({ wsUrl }: VideoChatProps) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -20,8 +121,11 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
     connected, reportPeerId, sessionId, sessionToken, status, messages, peerTyping,
     localVideoRef, remoteVideoRef,
     startSearch, stopSearch, skip, disconnect,
-    sendMessage, sendTyping, cameraError
+    sendMessage, sendTyping: rawSendTyping, cameraError
   } = useVideoChat(wsUrl);
+
+  // Stabilise sendTyping identity so the memoised VideoChatInput doesn't re-render on every parent state change
+  const sendTyping = useCallback((isTyping: boolean) => rawSendTyping(isTyping), [rawSendTyping]);
 
   // Mirrors the backend's captcha_verified socket flag.
   // Once verified, subsequent searches on the same WS connection skip the modal.
@@ -44,7 +148,7 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
     }
   }, [messages, captchaVerified]);
 
-  const [input, setInput] = useState('');
+  // input state now lives in <VideoChatInput> — removed from parent to isolate keystroke re-renders
   const [interestTags, setInterestTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [showEntryModal, setShowEntryModal] = useState(false);
@@ -55,13 +159,13 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
   const [showReport, setShowReport] = useState(false);
   const [localPreviewPosition, setLocalPreviewPosition] = useState<{ x: number; y: number } | null>(null);
   const [isDraggingLocalPreview, setIsDraggingLocalPreview] = useState(false);
-  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // typingTimeoutRef moved to VideoChatInput
   const videoPanelRef = useRef<HTMLDivElement>(null);
   const localPreviewRef = useRef<HTMLDivElement>(null);
   const dragOffsetRef = useRef<{ x: number; y: number } | null>(null);
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    messagesEndRef.current?.scrollIntoView({ behavior: 'instant' });
   };
 
   useEffect(() => { scrollToBottom(); }, [messages]);
@@ -73,11 +177,6 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
     }
   }, [status]);
 
-  useEffect(() => {
-    return () => {
-      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-    };
-  }, []);
 
   useEffect(() => {
     const handlePointerMove = (event: PointerEvent) => {
@@ -135,37 +234,10 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
     };
   }, [isDraggingLocalPreview]);
 
-  const handleSend = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (input.trim()) {
-      sendMessage(input);
-      setInput('');
-      sendTyping(false);
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-        typingTimeoutRef.current = null;
-      }
-    }
-  };
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    setInput(value);
-    if (value.trim()) {
-      sendTyping(true);
-      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-      typingTimeoutRef.current = setTimeout(() => {
-        sendTyping(false);
-        typingTimeoutRef.current = null;
-      }, 2000);
-    } else {
-      sendTyping(false);
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-        typingTimeoutRef.current = null;
-      }
-    }
-  };
+  // handleSend and handleInputChange now live inside VideoChatInput
+  const handleSend = useCallback((text: string) => {
+    sendMessage(text);
+  }, [sendMessage]);
 
   const handleDisconnect = () => {
     if (!confirmStop) {
@@ -430,25 +502,15 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
             )}
 
             {status === 'connected' && (
-              <div className="flex flex-col gap-2">
-                <form onSubmit={handleSend} className="flex gap-2 items-center">
-                  <input
-                    type="text"
-                    value={input}
-                    onChange={handleInputChange}
-                    placeholder="Type a message…"
-                    className="flex-1 px-4 py-2.5 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-full text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                  <button type="submit" disabled={!input.trim()} className="p-2.5 bg-indigo-600 text-white rounded-full">
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
-                  </button>
-                </form>
-                <div className="grid grid-cols-3 gap-2">
-                  <button onClick={handleNext} className={`py-2.5 font-semibold rounded-xl text-xs sm:text-sm transition-colors ${confirmSkip ? 'bg-blue-600 text-white shadow-md' : 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50'}`}>{confirmSkip ? 'Sure?' : 'Skip'}</button>
-                  <button onClick={() => setShowReport(true)} className="py-2.5 font-semibold rounded-xl text-xs sm:text-sm transition-colors bg-orange-50 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 hover:bg-orange-100 dark:hover:bg-orange-900/50">Report</button>
-                  <button onClick={handleDisconnect} className={`py-2.5 font-semibold rounded-xl text-xs sm:text-sm transition-colors ${confirmStop ? 'bg-red-600 text-white shadow-md' : 'bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50'}`}>{confirmStop ? 'Confirm' : 'Stop'}</button>
-                </div>
-              </div>
+              <VideoChatInput
+                onSend={handleSend}
+                onTyping={sendTyping}
+                onNext={handleNext}
+                onReport={() => setShowReport(true)}
+                onDisconnect={handleDisconnect}
+                confirmSkip={confirmSkip}
+                confirmStop={confirmStop}
+              />
             )}
           </div>
         </div>

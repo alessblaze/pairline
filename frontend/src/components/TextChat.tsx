@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, memo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTextChat } from '../hooks/useTextChat';
 import { ThemeToggle } from './ThemeToggle';
@@ -6,11 +6,123 @@ import { ReportDialog } from './ReportDialog';
 import { EntryModal } from './EntryModal';
 import DOMPurify from 'dompurify';
 
+// ---------------------------------------------------------------------------
+// ChatInput — isolated so keystrokes ONLY re-render this small component,
+// not the entire TextChat (messages list, status, etc.).
+// ---------------------------------------------------------------------------
+interface ChatInputProps {
+  onSend: (text: string) => void;
+  onTyping: (isTyping: boolean) => void;
+  onDisconnect: () => void;
+  onReport: () => void;
+  confirmStop: boolean;
+}
+
+const ChatInput = memo(function ChatInput({
+  onSend, onTyping, onDisconnect, onReport, confirmStop,
+}: ChatInputProps) {
+  const [value, setValue] = useState('');
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clean up typing timeout on unmount
+  useEffect(() => () => {
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+  }, []);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const v = e.target.value;
+    setValue(v);
+    // Defer WS send past the paint frame so the character appears instantly
+    setTimeout(() => {
+      if (v.trim()) {
+        onTyping(true);
+        if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+        typingTimeoutRef.current = setTimeout(() => {
+          onTyping(false);
+          typingTimeoutRef.current = null;
+        }, 2000);
+      } else {
+        onTyping(false);
+        if (typingTimeoutRef.current) {
+          clearTimeout(typingTimeoutRef.current);
+          typingTimeoutRef.current = null;
+        }
+      }
+    }, 0);
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (value.trim()) {
+      onSend(value);
+      setValue('');
+      onTyping(false);
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+        typingTimeoutRef.current = null;
+      }
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-2 sm:gap-3">
+      <form onSubmit={handleSubmit} className="flex gap-2 items-center">
+        <input
+          id="chat-message-input"
+          type="text"
+          value={value}
+          onChange={handleChange}
+          placeholder="Type a message..."
+          maxLength={2000}
+          className="flex-1 px-3 py-2 sm:px-4 sm:py-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-xl text-base text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          autoFocus
+        />
+        <button
+          type="submit"
+          disabled={!value.trim()}
+          className="shrink-0 px-4 py-2 sm:px-6 sm:py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 dark:disabled:bg-gray-600 disabled:text-gray-500 text-white font-semibold rounded-xl transition-colors text-sm sm:text-base h-full"
+        >
+          Send
+        </button>
+      </form>
+      {value.length > 0 && (
+        <div className={`text-center text-xs font-medium transition-all duration-200 ${
+          value.length >= 1800 ? 'text-orange-500' : 'text-gray-400 dark:text-gray-500'
+        }`}>
+          {value.length} / 2000 characters
+        </div>
+      )}
+      <div className="flex gap-2">
+        <button
+          onClick={onReport}
+          className="flex-1 py-2.5 sm:py-3 bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 font-semibold rounded-xl hover:bg-orange-200 dark:hover:bg-orange-900/50 transition-colors text-sm sm:text-base"
+        >
+          Report
+        </button>
+        <button
+          onClick={onDisconnect}
+          className={`flex-1 py-2.5 sm:py-3 font-semibold rounded-xl transition-colors text-sm sm:text-base ${
+            confirmStop
+              ? 'bg-red-600 hover:bg-red-700 text-white'
+              : 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50'
+          }`}
+        >
+          {confirmStop ? 'Tap again to stop' : 'Stop Chat'}
+        </button>
+      </div>
+    </div>
+  );
+});
+
+// ---------------------------------------------------------------------------
 export function TextChat({ wsUrl }: { wsUrl: string }) {
   const navigate = useNavigate();
   const location = useLocation();
   const turnstileToken = location.state?.turnstileToken as string | undefined;
-  const { connected, status, messages, startSearch, stopSearch, disconnect, sendMessage, reportPeerId, sessionId, sessionToken, peerTyping, sendTyping } = useTextChat(wsUrl);
+  const { connected, status, messages, startSearch, stopSearch, disconnect, sendMessage, reportPeerId, sessionId, sessionToken, peerTyping, sendTyping: rawSendTyping } = useTextChat(wsUrl);
+
+  // Stabilise sendTyping identity so the memoised ChatInput doesn't re-render on every parent state change
+  const sendTyping = useCallback((isTyping: boolean) => rawSendTyping(isTyping), [rawSendTyping]);
 
   // Mirrors the backend's captcha_verified socket flag.
   // Once verified, subsequent searches on the same WS connection skip the modal.
@@ -33,7 +145,7 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
     }
   }, [messages, captchaVerified]);
 
-  const [input, setInput] = useState('');
+  // input state now lives in <ChatInput> — removed from parent to isolate keystroke re-renders
   const [interestTags, setInterestTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [showEntryModal, setShowEntryModal] = useState(false);
@@ -41,66 +153,25 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [confirmStop, setConfirmStop] = useState(false);
   const [showReport, setShowReport] = useState(false);
-  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const canReportLastChat = !!reportPeerId && messages.some((message) => message.sender !== 'system');
 
+  // handleSend is now inside ChatInput; parent just needs a callback wrapper
+  const handleSend = useCallback((text: string) => {
+    sendMessage(text);
+    setConfirmStop(false);
+  }, [sendMessage]);
+
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    messagesEndRef.current?.scrollIntoView({ behavior: 'instant' });
   };
 
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+  useEffect(() => { scrollToBottom(); }, [messages]);
 
   useEffect(() => {
-    if (status !== 'connected') {
-      setConfirmStop(false);
-    }
+    if (status !== 'connected') setConfirmStop(false);
   }, [status]);
 
-  useEffect(() => {
-    return () => {
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  const handleSend = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (input.trim()) {
-      sendMessage(input);
-      setInput('');
-      sendTyping(false);
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-        typingTimeoutRef.current = null;
-      }
-      setConfirmStop(false);
-    }
-  };
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    setInput(value);
-
-    if (value.trim()) {
-      sendTyping(true);
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-      }
-      typingTimeoutRef.current = setTimeout(() => {
-        sendTyping(false);
-        typingTimeoutRef.current = null;
-      }, 2000);
-    } else {
-      sendTyping(false);
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-        typingTimeoutRef.current = null;
-      }
-    }
-  };
+  // handleInputChange is now inside ChatInput — removed from parent
 
   const handleDisconnect = () => {
     if (!confirmStop) {
@@ -343,49 +414,13 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
           )}
 
           {status === 'connected' && (
-            <div className="flex flex-col gap-2 sm:gap-3">
-              <form onSubmit={handleSend} className="flex gap-2 items-center">
-                <input
-                  type="text"
-                  value={input}
-                  onChange={handleInputChange}
-                  placeholder="Type a message..."
-                  maxLength={2000}
-                  className="flex-1 px-3 py-2 sm:px-4 sm:py-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-xl text-base text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  autoFocus
-                />
-                <button
-                  type="submit"
-                  disabled={!input.trim()}
-                  className="shrink-0 px-4 py-2 sm:px-6 sm:py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 dark:disabled:bg-gray-600 disabled:text-gray-500 text-white font-semibold rounded-xl transition-colors text-sm sm:text-base h-full"
-                >
-                  Send
-                </button>
-              </form>
-              {input.length > 0 && (
-                <div className={`text-center text-xs font-medium transition-all duration-200 ${input.length >= 1800 ? 'text-orange-500' : 'text-gray-400 dark:text-gray-500'
-                  }`}>
-                  {input.length} / 2000 characters
-                </div>
-              )}
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setShowReport(true)}
-                  className="flex-1 py-2.5 sm:py-3 bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 font-semibold rounded-xl hover:bg-orange-200 dark:hover:bg-orange-900/50 transition-colors text-sm sm:text-base"
-                >
-                  Report
-                </button>
-                <button
-                  onClick={handleDisconnect}
-                  className={`flex-1 py-2.5 sm:py-3 font-semibold rounded-xl transition-colors text-sm sm:text-base ${confirmStop
-                    ? 'bg-red-600 hover:bg-red-700 text-white'
-                    : 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50'
-                    }`}
-                >
-                  {confirmStop ? 'Tap again to stop' : 'Stop Chat'}
-                </button>
-              </div>
-            </div>
+            <ChatInput
+              onSend={handleSend}
+              onTyping={sendTyping}
+              onDisconnect={handleDisconnect}
+              onReport={() => setShowReport(true)}
+              confirmStop={confirmStop}
+            />
           )}
         </div>
       </div>
