@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { ThemeToggle } from './ThemeToggle';
 import promoVideo from '../assets/promo.mp4';
+import promoPoster from '../assets/promo-poster.webp';
 import promoImg from '../assets/promo.webp';
 import promoFeaturesImg from '../assets/promofeatures.webp';
 
@@ -108,6 +109,7 @@ export function LandingPage() {
       <div className="w-full relative bg-gray-950 flex justify-center items-center">
         <video
           src={promoVideo}
+          poster={promoPoster}
           autoPlay
           loop
           muted
