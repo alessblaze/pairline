@@ -1,8 +1,8 @@
 import { useNavigate } from 'react-router-dom';
 import { ThemeToggle } from './ThemeToggle';
 import promoVideo from '../assets/promo.mp4';
-import promoImg from '../assets/promo.png';
-import promoFeaturesImg from '../assets/promofeatures.png';
+import promoImg from '../assets/promo.webp';
+import promoFeaturesImg from '../assets/promofeatures.webp';
 
 export function LandingPage() {
   const navigate = useNavigate();
