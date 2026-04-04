@@ -1,6 +1,6 @@
 import type { Message } from '../types';
 
-import { Socket, type Channel } from '../vendor/phoenix.mjs';
+import { Socket, type Channel } from 'phoenix';
 
 export class WebSocketClient {
   private socket: Socket | null = null;
