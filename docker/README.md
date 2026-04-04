@@ -60,13 +60,13 @@ All Go services share the same Redis and Postgres backing services.
 From the repo root:
 
 ```bash
-docker compose -f docker/elixir-cluster-compose.yml up --build
+docker compose -f docker/docker-compose.yml up --build
 ```
 
 Or detached:
 
 ```bash
-docker compose -f docker/elixir-cluster-compose.yml up -d
+docker compose -f docker/docker-compose.yml up -d
 ```
 
 ## Check cluster health
@@ -94,26 +94,26 @@ You should see for `/api/health`:
 View logs:
 
 ```bash
-docker compose -f docker/elixir-cluster-compose.yml logs -f nginx phoenix1 phoenix2 golang-public-1 golang-public-2 golang-admin
+docker compose -f docker/docker-compose.yml logs -f nginx phoenix1 phoenix2 golang-public-1 golang-public-2 golang-admin
 ```
 
 Stop:
 
 ```bash
-docker compose -f docker/elixir-cluster-compose.yml down
+docker compose -f docker/docker-compose.yml down
 ```
 
 Stop and remove volumes:
 
 ```bash
-docker compose -f docker/elixir-cluster-compose.yml down -v
+docker compose -f docker/docker-compose.yml down -v
 ```
 
 Inspect a specific Phoenix node directly:
 
 ```bash
-docker compose -f docker/elixir-cluster-compose.yml exec phoenix1 curl -s http://localhost:8080/api/health
-docker compose -f docker/elixir-cluster-compose.yml exec phoenix2 curl -s http://localhost:8081/api/health
+docker compose -f docker/docker-compose.yml exec phoenix1 curl -s http://localhost:8080/api/health
+docker compose -f docker/docker-compose.yml exec phoenix2 curl -s http://localhost:8081/api/health
 ```
 
 ## Notes
