@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import { Turnstile, type TurnstileInstance } from '@marsidev/react-turnstile';
+import { useTheme } from '../hooks/useTheme';
 
 interface EntryModalProps {
   onClose: () => void;
@@ -11,6 +12,7 @@ export function EntryModal({ onClose, onConfirm }: EntryModalProps) {
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [widgetReady, setWidgetReady] = useState(false);
   const turnstileRef = useRef<TurnstileInstance | null>(null);
+  const { theme } = useTheme();
 
   const siteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY
     || (import.meta.env.DEV ? '1x00000000000000000000AA' : '');
@@ -55,8 +57,10 @@ export function EntryModal({ onClose, onConfirm }: EntryModalProps) {
           )}
           {siteKey ? (
             <Turnstile
+              key={theme}
               ref={turnstileRef}
               siteKey={siteKey}
+              options={{ theme }}
               onSuccess={(token) => {
                 setTurnstileToken(token);
                 setWidgetReady(true);
