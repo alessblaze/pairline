@@ -931,6 +931,10 @@ export function useVideoChat(wsUrl: string) {
       case 'error': {
         const errorMessage = message.data?.message || message.data?.error || message.data?.reason || JSON.stringify(message.data) || 'An error occurred';
         console.error('Server error:', message);
+        // If CAPTCHA verification failed, revert to idle so user can retry
+        if (typeof errorMessage === 'string' && errorMessage.includes('CAPTCHA')) {
+          setStatus('idle');
+        }
         // Silently drop benign race-condition errors that occur during skip/reconnect flow.
         // 'No partner' fires when webrtc_ready arrives before the new match is fully assigned.
         const benignErrors = ['No partner', 'No partner to skip'];
@@ -970,7 +974,7 @@ export function useVideoChat(wsUrl: string) {
     }
   };
 
-  const startSearch = async (interests: string = '') => {
+  const startSearch = async (interests: string = '', turnstileToken?: string) => {
     try {
       turnFetchedRef.current = false;
       iceRestartPendingRef.current = false;
@@ -999,6 +1003,7 @@ export function useVideoChat(wsUrl: string) {
       setStatus('searching');
 
       wsClient.send('start', {
+        token: turnstileToken,
         preferences: {
           mode: 'video',
           interests: interests.trim()

@@ -106,6 +106,10 @@ export function useTextChat(wsUrl: string) {
       case 'error':
         const errorMessage = message.data?.message || message.data?.error || message.data?.reason || JSON.stringify(message.data) || 'An error occurred';
         console.error('Server error:', message);
+        // If CAPTCHA verification failed, revert to idle so user can retry
+        if (typeof errorMessage === 'string' && errorMessage.includes('CAPTCHA')) {
+          setStatus('idle');
+        }
         setMessages(prev => [...prev, {
           id: crypto.randomUUID(),
           text: `Error: ${errorMessage}`,
@@ -222,7 +226,7 @@ export function useTextChat(wsUrl: string) {
     };
   }, [wsClient]);
 
-  const startSearch = async (interests: string = '') => {
+  const startSearch = async (interests: string = '', turnstileToken?: string) => {
     try {
       if (!wsClient.isConnected()) {
         await wsClient.connect();
@@ -235,6 +239,7 @@ export function useTextChat(wsUrl: string) {
       setStatus('searching');
 
       wsClient.send('start', { 
+        token: turnstileToken,
         preferences: { 
           mode: 'text',
           interests: interests.trim()

@@ -1,8 +1,9 @@
-import { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useVideoChat } from '../hooks/useVideoChat';
 import { ReportDialog } from './ReportDialog';
 import { ThemeToggle } from './ThemeToggle';
+import { EntryModal } from './EntryModal';
 import DOMPurify from 'dompurify';
 
 interface VideoChatProps {
@@ -13,6 +14,8 @@ const LOCAL_PREVIEW_EDGE_MARGIN = 12;
 
 export function VideoChat({ wsUrl }: VideoChatProps) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const turnstileToken = location.state?.turnstileToken as string | undefined;
   const {
     connected, reportPeerId, sessionId, sessionToken, status, messages, peerTyping,
     localVideoRef, remoteVideoRef,
@@ -20,9 +23,44 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
     sendMessage, sendTyping, cameraError
   } = useVideoChat(wsUrl);
 
+  const autoStartedRef = useRef(false);
+  // Mirrors the backend's captcha_verified socket flag.
+  // Once verified, subsequent searches on the same WS connection skip the modal.
+  // Resets when the WebSocket reconnects (new socket = new captcha_verified state).
+  const [captchaVerified, setCaptchaVerified] = useState(false);
+
+  useEffect(() => {
+    // Auto-start if an initial token is provided from the landing page.
+    // The ref guard prevents double-firing since startSearch isn't memoized.
+    if (turnstileToken && connected && status === 'idle' && !autoStartedRef.current) {
+      autoStartedRef.current = true;
+      startSearch('', turnstileToken);
+      setCaptchaVerified(true);
+      // Consume router state so back-navigation doesn't re-trigger
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [turnstileToken, connected, status, startSearch, navigate, location.pathname]);
+
+  // Reset captchaVerified when WebSocket reconnects (new socket = fresh captcha state)
+  useEffect(() => {
+    if (!connected) {
+      setCaptchaVerified(false);
+    }
+  }, [connected]);
+
+  // Reset captchaVerified if the backend rejected our token
+  useEffect(() => {
+    const lastMsg = messages[messages.length - 1];
+    if (lastMsg?.sender === 'system' && lastMsg?.text?.includes('CAPTCHA')) {
+      setCaptchaVerified(false);
+    }
+  }, [messages]);
+
   const [input, setInput] = useState('');
   const [interestTags, setInterestTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
+  const [showEntryModal, setShowEntryModal] = useState(false);
+  const [pendingInterests, setPendingInterests] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [confirmStop, setConfirmStop] = useState(false);
   const [confirmSkip, setConfirmSkip] = useState(false);
@@ -176,6 +214,22 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
       removeTag(interestTags.length - 1);
     }
   };
+
+  const handleStartSearchClick = useCallback((interestsStr: string) => {
+    if (captchaVerified) {
+      // Backend socket already has captcha_verified=true, no token needed
+      startSearch(interestsStr);
+    } else {
+      setPendingInterests(interestsStr);
+      setShowEntryModal(true);
+    }
+  }, [captchaVerified, startSearch]);
+
+  const handleModalConfirm = useCallback((token: string) => {
+    setShowEntryModal(false);
+    startSearch(pendingInterests, token);
+    setCaptchaVerified(true);
+  }, [startSearch, pendingInterests]);
 
   const handleNext = () => {
     if (!confirmSkip) {
@@ -364,7 +418,7 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
                     </button>
                   )}
                   <button
-                    onClick={() => startSearch(interestTags.join(','))}
+                    onClick={() => handleStartSearchClick(interestTags.join(','))}
                     disabled={!connected}
                     className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-400 text-white font-bold rounded-xl shadow-lg shadow-indigo-600/20 active:scale-[0.98] transition-all"
                   >
@@ -410,6 +464,13 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
           reporterToken={sessionToken}
           messages={messages}
           onClose={() => setShowReport(false)}
+        />
+      )}
+
+      {showEntryModal && (
+        <EntryModal 
+          onClose={() => setShowEntryModal(false)}
+          onConfirm={handleModalConfirm}
         />
       )}
     </div>

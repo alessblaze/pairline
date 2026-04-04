@@ -1,17 +1,55 @@
-import { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useTextChat } from '../hooks/useTextChat';
 import { ThemeToggle } from './ThemeToggle';
 import { ReportDialog } from './ReportDialog';
+import { EntryModal } from './EntryModal';
 import DOMPurify from 'dompurify';
 
 export function TextChat({ wsUrl }: { wsUrl: string }) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const turnstileToken = location.state?.turnstileToken as string | undefined;
   const { connected, status, messages, startSearch, stopSearch, disconnect, sendMessage, reportPeerId, sessionId, sessionToken, peerTyping, sendTyping } = useTextChat(wsUrl);
+
+  const autoStartedRef = useRef(false);
+  // Mirrors the backend's captcha_verified socket flag.
+  // Once verified, subsequent searches on the same WS connection skip the modal.
+  // Resets when the WebSocket reconnects (new socket = new captcha_verified state).
+  const [captchaVerified, setCaptchaVerified] = useState(false);
+
+  useEffect(() => {
+    // Auto-start if an initial token is provided from the landing page.
+    // The ref guard prevents double-firing since startSearch isn't memoized.
+    if (turnstileToken && connected && status === 'idle' && !autoStartedRef.current) {
+      autoStartedRef.current = true;
+      startSearch('', turnstileToken);
+      setCaptchaVerified(true);
+      // Consume router state so back-navigation doesn't re-trigger
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [turnstileToken, connected, status, startSearch, navigate, location.pathname]);
+
+  // Reset captchaVerified when WebSocket reconnects (new socket = fresh captcha state)
+  useEffect(() => {
+    if (!connected) {
+      setCaptchaVerified(false);
+    }
+  }, [connected]);
+
+  // Reset captchaVerified if the backend rejected our token
+  useEffect(() => {
+    const lastMsg = messages[messages.length - 1];
+    if (lastMsg?.sender === 'system' && lastMsg?.text?.includes('CAPTCHA')) {
+      setCaptchaVerified(false);
+    }
+  }, [messages]);
 
   const [input, setInput] = useState('');
   const [interestTags, setInterestTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
+  const [showEntryModal, setShowEntryModal] = useState(false);
+  const [pendingInterests, setPendingInterests] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [confirmStop, setConfirmStop] = useState(false);
   const [showReport, setShowReport] = useState(false);
@@ -111,6 +149,22 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
       removeTag(interestTags.length - 1);
     }
   };
+
+  const handleStartSearchClick = useCallback((interestsStr: string) => {
+    if (captchaVerified) {
+      // Backend socket already has captcha_verified=true, no token needed
+      startSearch(interestsStr);
+    } else {
+      setPendingInterests(interestsStr);
+      setShowEntryModal(true);
+    }
+  }, [captchaVerified, startSearch]);
+
+  const handleModalConfirm = useCallback((token: string) => {
+    setShowEntryModal(false);
+    startSearch(pendingInterests, token);
+    setCaptchaVerified(true);
+  }, [startSearch, pendingInterests]);
 
   return (
     <div className="fixed inset-0 flex items-center justify-center p-2 sm:p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800">
@@ -273,7 +327,7 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
                 </button>
               )}
               <button
-                onClick={() => startSearch(interestTags.join(','))}
+                onClick={() => handleStartSearchClick(interestTags.join(','))}
                 disabled={!connected}
                 className="w-full py-3 sm:py-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 dark:disabled:bg-gray-600 disabled:text-gray-500 text-white font-bold rounded-xl transition-all text-sm sm:text-lg shadow-lg shadow-indigo-500/25 active:scale-[0.98]"
               >
@@ -347,6 +401,13 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
           reporterToken={sessionToken}
           messages={messages}
           onClose={() => setShowReport(false)}
+        />
+      )}
+
+      {showEntryModal && (
+        <EntryModal 
+          onClose={() => setShowEntryModal(false)}
+          onConfirm={handleModalConfirm}
         />
       )}
     </div>

@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ThemeToggle } from './ThemeToggle';
+import { EntryModal } from './EntryModal';
 import promoVideo from '../assets/promo.webm';
 import promoPoster from '../assets/promo-poster.webp';
 import promoImg from '../assets/promo.webp';
@@ -8,6 +10,20 @@ import albertImg from '../assets/aless.webp';
 
 export function LandingPage() {
   const navigate = useNavigate();
+  const [showModal, setShowModal] = useState(false);
+  const [targetRoute, setTargetRoute] = useState<'/text' | '/video' | null>(null);
+
+  const openModal = (route: '/text' | '/video') => {
+    setTargetRoute(route);
+    setShowModal(true);
+  };
+
+  const handleConfirm = (token: string) => {
+    if (targetRoute && token) {
+      navigate(targetRoute, { state: { turnstileToken: token } });
+      setShowModal(false);
+    }
+  };
 
   return (
     <div className="relative w-full min-h-screen flex flex-col overflow-x-hidden font-nunito bg-slate-50 dark:bg-slate-950 transition-colors duration-500">
@@ -133,7 +149,7 @@ export function LandingPage() {
           <div className="absolute top-[60%] sm:top-[65%] left-0 right-0 w-full flex flex-col items-center px-4">
             <div className="flex flex-col gap-3 sm:gap-5 justify-center items-center w-full max-w-3xl">
               <button
-                onClick={() => navigate('/text')}
+                onClick={() => openModal('/text')}
                 className="anime-button w-48 sm:w-72 inline-flex items-center justify-center gap-1.5 sm:gap-2 px-4 py-2 sm:px-10 sm:py-5 rounded-xl sm:rounded-2xl font-anime font-bold text-sm sm:text-xl"
               >
                 <svg className="w-4 h-4 sm:w-6 sm:h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
@@ -143,7 +159,7 @@ export function LandingPage() {
               </button>
 
               <button
-                onClick={() => navigate('/video')}
+                onClick={() => openModal('/video')}
                 className="anime-button-video text-gray-900 w-48 sm:w-72 inline-flex items-center justify-center gap-1.5 sm:gap-2 px-4 py-2 sm:px-10 sm:py-5 rounded-xl sm:rounded-2xl font-anime font-bold text-sm sm:text-xl"
               >
                 <svg className="w-4 h-4 sm:w-6 sm:h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
@@ -186,6 +202,14 @@ export function LandingPage() {
           </div>
         </div>
       </section>
+
+      {/* Entry Modal */}
+      {showModal && (
+        <EntryModal 
+          onClose={() => setShowModal(false)}
+          onConfirm={handleConfirm}
+        />
+      )}
     </div>
   );
 }

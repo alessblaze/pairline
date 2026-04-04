@@ -27,23 +27,29 @@ defmodule OmeglePhoenixWeb.RoomChannel do
   end
 
   @impl true
-  def handle_in("search", _payload, socket) do
+  def handle_in("search", %{"data" => data}, socket) when is_map(data) do
     case teardown_existing_session(socket) do
       {:error, reason, socket} ->
         {:reply, {:error, %{reason: reason}}, socket}
 
       {:ok, socket} ->
-        client_ip = socket.assigns[:client_ip] || "unknown"
-        preferences = build_preferences(socket, %{})
+        with_captcha_verified(socket, data, fn socket ->
+          preferences = build_preferences(socket, %{})
+          client_ip = socket.assigns[:client_ip] || "unknown"
 
-        case OmeglePhoenix.SessionManager.ip_ban_reason(client_ip) do
-          nil ->
-            create_and_queue_session(socket, client_ip, preferences, "searching")
+          case OmeglePhoenix.SessionManager.ip_ban_reason(client_ip) do
+            nil ->
+              create_and_queue_session(socket, client_ip, preferences, "searching")
 
-          reason ->
-            {:reply, {:error, %{type: "banned", data: %{reason: reason}}}, socket}
-        end
+            reason ->
+              {:reply, {:error, %{type: "banned", data: %{reason: reason}}}, socket}
+          end
+        end)
     end
+  end
+
+  def handle_in("search", _payload, socket) do
+    {:reply, {:error, %{reason: "Invalid search payload"}}, socket}
   end
 
   def handle_in("start", %{"data" => data}, socket) when is_map(data) do
@@ -52,16 +58,18 @@ defmodule OmeglePhoenixWeb.RoomChannel do
         {:reply, {:error, %{reason: reason}}, socket}
 
       {:ok, socket} ->
-        client_ip = socket.assigns[:client_ip] || "unknown"
-        preferences = build_preferences(socket, Map.get(data, "preferences", %{}))
+        with_captcha_verified(socket, data, fn socket ->
+          preferences = build_preferences(socket, Map.get(data, "preferences", %{}))
+          client_ip = socket.assigns[:client_ip] || "unknown"
 
-        case OmeglePhoenix.SessionManager.ip_ban_reason(client_ip) do
-          nil ->
-            create_and_queue_session(socket, client_ip, preferences, "connected")
+          case OmeglePhoenix.SessionManager.ip_ban_reason(client_ip) do
+            nil ->
+              create_and_queue_session(socket, client_ip, preferences, "connected")
 
-          reason ->
-            {:reply, {:error, %{type: "banned", data: %{reason: reason}}}, socket}
-        end
+            reason ->
+              {:reply, {:error, %{type: "banned", data: %{reason: reason}}}, socket}
+          end
+        end)
     end
   end
 
@@ -437,6 +445,25 @@ defmodule OmeglePhoenixWeb.RoomChannel do
 
   defp normalize_mode(mode, _default) when mode in ["lobby", "text", "video"], do: mode
   defp normalize_mode(_mode, default), do: default
+
+  # Shared CAPTCHA gate used by both "search" and "start" handlers.
+  # If the socket is already verified, skip the Cloudflare API call.
+  # Otherwise verify the token and persist the flag on success.
+  defp with_captcha_verified(socket, data, callback) do
+    if Map.get(socket.assigns, :captcha_verified, false) do
+      callback.(socket)
+    else
+      client_ip = socket.assigns[:client_ip] || "unknown"
+      token = Map.get(data, "token")
+
+      if OmeglePhoenix.Turnstile.verify(token, client_ip) do
+        socket = assign(socket, :captcha_verified, true)
+        callback.(socket)
+      else
+        {:reply, {:error, %{reason: "Invalid CAPTCHA"}}, socket}
+      end
+    end
+  end
 
   defp teardown_existing_session(socket) do
     if session_id = socket.assigns[:session_id] do
