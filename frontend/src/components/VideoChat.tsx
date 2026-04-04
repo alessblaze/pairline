@@ -78,6 +78,9 @@ const VideoChatInput = memo(function VideoChatInput({
           value={value}
           onChange={handleChange}
           placeholder="Type a message…"
+          autoComplete="off"
+          autoCorrect="off"
+          spellCheck={false}
           className="flex-1 px-4 py-2.5 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-full text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
         />
         <button type="submit" disabled={!value.trim()} className="p-2.5 bg-indigo-600 text-white rounded-full">
@@ -468,6 +471,9 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
                       onKeyDown={handleTagInputKeyDown}
                       onBlur={addTag}
                       maxLength={30}
+                      autoComplete="off"
+                      autoCorrect="off"
+                      spellCheck={false}
                       placeholder={interestTags.length === 0 ? "e.g. coding, music..." : ""}
                       className="flex-1 min-w-[120px] bg-transparent border-none outline-none text-[16px] font-medium dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500"
                     />

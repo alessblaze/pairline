@@ -74,6 +74,9 @@ const ChatInput = memo(function ChatInput({
           onChange={handleChange}
           placeholder="Type a message..."
           maxLength={2000}
+          autoComplete="off"
+          autoCorrect="off"
+          spellCheck={false}
           className="flex-1 px-3 py-2 sm:px-4 sm:py-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-xl text-base text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
           autoFocus
         />
@@ -377,6 +380,9 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
                     onKeyDown={handleTagInputKeyDown}
                     onBlur={addTag}
                     maxLength={30}
+                    autoComplete="off"
+                    autoCorrect="off"
+                    spellCheck={false}
                     placeholder={interestTags.length === 0 ? "e.g. coding, music, movies..." : ""}
                     className="flex-1 min-w-[120px] bg-transparent border-none outline-none text-[16px] font-medium dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500"
                   />
