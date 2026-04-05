@@ -695,7 +695,14 @@ defmodule OmeglePhoenixWeb.RoomChannel do
             {:error, %{reason: "Partner changed"}}
 
           true ->
-            fun.()
+            case OmeglePhoenix.SessionManager.get_session(expected_partner_id) do
+              {:ok, partner_session}
+              when partner_session.partner_id == session_id and partner_session.status == :matched ->
+                fun.()
+
+              _ ->
+                {:error, %{reason: "Partner changed"}}
+            end
         end
 
       _ ->

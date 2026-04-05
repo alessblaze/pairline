@@ -82,6 +82,9 @@ defmodule OmeglePhoenix.SessionLock do
             {:error, :locked}
         end
 
+      {:skip, :no_route} ->
+        acquire_all(rest, token, acquired)
+
       {:error, _reason} ->
         release_all(acquired, token)
         {:error, :locked}
@@ -150,7 +153,9 @@ defmodule OmeglePhoenix.SessionLock do
   defp lock_key(session_id) do
     case OmeglePhoenix.SessionManager.get_session_route(session_id) do
       {:ok, route} -> {:ok, OmeglePhoenix.RedisKeys.session_lock_key(session_id, route)}
-      _ -> {:error, :no_route}
+      {:error, :not_found} -> {:skip, :no_route}
+      {:error, :invalid_locator} -> {:skip, :no_route}
+      {:error, reason} -> {:error, reason}
     end
   end
 end

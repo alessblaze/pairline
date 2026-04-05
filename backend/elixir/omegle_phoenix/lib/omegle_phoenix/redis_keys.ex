@@ -154,22 +154,14 @@ defmodule OmeglePhoenix.RedisKeys do
 
   def initial_shard(mode, preferences, session_id)
       when is_binary(session_id) and is_map(preferences) do
-    if blank_interests?(preferences) do
-      shared_random_shard(mode)
-    else
-      primary_shard(mode, session_id)
-    end
+    _ = preferences
+    _ = session_id
+    shared_matchmaking_shard(mode)
   end
 
   def overflow_shard(mode, shard) do
-    shard_count = OmeglePhoenix.Config.get_match_shard_count()
-
-    if shard_count <= 2 do
-      rem(shard + 1, shard_count)
-    else
-      base = :erlang.phash2({normalize_mode(mode), "overflow"}, shard_count - 1) + 1
-      rem(shard + if(base == 1, do: 2, else: base), shard_count)
-    end
+    _ = shard
+    shared_matchmaking_shard(mode)
   end
 
   def normalize_mode(mode) when mode in @allowed_modes, do: mode
@@ -194,16 +186,8 @@ defmodule OmeglePhoenix.RedisKeys do
     end
   end
 
-  defp shared_random_shard(mode) do
-    :erlang.phash2({normalize_mode(mode), :shared_random}, OmeglePhoenix.Config.get_match_shard_count())
-  end
-
-  defp blank_interests?(preferences) when is_map(preferences) do
-    preferences
-    |> Map.get("interests", Map.get(preferences, :interests, ""))
-    |> to_string()
-    |> String.trim()
-    |> Kernel.==("")
+  defp shared_matchmaking_shard(mode) do
+    :erlang.phash2({normalize_mode(mode), :shared_matchmaking}, OmeglePhoenix.Config.get_match_shard_count())
   end
 
   defp normalize_shard(shard, _mode) when is_integer(shard) and shard >= 0 do

@@ -37,21 +37,9 @@ defmodule OmeglePhoenix.Matchmaker do
     normalized_preferences = normalize_preferences(preferences)
 
     with {:ok, route} <- OmeglePhoenix.SessionManager.get_session_route(session_id) do
-      queue_keys = queue_keys_for_session(session_id, normalized_preferences, route)
-      membership_key = session_queue_key(session_id, route)
-      registry_key = queue_registry_key(route)
+      queue_keys = initial_queue_keys_for_session(session_id, normalized_preferences, route)
 
-      commands =
-        Enum.flat_map(queue_keys, fn queue_key ->
-          [
-            ["ZADD", queue_key, to_string(timestamp), session_id],
-            ["SADD", registry_key, queue_key],
-            ["SADD", membership_key, queue_key]
-          ]
-        end) ++
-          [["EXPIRE", membership_key, Integer.to_string(OmeglePhoenix.Config.get_session_ttl())]]
-
-      case OmeglePhoenix.Redis.pipeline(commands) do
+      case enqueue_queue_keys(session_id, route, queue_keys, timestamp) do
         {:ok, _result} ->
           schedule_local_match_attempts(queue_keys)
           emit_match_event(queue_keys, "join", session_id)
@@ -276,11 +264,8 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   def handle_info({@delayed_match_event_message, queue_keys, session_id, phase}, state) do
-    if phase == "overflow_wait_elapsed" do
-      maybe_shift_to_overflow_shard(session_id)
-    else
-      emit_match_event(queue_keys, phase, session_id)
-    end
+    _ = queue_keys
+    schedule_fallback_phase(session_id, phase)
 
     {:noreply, state}
   end
@@ -688,15 +673,28 @@ defmodule OmeglePhoenix.Matchmaker do
   defp normalize_mode(mode, _default) when mode in ["lobby", "text", "video"], do: mode
   defp normalize_mode(_mode, default), do: default
 
-  defp queue_keys_for_session(session_id, preferences, route) do
+  defp initial_queue_keys_for_session(session_id, preferences, route) do
     mode = route.mode
     shard = route.shard
     interest_buckets = interest_buckets(preferences)
 
-    strict_bucket_keys =
+    if interest_buckets == [] do
+      [shared_random_queue_key(mode, shard)]
+    else
       Enum.flat_map(interest_buckets, fn bucket ->
         strict_bucket_queue_keys(mode, shard, bucket, session_id)
       end)
+      |> Enum.uniq()
+    end
+  end
+
+  defp relaxed_fallback_queue_keys(session_id, preferences, route) do
+    mode = route.mode
+    shard = route.shard
+
+    interest_buckets =
+      preferences
+      |> interest_buckets()
 
     relaxed_bucket_keys =
       interest_buckets
@@ -706,14 +704,13 @@ defmodule OmeglePhoenix.Matchmaker do
         relaxed_bucket_queue_keys(mode, shard, family, session_id)
       end)
 
-    random_keys =
-      if strict_bucket_keys == [] do
-        [shared_random_queue_key(mode, shard)]
-      else
-        [shared_random_queue_key(mode, shard) | random_queue_keys(mode, shard, session_id)]
-      end
+    (relaxed_bucket_keys ++ [shared_random_queue_key(mode, shard)])
+    |> Enum.uniq()
+  end
 
-    (strict_bucket_keys ++ relaxed_bucket_keys ++ random_keys)
+  defp overflow_fallback_queue_keys(session_id, preferences, route) do
+    _ = preferences
+    [random_queue_key(route.mode, route.shard) | random_queue_keys(route.mode, route.shard, session_id)]
     |> Enum.uniq()
   end
 
@@ -829,26 +826,36 @@ defmodule OmeglePhoenix.Matchmaker do
     [random_queue_key(mode, shard)]
   end
 
-  defp maybe_shift_to_overflow_shard(session_id) do
+  defp schedule_fallback_phase(session_id, phase) do
     OmeglePhoenix.SessionLock.with_lock(session_id, fn ->
       with {:ok, session} <- OmeglePhoenix.SessionManager.get_session(session_id),
-           true <- pairable_session?(session) do
-        mode = OmeglePhoenix.RedisKeys.mode(session.preferences)
-        next_shard = overflow_shard(mode, session.redis_shard)
+           true <- pairable_session?(session),
+           {:ok, route} <- OmeglePhoenix.SessionManager.get_session_route(session_id) do
+        queue_keys =
+          case phase do
+            "relaxed_wait_elapsed" ->
+              relaxed_fallback_queue_keys(session_id, session.preferences, route)
 
-        if next_shard == session.redis_shard do
-          :ok
-        else
-          _ = leave_queue(session_id)
-
-          case OmeglePhoenix.SessionManager.move_session_shard(session_id, next_shard) do
-            {:ok, updated_session} ->
-              _ = join_queue(session_id, updated_session.preferences)
-              :ok
+            "overflow_wait_elapsed" ->
+              overflow_fallback_queue_keys(session_id, session.preferences, route)
 
             _ ->
-              _ = join_queue(session_id, session.preferences)
+              []
+          end
+
+        if queue_keys == [] do
+          :ok
+        else
+          timestamp = System.system_time(:millisecond)
+
+          case enqueue_queue_keys(session_id, route, queue_keys, timestamp) do
+            {:ok, _result} ->
+              schedule_local_match_attempts(queue_keys)
+              emit_match_event(queue_keys, phase, session_id)
               :ok
+
+            error ->
+              error
           end
         end
       else
@@ -929,13 +936,28 @@ defmodule OmeglePhoenix.Matchmaker do
   defp shared_random_queue_key(_mode, shard),
     do: OmeglePhoenix.RedisKeys.shared_random_queue_key("text", shard)
 
-  defp overflow_shard(mode, shard), do: OmeglePhoenix.RedisKeys.overflow_shard(mode, shard)
-
   defp session_queue_key(session_id, route),
     do: OmeglePhoenix.RedisKeys.session_queue_key(session_id, route)
 
   defp queue_registry_key(route),
     do: OmeglePhoenix.RedisKeys.queue_registry_key(route.mode, route.shard)
+
+  defp enqueue_queue_keys(session_id, route, queue_keys, timestamp) do
+    membership_key = session_queue_key(session_id, route)
+    registry_key = queue_registry_key(route)
+
+    commands =
+      Enum.flat_map(queue_keys, fn queue_key ->
+        [
+          ["ZADD", queue_key, to_string(timestamp), session_id],
+          ["SADD", registry_key, queue_key],
+          ["SADD", membership_key, queue_key]
+        ]
+      end) ++
+        [["EXPIRE", membership_key, Integer.to_string(OmeglePhoenix.Config.get_session_ttl())]]
+
+    OmeglePhoenix.Redis.pipeline(commands)
+  end
 
   defp queue_route(queue_key) do
     case Regex.run(~r/\{(lobby|text|video):(\d+)\}/, queue_key) do

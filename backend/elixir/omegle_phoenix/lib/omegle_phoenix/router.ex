@@ -108,7 +108,7 @@ defmodule OmeglePhoenix.Router do
 
   @impl true
   def handle_info({:router_remote, session_id, message}, state) do
-    dispatch_local(session_id, message)
+    _ = dispatch_local_if_owned(session_id, message)
     {:noreply, state}
   end
 
@@ -210,15 +210,23 @@ defmodule OmeglePhoenix.Router do
   end
 
   defp dispatch_local(session_id, message) do
-    Logger.debug(
-      "Router dispatching locally for session: #{session_id}, message: #{inspect(message)}"
-    )
+    case local_owner_pid(session_id) do
+      nil ->
+        false
 
-    Phoenix.PubSub.local_broadcast(
-      OmeglePhoenix.PubSub,
-      topic(session_id),
-      message
-    )
+      pid ->
+        if Process.alive?(pid) do
+          Logger.debug(
+            "Router dispatching directly to owner for session: #{session_id}, message: #{inspect(message)}"
+          )
+
+          send(pid, message)
+          true
+        else
+          :ets.delete(@owner_table, session_id)
+          false
+        end
+    end
   end
 
   defp dispatch_remote(session_id, %{node: owner_node} = owner, message) do
@@ -248,19 +256,7 @@ defmodule OmeglePhoenix.Router do
   end
 
   defp dispatch_local_if_owned(session_id, message) do
-    case local_owner_pid(session_id) do
-      nil ->
-        false
-
-      pid ->
-        if Process.alive?(pid) do
-          dispatch_local(session_id, message)
-          true
-        else
-          :ets.delete(@owner_table, session_id)
-          false
-        end
-    end
+    dispatch_local(session_id, message)
   end
 
   defp track_local_owner(session_id, pid, token) do
