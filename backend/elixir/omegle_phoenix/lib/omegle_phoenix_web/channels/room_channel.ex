@@ -691,20 +691,26 @@ defmodule OmeglePhoenixWeb.RoomChannel do
 
     case OmeglePhoenix.SessionManager.create_session(session_id, client_ip, preferences) do
       {:ok, session} ->
-        OmeglePhoenix.Router.register(session_id, self())
-
-        case OmeglePhoenix.Matchmaker.join_queue(session_id, preferences) do
+        case OmeglePhoenix.Router.register(session_id, self()) do
           :ok ->
-            {:reply,
-             {:ok, %{type: connected_type, session_id: session_id, session_token: session.token}},
-             socket
-             |> assign(:session_id, session_id)
-             |> assign(:partner_id, nil)}
+            case OmeglePhoenix.Matchmaker.join_queue(session_id, preferences) do
+              :ok ->
+                {:reply,
+                 {:ok,
+                  %{type: connected_type, session_id: session_id, session_token: session.token}},
+                 socket
+                 |> assign(:session_id, session_id)
+                 |> assign(:partner_id, nil)}
+
+              {:error, _reason} ->
+                OmeglePhoenix.Router.unregister(session_id)
+                _ = OmeglePhoenix.SessionManager.delete_session(session_id)
+                {:reply, {:error, %{reason: "Matchmaking unavailable"}}, socket}
+            end
 
           {:error, _reason} ->
-            OmeglePhoenix.Router.unregister(session_id)
             _ = OmeglePhoenix.SessionManager.delete_session(session_id)
-            {:reply, {:error, %{reason: "Matchmaking unavailable"}}, socket}
+            {:reply, {:error, %{reason: "Session routing unavailable"}}, socket}
         end
 
       {:error, _reason} ->

@@ -28,7 +28,16 @@ defmodule OmeglePhoenix.Router do
       token = owner_token()
       :ok = Phoenix.PubSub.subscribe(OmeglePhoenix.PubSub, topic(session_id))
       track_local_owner(session_id, pid, token)
-      persist_owner(session_id, build_local_owner_record(token))
+
+      case persist_owner(session_id, build_local_owner_record(token)) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Phoenix.PubSub.unsubscribe(OmeglePhoenix.PubSub, topic(session_id))
+          untrack_local_owner(session_id, pid)
+          {:error, reason}
+      end
     end
   end
 
@@ -217,7 +226,7 @@ defmodule OmeglePhoenix.Router do
             {:ok, owner}
 
           :error ->
-            _ = OmeglePhoenix.Redis.command(["DEL", owner_key(session_id)])
+            _ = compare_and_delete_owner_value(session_id, encoded_owner)
             {:error, :invalid_owner}
         end
 
@@ -441,27 +450,44 @@ defmodule OmeglePhoenix.Router do
   defp topic(session_id), do: "session:" <> session_id
 
   defp compare_and_delete_owner(session_id, expected_owner) do
+    compare_and_delete_owner_value(session_id, encode_owner_record(expected_owner))
+  end
+
+  defp compare_and_delete_owner_value(session_id, expected_owner_value)
+       when is_binary(expected_owner_value) do
     _ =
       OmeglePhoenix.Redis.command([
         "EVAL",
         @compare_delete_script,
         "1",
         owner_key(session_id),
-        encode_owner_record(expected_owner)
+        expected_owner_value
       ])
 
     :ok
   end
 
   defp persist_owner(session_id, owner) do
-    OmeglePhoenix.Redis.command([
-      "SETEX",
-      owner_key(session_id),
-      Integer.to_string(OmeglePhoenix.Config.get_router_owner_ttl_seconds()),
-      encode_owner_record(owner)
-    ])
+    case OmeglePhoenix.Redis.command([
+           "SETEX",
+           owner_key(session_id),
+           Integer.to_string(OmeglePhoenix.Config.get_router_owner_ttl_seconds()),
+           encode_owner_record(owner)
+         ]) do
+      {:ok, "OK"} ->
+        :ok
 
-    :ok
+      {:error, reason} = error ->
+        Logger.warning("Router failed to persist owner for #{session_id}: #{inspect(reason)}")
+        error
+
+      other ->
+        Logger.warning(
+          "Router received unexpected owner persist result for #{session_id}: #{inspect(other)}"
+        )
+
+        {:error, :unexpected_result}
+    end
   end
 
   defp build_local_owner_record(token) when is_binary(token) do
