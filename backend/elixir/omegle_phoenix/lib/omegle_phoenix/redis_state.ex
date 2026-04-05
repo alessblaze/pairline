@@ -425,7 +425,19 @@ defmodule OmeglePhoenix.RedisState do
     exec(command, opts)
   end
 
-  def cleanup_orphaned_session(session_id, ip \\ nil, opts \\ []) do
+  def cleanup_orphaned_session(session_id, ip \\ nil, report_grace_or_opts \\ nil, opts \\ [])
+
+  def cleanup_orphaned_session(session_id, ip, opts, [])
+      when is_list(opts) or is_nil(opts) do
+    cleanup_orphaned_session(
+      session_id,
+      ip,
+      OmeglePhoenix.Config.get_report_grace_seconds(),
+      opts || []
+    )
+  end
+
+  def cleanup_orphaned_session(session_id, ip, report_grace_seconds, opts) do
     ip_value =
       case ip do
         nil ->
@@ -438,7 +450,7 @@ defmodule OmeglePhoenix.RedisState do
           value
       end
 
-    delete_session(session_id, ip_value, opts)
+    delete_session(session_id, ip_value, report_grace_seconds, opts)
   end
 
   defp exec(command, opts) do

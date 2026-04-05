@@ -401,7 +401,28 @@ defmodule OmeglePhoenix.Matchmaker do
     end
   end
 
-  defp find_compatible_partner(_queue_key, _sid1, _session1, _wait1, [], _matched), do: nil
+  defp find_compatible_partner(
+         queue_key,
+         sid1,
+         session1,
+         wait1,
+         candidates,
+         matched
+       ) do
+    find_compatible_partner(queue_key, sid1, session1, wait1, candidates, matched, true) ||
+      find_compatible_partner(queue_key, sid1, session1, wait1, candidates, matched, false)
+  end
+
+  defp find_compatible_partner(
+         _queue_key,
+         _sid1,
+         _session1,
+         _wait1,
+         [],
+         _matched,
+         _prefer_fresh_partner
+       ),
+       do: nil
 
   defp find_compatible_partner(
          queue_key,
@@ -409,21 +430,50 @@ defmodule OmeglePhoenix.Matchmaker do
          session1,
          wait1,
          [{sid2, session2, wait2} | rest],
-         matched
+         matched,
+         prefer_fresh_partner
        ) do
     if MapSet.member?(matched, sid2) do
-      find_compatible_partner(queue_key, sid1, session1, wait1, rest, matched)
+      find_compatible_partner(
+        queue_key,
+        sid1,
+        session1,
+        wait1,
+        rest,
+        matched,
+        prefer_fresh_partner
+      )
     else
-      if session1.last_partner_id == sid2 or session2.last_partner_id == sid1 do
-        find_compatible_partner(queue_key, sid1, session1, wait1, rest, matched)
+      if prefer_fresh_partner and recent_partner?(session1, sid1, session2, sid2) do
+        find_compatible_partner(
+          queue_key,
+          sid1,
+          session1,
+          wait1,
+          rest,
+          matched,
+          prefer_fresh_partner
+        )
       else
         if compatible?(queue_key, session1, wait1, session2, wait2) do
           {sid2, session2, rest}
         else
-          find_compatible_partner(queue_key, sid1, session1, wait1, rest, matched)
+          find_compatible_partner(
+            queue_key,
+            sid1,
+            session1,
+            wait1,
+            rest,
+            matched,
+            prefer_fresh_partner
+          )
         end
       end
     end
+  end
+
+  defp recent_partner?(session1, sid1, session2, sid2) do
+    session1.last_partner_id == sid2 or session2.last_partner_id == sid1
   end
 
   defp pair_users(session_id1, session_id2, strategy) do
@@ -966,7 +1016,7 @@ defmodule OmeglePhoenix.Matchmaker do
         stop_renewer(renewer)
       end
     else
-      :ok
+      :busy
     end
   end
 
@@ -1101,7 +1151,13 @@ defmodule OmeglePhoenix.Matchmaker do
 
   defp run_local_match_attempt(queue_key) do
     try do
-      do_matching(queue_key)
+      case do_matching(queue_key) do
+        :busy ->
+          schedule_local_match_attempts([queue_key])
+
+        _ ->
+          :ok
+      end
     rescue
       error ->
         Logger.error("Immediate matchmaking attempt failed for #{queue_key}: #{inspect(error)}")
