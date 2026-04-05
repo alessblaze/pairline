@@ -19,6 +19,7 @@ defmodule OmeglePhoenixWeb.RoomChannel do
        partner_id: nil,
        match_generation: nil,
        partner_route: nil,
+       partner_owner_node: nil,
        msg_count: 0,
        window_start: System.system_time(:millisecond)
      )}
@@ -133,6 +134,7 @@ defmodule OmeglePhoenixWeb.RoomChannel do
     partner_id = socket.assigns[:partner_id]
     match_generation = socket.assigns[:match_generation]
     partner_route = socket.assigns[:partner_route]
+    partner_owner_node = socket.assigns[:partner_owner_node]
 
     if is_nil(session_id) do
       {:reply, {:error, %{reason: "No active session"}}, socket}
@@ -159,7 +161,8 @@ defmodule OmeglePhoenixWeb.RoomChannel do
                   match_generation: match_generation,
                   data: %{content: content}
                 },
-                route_hint: partner_route
+                route_hint: partner_route,
+                owner_hint: partner_owner_node
               )
 
               :telemetry.execute([:omegle_phoenix, :room, :message_sent], %{count: 1}, %{
@@ -188,6 +191,7 @@ defmodule OmeglePhoenixWeb.RoomChannel do
     partner_id = socket.assigns[:partner_id]
     match_generation = socket.assigns[:match_generation]
     partner_route = socket.assigns[:partner_route]
+    partner_owner_node = socket.assigns[:partner_owner_node]
 
     if is_nil(session_id) or is_nil(partner_id) do
       {:noreply, socket}
@@ -213,7 +217,8 @@ defmodule OmeglePhoenixWeb.RoomChannel do
                   match_generation: match_generation,
                   data: %{typing: is_typing}
                 },
-                route_hint: partner_route
+                route_hint: partner_route,
+                owner_hint: partner_owner_node
               )
 
               :telemetry.execute([:omegle_phoenix, :room, :typing_sent], %{count: 1}, %{
@@ -512,6 +517,21 @@ defmodule OmeglePhoenixWeb.RoomChannel do
   end
 
   def handle_info(
+        {:router_match, partner_session_id, common_interests, match_generation, partner_route,
+         partner_owner_node},
+        socket
+      ) do
+    push(socket, "match", %{peer_id: partner_session_id, common_interests: common_interests})
+
+    {:noreply,
+     socket
+     |> assign(:partner_id, partner_session_id)
+     |> assign(:match_generation, match_generation)
+     |> assign(:partner_route, normalize_partner_route(partner_route))
+     |> assign(:partner_owner_node, normalize_partner_owner_node(partner_owner_node))}
+  end
+
+  def handle_info(
         {:router_match, partner_session_id, common_interests, match_generation, partner_route},
         socket
       ) do
@@ -521,12 +541,17 @@ defmodule OmeglePhoenixWeb.RoomChannel do
      socket
      |> assign(:partner_id, partner_session_id)
      |> assign(:match_generation, match_generation)
-     |> assign(:partner_route, normalize_partner_route(partner_route))}
+     |> assign(:partner_route, normalize_partner_route(partner_route))
+     |> assign(:partner_owner_node, nil)}
   end
 
   def handle_info({:router_match, partner_session_id, common_interests}, socket) do
     push(socket, "match", %{peer_id: partner_session_id, common_interests: common_interests})
-    {:noreply, clear_match_assigns(socket) |> assign(:partner_id, partner_session_id)}
+
+    {:noreply,
+     clear_match_assigns(socket)
+     |> assign(:partner_id, partner_session_id)
+     |> assign(:partner_owner_node, nil)}
   end
 
   def handle_info(
@@ -749,6 +774,7 @@ defmodule OmeglePhoenixWeb.RoomChannel do
     |> assign(:partner_id, nil)
     |> assign(:match_generation, nil)
     |> assign(:partner_route, nil)
+    |> assign(:partner_owner_node, nil)
   end
 
   defp current_match_message?(socket, from, generation) do
@@ -772,6 +798,11 @@ defmodule OmeglePhoenixWeb.RoomChannel do
   end
 
   defp normalize_partner_route(_route), do: nil
+
+  defp normalize_partner_owner_node(owner_node) when is_binary(owner_node) and byte_size(owner_node) > 0,
+    do: owner_node
+
+  defp normalize_partner_owner_node(_owner_node), do: nil
 
   defp check_rate_limit(socket) do
     now = System.system_time(:millisecond)

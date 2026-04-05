@@ -74,8 +74,28 @@ defmodule OmeglePhoenix.Router do
     route(session_id, {:router_message, message}, opts)
   end
 
-  def notify_match(session_id, partner_session_id, common_interests \\ [], match_generation \\ nil, route_hint \\ nil) do
-    route(session_id, {:router_match, partner_session_id, common_interests, match_generation, route_hint})
+  def notify_match(
+        session_id,
+        partner_session_id,
+        common_interests \\ [],
+        match_generation \\ nil,
+        route_hint \\ nil,
+        owner_hint \\ nil
+      ) do
+    route(
+      session_id,
+      {:router_match, partner_session_id, common_interests, match_generation, route_hint,
+       owner_hint}
+    )
+  end
+
+  def owner_node(session_id, opts \\ []) when is_binary(session_id) do
+    case owner_record(session_id, opts) do
+      {:ok, %{node: owner_node}} when is_binary(owner_node) -> {:ok, owner_node}
+      {:ok, nil} -> {:error, :not_found}
+      {:error, reason} -> {:error, reason}
+      _ -> {:error, :not_found}
+    end
   end
 
   def notify_disconnect(session_id, reason) do
@@ -108,7 +128,7 @@ defmodule OmeglePhoenix.Router do
 
   @impl true
   def handle_info({:router_remote, session_id, message}, state) do
-    _ = dispatch_local_if_owned(session_id, message)
+    _ = dispatch_local_if_owned(session_id, message) || forward_remote_if_needed(session_id, message)
     {:noreply, state}
   end
 
@@ -169,30 +189,16 @@ defmodule OmeglePhoenix.Router do
   def terminate(_reason, _state), do: :ok
 
   defp route(session_id, message, opts \\ []) do
-    current_node = Atom.to_string(Node.self())
+    if not dispatch_local_if_owned(session_id, message) do
+      current_node = Atom.to_string(Node.self())
 
-    case owner_record(session_id, opts) do
-      {:ok, nil} ->
-        if not dispatch_local_if_owned(session_id, message) do
-          maybe_cleanup_stale_session(session_id)
-        end
+      case owner_hint_record(opts, current_node) do
+        {:ok, owner} ->
+          dispatch_remote(session_id, owner, message)
 
-      {:ok, %{node: owner_node} = owner} when owner_node == current_node ->
-        if not dispatch_local_if_owned(session_id, message) do
-          Logger.warning("Router cleared stale local owner for #{session_id}")
-          compare_and_delete_owner(session_id, owner)
-          maybe_cleanup_stale_session(session_id)
-        end
-
-      {:ok, owner} ->
-        dispatch_remote(session_id, owner, message)
-
-      {:error, reason} ->
-        Logger.warning("Router owner lookup failed for #{session_id}: #{inspect(reason)}")
-
-        if not dispatch_local_if_owned(session_id, message) do
-          maybe_cleanup_stale_session(session_id)
-        end
+        :no_hint ->
+          route_via_owner_record(session_id, message, opts, current_node)
+      end
     end
   end
 
@@ -258,6 +264,53 @@ defmodule OmeglePhoenix.Router do
 
         compare_and_delete_owner(session_id, owner)
         dispatch_local_if_owned(session_id, message)
+    end
+  end
+
+  defp route_via_owner_record(session_id, message, opts, current_node) do
+    case owner_record(session_id, opts) do
+      {:ok, nil} ->
+        maybe_cleanup_stale_session(session_id)
+
+      {:ok, %{node: owner_node} = owner} when owner_node == current_node ->
+        Logger.warning("Router cleared stale local owner for #{session_id}")
+        compare_and_delete_owner(session_id, owner)
+        maybe_cleanup_stale_session(session_id)
+
+      {:ok, owner} ->
+        dispatch_remote(session_id, owner, message)
+
+      {:error, reason} ->
+        Logger.warning("Router owner lookup failed for #{session_id}: #{inspect(reason)}")
+        maybe_cleanup_stale_session(session_id)
+    end
+  end
+
+  defp forward_remote_if_needed(session_id, message) do
+    current_node = Atom.to_string(Node.self())
+
+    case owner_record(session_id, []) do
+      {:ok, %{node: owner_node} = owner} when owner_node != current_node ->
+        dispatch_remote(session_id, owner, message)
+        true
+
+      {:ok, %{node: owner_node} = owner} when owner_node == current_node ->
+        Logger.warning("Router cleared stale local owner for #{session_id} after remote dispatch")
+        compare_and_delete_owner(session_id, owner)
+        maybe_cleanup_stale_session(session_id)
+        false
+
+      {:ok, nil} ->
+        maybe_cleanup_stale_session(session_id)
+        false
+
+      {:error, reason} ->
+        Logger.warning(
+          "Router remote fallback owner lookup failed for #{session_id}: #{inspect(reason)}"
+        )
+
+        maybe_cleanup_stale_session(session_id)
+        false
     end
   end
 
@@ -388,6 +441,17 @@ defmodule OmeglePhoenix.Router do
 
   defp build_local_owner_record(token) when is_binary(token) do
     %{node: Atom.to_string(Node.self()), token: token}
+  end
+
+  defp owner_hint_record(opts, current_node) do
+    case Keyword.get(opts, :owner_hint) do
+      owner_node when is_binary(owner_node) and byte_size(owner_node) > 0 and
+                        owner_node != current_node ->
+        {:ok, %{node: owner_node}}
+
+      _ ->
+        :no_hint
+    end
   end
 
   defp owner_key(session_id, opts) do

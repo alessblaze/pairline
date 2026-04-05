@@ -511,6 +511,9 @@ defmodule OmeglePhoenix.Matchmaker do
                 shard: updated_session2.redis_shard
               }
 
+              owner_node1 = owner_node_hint(session_id1, updated_route1)
+              owner_node2 = owner_node_hint(session_id2, updated_route2)
+
               match_generation = updated_session1.match_generation || updated_session2.match_generation
 
               OmeglePhoenix.Router.notify_match(
@@ -518,7 +521,8 @@ defmodule OmeglePhoenix.Matchmaker do
                 session_id2,
                 common_interests,
                 match_generation,
-                updated_route2
+                updated_route2,
+                owner_node2
               )
 
               OmeglePhoenix.Router.notify_match(
@@ -526,7 +530,8 @@ defmodule OmeglePhoenix.Matchmaker do
                 session_id1,
                 common_interests,
                 match_generation,
-                updated_route1
+                updated_route1,
+                owner_node1
               )
 
               :telemetry.execute(
@@ -584,6 +589,13 @@ defmodule OmeglePhoenix.Matchmaker do
 
   defp pairable_session?(session) do
     session.status == :waiting and is_nil(session.partner_id)
+  end
+
+  defp owner_node_hint(session_id, route) do
+    case OmeglePhoenix.Router.owner_node(session_id, route_hint: route) do
+      {:ok, owner_node} -> owner_node
+      _ -> nil
+    end
   end
 
   defp queue_ready_session?(session) do

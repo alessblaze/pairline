@@ -45,9 +45,7 @@ defmodule OmeglePhoenix.Redis do
   def mget(keys, opts) when is_list(keys) do
     case OmeglePhoenix.Config.get_redis_mode() do
       :cluster ->
-        keys
-        |> Enum.map(fn key -> command(["GET", key], opts) end)
-        |> gather_cluster_results()
+        cluster_mget(keys, opts)
 
       :standalone ->
         command(["MGET" | keys], opts)
@@ -79,7 +77,9 @@ defmodule OmeglePhoenix.Redis do
             {Registry, keys: :unique, name: @registry}
           ] ++
             Enum.map(0..(pool_size - 1), fn index ->
-              Supervisor.child_spec({Connection, [name: via(index)]}, id: {:redis_connection, index})
+              Supervisor.child_spec({Connection, [name: via(index)]},
+                id: {:redis_connection, index}
+              )
             end) ++
             [AdminSubscriber]
       end
@@ -91,7 +91,12 @@ defmodule OmeglePhoenix.Redis do
     command = normalize_command(cmd)
     route_key = command_route_key(command)
 
-    case RedisCluster.Cluster.command(cluster_config(), command, route_key, cluster_request_opts(opts)) do
+    case RedisCluster.Cluster.command(
+           cluster_config(),
+           command,
+           route_key,
+           cluster_request_opts(opts)
+         ) do
       {:error, reason} -> {:error, reason}
       result -> {:ok, result}
     end
@@ -102,9 +107,7 @@ defmodule OmeglePhoenix.Redis do
 
     case pipeline_route_key(normalized) do
       {:ok, :fallback} ->
-        normalized
-        |> Enum.map(&cluster_command(&1, opts))
-        |> gather_cluster_results()
+        cluster_pipeline_fallback(normalized, opts)
 
       {:ok, route_key} ->
         case RedisCluster.Cluster.pipeline(
@@ -117,6 +120,74 @@ defmodule OmeglePhoenix.Redis do
           result -> {:ok, result}
         end
     end
+  end
+
+  defp cluster_mget(keys, opts) do
+    keys
+    |> Enum.with_index()
+    |> Enum.group_by(fn {key, _index} -> slot_for_key(key) end)
+    |> run_cluster_groups(opts, fn entries ->
+      route_key = entries |> hd() |> elem(0)
+      commands = Enum.map(entries, fn {key, _index} -> ["GET", key] end)
+
+      case RedisCluster.Cluster.pipeline(
+             cluster_config(),
+             commands,
+             route_key,
+             cluster_request_opts(opts)
+           ) do
+        {:error, reason} ->
+          {:error, reason}
+
+        results ->
+          indexed_results =
+            entries
+            |> Enum.map(&elem(&1, 1))
+            |> Enum.zip(results)
+
+          {:ok, indexed_results}
+      end
+    end)
+    |> assemble_indexed_results(length(keys))
+  end
+
+  defp cluster_pipeline_fallback(commands, opts) do
+    commands
+    |> Enum.with_index()
+    |> Enum.group_by(fn {command, _index} ->
+      case command_route_key(command) do
+        :any -> :any
+        route_key -> slot_for_key(route_key)
+      end
+    end)
+    |> run_cluster_groups(opts, fn entries ->
+      route_key =
+        case hd(entries) |> elem(0) |> command_route_key() do
+          :any -> :any
+          value -> value
+        end
+
+      grouped_commands = Enum.map(entries, fn {command, _index} -> command end)
+
+      case RedisCluster.Cluster.pipeline(
+             cluster_config(),
+             grouped_commands,
+             route_key,
+             cluster_request_opts(opts)
+           ) do
+        {:error, reason} ->
+          {:error, reason}
+
+        results ->
+          indexed_results =
+            entries
+            |> Enum.map(&elem(&1, 1))
+            |> Enum.zip(results)
+
+          {:ok, indexed_results}
+      end
+    end)
+    |> assemble_indexed_results(length(commands))
   end
 
   defp cluster_config do
@@ -188,6 +259,38 @@ defmodule OmeglePhoenix.Redis do
     end
   end
 
+  defp slot_for_key(key) when is_binary(key) do
+    key
+    |> hash_key_for_slot()
+    |> crc16_xmodem()
+    |> rem(16_384)
+  end
+
+  defp hash_key_for_slot(key) do
+    case Regex.run(~r/\{([^}]+)\}/, key) do
+      [_, tag] when byte_size(tag) > 0 -> tag
+      _ -> key
+    end
+  end
+
+  defp crc16_xmodem(data), do: crc16_xmodem(data, 0)
+  defp crc16_xmodem(<<>>, crc), do: crc
+
+  defp crc16_xmodem(<<byte, rest::binary>>, crc) do
+    crc = Bitwise.bxor(crc, Bitwise.bsl(byte, 8))
+
+    crc =
+      Enum.reduce(1..8, crc, fn _, acc ->
+        if Bitwise.band(acc, 0x8000) != 0 do
+          Bitwise.band(Bitwise.bxor(Bitwise.bsl(acc, 1), 0x1021), 0xFFFF)
+        else
+          Bitwise.band(Bitwise.bsl(acc, 1), 0xFFFF)
+        end
+      end)
+
+    crc16_xmodem(rest, crc)
+  end
+
   defp command_route_key([]), do: :any
 
   defp command_route_key([command | rest]) do
@@ -256,17 +359,47 @@ defmodule OmeglePhoenix.Redis do
 
   defp normalize_value(value), do: to_string(value)
 
-  defp gather_cluster_results(results) do
-    Enum.reduce_while(results, {:ok, []}, fn
-      {:ok, value}, {:ok, acc} ->
-        {:cont, {:ok, [value | acc]}}
+  defp run_cluster_groups(grouped_entries, opts, fun) do
+    timeout = Keyword.get(opts, :timeout, @default_timeout)
 
-      {:error, reason}, _acc ->
+    grouped_entries
+    |> Map.values()
+    |> Task.async_stream(fun,
+      ordered: false,
+      timeout: timeout + 1_000,
+      max_concurrency: max(System.schedulers_online(), 1)
+    )
+    |> Enum.reduce_while({:ok, []}, fn
+      {:ok, {:ok, indexed_results}}, {:ok, acc} ->
+        {:cont, {:ok, [indexed_results | acc]}}
+
+      {:ok, {:error, reason}}, _acc ->
+        {:halt, {:error, reason}}
+
+      {:exit, reason}, _acc ->
         {:halt, {:error, reason}}
     end)
     |> case do
-      {:ok, values} -> {:ok, Enum.reverse(values)}
-      error -> error
+      {:ok, indexed_results} ->
+        {:ok, indexed_results |> Enum.reverse() |> List.flatten()}
+
+      error ->
+        error
+    end
+  end
+
+  defp assemble_indexed_results({:error, reason}, _expected_length), do: {:error, reason}
+
+  defp assemble_indexed_results({:ok, indexed_results}, expected_length) do
+    results =
+      indexed_results
+      |> Enum.sort_by(&elem(&1, 0))
+      |> Enum.map(&elem(&1, 1))
+
+    if length(results) == expected_length do
+      {:ok, results}
+    else
+      {:error, :incomplete_cluster_results}
     end
   end
 
