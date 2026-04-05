@@ -146,7 +146,7 @@ defmodule OmeglePhoenixWeb.RoomChannel do
           content = Map.get(data, "content")
 
           if is_binary(content) and byte_size(content) <= 2_000 do
-            case with_current_partner(session_id, partner_id, fn ->
+            case with_current_partner_readonly(session_id, partner_id, fn ->
                    OmeglePhoenix.Router.send_message(partner_id, %{
                      type: "message",
                      from: session_id,
@@ -205,7 +205,7 @@ defmodule OmeglePhoenixWeb.RoomChannel do
             end
 
           if allowed do
-            case with_current_partner(session_id, partner_id, fn ->
+            case with_current_partner_readonly(session_id, partner_id, fn ->
                    OmeglePhoenix.Router.send_message(partner_id, %{
                      type: "typing",
                      from: session_id,
@@ -648,10 +648,11 @@ defmodule OmeglePhoenixWeb.RoomChannel do
 
              true ->
                fun.(session)
-           end
-         end) do
+         end
+       end) do
       {:error, :locked} ->
-        {:error, %{reason: "Session busy, please retry"}}
+        Process.sleep(50)
+        with_session_partner_lock(session_id, fun, attempts_left - 1)
 
       {:retry, _updated_partner_id} ->
         with_session_partner_lock(session_id, fun, attempts_left - 1)
@@ -661,29 +662,30 @@ defmodule OmeglePhoenixWeb.RoomChannel do
     end
   end
 
-  defp with_current_partner(session_id, expected_partner_id, fun) do
-    with_session_partner_lock(session_id, fn session ->
-      cond do
-        is_nil(session) ->
-          {:error, %{reason: "Session not found"}}
+  defp with_current_partner_readonly(session_id, expected_partner_id, fun) do
+    case OmeglePhoenix.SessionManager.get_session(session_id) do
+      {:ok, session} ->
+        cond do
+          is_nil(session.partner_id) or session.status != :matched ->
+            {:error, %{type: "ignored", reason: "Partner changed"}}
 
-        is_nil(session.partner_id) or session.status != :matched ->
-          {:error, %{type: "ignored", reason: "Partner changed"}}
+          session.partner_id != expected_partner_id ->
+            {:error, %{reason: "Partner changed"}}
 
-        session.partner_id != expected_partner_id ->
-          {:error, %{reason: "Partner changed"}}
+          true ->
+            case OmeglePhoenix.SessionManager.get_session(expected_partner_id) do
+              {:ok, partner_session}
+              when partner_session.partner_id == session_id and partner_session.status == :matched ->
+                fun.()
 
-        true ->
-          case OmeglePhoenix.SessionManager.get_session(expected_partner_id) do
-            {:ok, partner_session}
-            when partner_session.partner_id == session_id and partner_session.status == :matched ->
-              fun.()
+              _ ->
+                {:error, %{reason: "Partner changed"}}
+            end
+        end
 
-            _ ->
-              {:error, %{reason: "Partner changed"}}
-          end
-      end
-    end)
+      _ ->
+        {:error, %{reason: "Session not found"}}
+    end
   end
 
   defp create_and_queue_session(socket, client_ip, preferences, connected_type) do

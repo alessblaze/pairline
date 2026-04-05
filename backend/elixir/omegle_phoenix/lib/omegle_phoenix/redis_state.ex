@@ -231,12 +231,12 @@ defmodule OmeglePhoenix.RedisState do
              ],
              opts
            ),
-         :ok <- persist_locator(session.id, route, ttl_seconds),
+         :ok <- persist_locators(session.id, route, session.ip, ttl_seconds),
          :ok <- sync_indexes(session.id, session.ip, ttl_seconds) do
       {:ok, 1}
     else
       {:error, _reason} = error ->
-        _ = cleanup_locator(session.id)
+        _ = cleanup_locators(session.id)
         _ = rollback_indexes(session.id, session.ip)
         rollback_hot_session(session.id, route)
         error
@@ -265,7 +265,7 @@ defmodule OmeglePhoenix.RedisState do
              ],
              opts
            ),
-         :ok <- cleanup_locator(session_id),
+         :ok <- cleanup_locators(session_id),
          :ok <- cleanup_indexes(session_id, ip, report_grace_ttl) do
       {:ok, 1}
     end
@@ -446,23 +446,31 @@ defmodule OmeglePhoenix.RedisState do
   end
 
   def cleanup_orphaned_session(session_id, ip, report_grace_seconds, opts) do
-    ip_value =
-      case ip do
-        nil ->
-          with {:ok, route} <- resolve_route(session_id) do
-            case OmeglePhoenix.Redis.command(["GET", session_ip_key(session_id, route)]) do
-              {:ok, value} when is_binary(value) -> value
-              _ -> "unknown"
-            end
-          else
-            _ -> "unknown"
+    case resolve_route(session_id) do
+      {:ok, route} ->
+        ip_value =
+          case ip do
+            nil ->
+              case OmeglePhoenix.Redis.command(["GET", session_ip_key(session_id, route)]) do
+                {:ok, value} when is_binary(value) -> value
+                _ -> "unknown"
+              end
+
+            value ->
+              value
           end
 
-        value ->
-          value
-      end
+        delete_session(session_id, ip_value, report_grace_seconds, opts)
 
-    delete_session(session_id, ip_value, report_grace_seconds, opts)
+      {:error, :not_found} ->
+        cleanup_unrouted_orphaned_session(session_id)
+
+      {:error, :invalid_locator} ->
+        cleanup_unrouted_orphaned_session(session_id)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   defp exec(command, opts) do
@@ -585,21 +593,38 @@ defmodule OmeglePhoenix.RedisState do
   defp session_route(session), do: OmeglePhoenix.RedisKeys.route_for_session(session)
   defp resolve_route(session_id), do: OmeglePhoenix.RedisKeys.resolve_session_route(session_id)
 
-  defp persist_locator(session_id, route, ttl_seconds) do
-    case OmeglePhoenix.Redis.command([
-           "SETEX",
-           OmeglePhoenix.RedisKeys.session_locator_key(session_id),
-           normalize_ttl!(ttl_seconds),
-           OmeglePhoenix.RedisKeys.encode_locator(route)
-         ]) do
-      {:ok, "OK"} -> :ok
+  defp persist_locators(session_id, route, ip, ttl_seconds) do
+    ttl = normalize_ttl!(ttl_seconds)
+
+    commands = [
+      [
+        "SETEX",
+        OmeglePhoenix.RedisKeys.session_locator_key(session_id),
+        ttl,
+        OmeglePhoenix.RedisKeys.encode_locator(route)
+      ],
+      [
+        "SETEX",
+        OmeglePhoenix.RedisKeys.session_ip_locator_key(session_id),
+        ttl,
+        ip
+      ]
+    ]
+
+    case OmeglePhoenix.Redis.pipeline(commands) do
+      {:ok, _} -> :ok
       {:error, reason} -> {:error, reason}
       other -> {:error, {:unexpected_locator_result, other}}
     end
   end
 
-  defp cleanup_locator(session_id) do
-    case OmeglePhoenix.Redis.command(["DEL", OmeglePhoenix.RedisKeys.session_locator_key(session_id)]) do
+  defp cleanup_locators(session_id) do
+    commands = [
+      ["DEL", OmeglePhoenix.RedisKeys.session_locator_key(session_id)],
+      ["DEL", OmeglePhoenix.RedisKeys.session_ip_locator_key(session_id)]
+    ]
+
+    case OmeglePhoenix.Redis.pipeline(commands) do
       {:ok, _} -> :ok
       {:error, reason} -> {:error, reason}
       other -> {:error, {:unexpected_locator_cleanup_result, other}}
@@ -655,6 +680,38 @@ defmodule OmeglePhoenix.RedisState do
       ])
 
     :ok
+  end
+
+  defp cleanup_unrouted_orphaned_session(session_id) do
+    ip_commands =
+      case session_ip_locator(session_id) do
+        {:ok, ip} -> [["SREM", OmeglePhoenix.RedisKeys.ip_sessions_key(ip), session_id]]
+        _ -> []
+      end
+
+    commands = [
+      ["SREM", OmeglePhoenix.RedisKeys.active_sessions_key(), session_id],
+      ["DEL", OmeglePhoenix.RedisKeys.session_locator_key(session_id)],
+      ["DEL", OmeglePhoenix.RedisKeys.session_ip_locator_key(session_id)],
+      ["DEL", "session:lock:" <> session_id]
+    ] ++ ip_commands
+
+    case OmeglePhoenix.Redis.pipeline(commands) do
+      {:ok, _} -> {:ok, 1}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp session_ip_locator(session_id) do
+    case OmeglePhoenix.Redis.command([
+           "GET",
+           OmeglePhoenix.RedisKeys.session_ip_locator_key(session_id)
+         ]) do
+      {:ok, value} when is_binary(value) and value != "" -> {:ok, value}
+      {:ok, _} -> {:error, :not_found}
+      {:error, reason} -> {:error, reason}
+      _ -> {:error, :not_found}
+    end
   end
 
   defp session_key(session_id, route), do: OmeglePhoenix.RedisKeys.session_key(session_id, route)

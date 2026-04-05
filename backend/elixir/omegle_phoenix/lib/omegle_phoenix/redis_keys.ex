@@ -6,6 +6,7 @@ defmodule OmeglePhoenix.RedisKeys do
 
   def active_sessions_key, do: "sessions:active"
   def session_locator_key(session_id), do: "session:locator:" <> session_id
+  def session_ip_locator_key(session_id), do: "session:ip_locator:" <> session_id
   def ip_sessions_key(ip), do: "ip:" <> ip
 
   def route_for_session(%{id: session_id, redis_shard: shard, preferences: preferences}) do

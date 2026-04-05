@@ -51,28 +51,34 @@ defmodule OmeglePhoenix.SessionManager do
 
       ids ->
         with {:ok, routes} <- load_session_routes(ids) do
-          keys = Enum.map(ids, &session_key(&1, Map.fetch!(routes, &1)))
+          present_ids = Enum.filter(ids, &Map.has_key?(routes, &1))
 
-          case OmeglePhoenix.Redis.mget(keys) do
-            {:ok, payloads} when is_list(payloads) ->
-              sessions =
-                ids
-                |> Enum.zip(payloads)
-                |> Enum.reduce(%{}, fn
-                  {_id, nil}, acc ->
-                    acc
+          if present_ids == [] do
+            {:ok, %{}}
+          else
+            keys = Enum.map(present_ids, &session_key(&1, Map.fetch!(routes, &1)))
 
-                  {id, payload}, acc ->
-                    case decode_session(payload) do
-                      {:ok, session} -> Map.put(acc, id, session)
-                      _ -> acc
-                    end
-                end)
+            case OmeglePhoenix.Redis.mget(keys) do
+              {:ok, payloads} when is_list(payloads) ->
+                sessions =
+                  present_ids
+                  |> Enum.zip(payloads)
+                  |> Enum.reduce(%{}, fn
+                    {_id, nil}, acc ->
+                      acc
 
-              {:ok, sessions}
+                    {id, payload}, acc ->
+                      case decode_session(payload) do
+                        {:ok, session} -> Map.put(acc, id, session)
+                        _ -> acc
+                      end
+                  end)
 
-            _ ->
-              {:ok, %{}}
+                {:ok, sessions}
+
+              _ ->
+                {:ok, %{}}
+            end
           end
         else
           _ -> {:ok, %{}}
@@ -92,28 +98,34 @@ defmodule OmeglePhoenix.SessionManager do
 
       ids ->
         with {:ok, routes} <- load_session_routes(ids) do
-          keys = Enum.map(ids, &queue_meta_key(&1, Map.fetch!(routes, &1)))
+          present_ids = Enum.filter(ids, &Map.has_key?(routes, &1))
 
-          case OmeglePhoenix.Redis.mget(keys) do
-            {:ok, payloads} when is_list(payloads) ->
-              sessions =
-                ids
-                |> Enum.zip(payloads)
-                |> Enum.reduce(%{}, fn
-                  {_id, nil}, acc ->
-                    acc
+          if present_ids == [] do
+            {:ok, %{}}
+          else
+            keys = Enum.map(present_ids, &queue_meta_key(&1, Map.fetch!(routes, &1)))
 
-                  {id, payload}, acc ->
-                    case decode_queue_meta(payload) do
-                      {:ok, meta} -> Map.put(acc, id, meta)
-                      _ -> acc
-                    end
-                end)
+            case OmeglePhoenix.Redis.mget(keys) do
+              {:ok, payloads} when is_list(payloads) ->
+                sessions =
+                  present_ids
+                  |> Enum.zip(payloads)
+                  |> Enum.reduce(%{}, fn
+                    {_id, nil}, acc ->
+                      acc
 
-              {:ok, sessions}
+                    {id, payload}, acc ->
+                      case decode_queue_meta(payload) do
+                        {:ok, meta} -> Map.put(acc, id, meta)
+                        _ -> acc
+                      end
+                  end)
 
-            _ ->
-              {:ok, %{}}
+                {:ok, sessions}
+
+              _ ->
+                {:ok, %{}}
+            end
           end
         else
           _ -> {:ok, %{}}
@@ -126,6 +138,7 @@ defmodule OmeglePhoenix.SessionManager do
       case OmeglePhoenix.Redis.command(["SMEMBERS", OmeglePhoenix.RedisKeys.active_sessions_key()]) do
         {:ok, session_ids} when is_list(session_ids) ->
           {:ok, batched_sessions} = get_sessions(session_ids)
+          _ = prune_stale_session_ids(OmeglePhoenix.RedisKeys.active_sessions_key(), session_ids, batched_sessions)
           batched_sessions
 
         _ ->
@@ -140,6 +153,7 @@ defmodule OmeglePhoenix.SessionManager do
       case OmeglePhoenix.Redis.command(["SMEMBERS", ip_sessions_key(ip)]) do
         {:ok, session_ids} when is_list(session_ids) ->
           {:ok, batched_sessions} = get_sessions(session_ids)
+          _ = prune_stale_session_ids(ip_sessions_key(ip), session_ids, batched_sessions)
           Map.values(batched_sessions)
 
         _ ->
@@ -711,6 +725,23 @@ defmodule OmeglePhoenix.SessionManager do
 
       other ->
         other
+    end
+  end
+
+  defp prune_stale_session_ids(index_key, session_ids, sessions_by_id)
+       when is_binary(index_key) and is_list(session_ids) and is_map(sessions_by_id) do
+    stale_ids = Enum.reject(session_ids, &Map.has_key?(sessions_by_id, &1))
+
+    case stale_ids do
+      [] ->
+        :ok
+
+      _ ->
+        case OmeglePhoenix.Redis.command(["SREM", index_key | stale_ids]) do
+          {:ok, _} -> :ok
+          {:error, reason} -> {:error, reason}
+          _ -> :ok
+        end
     end
   end
 

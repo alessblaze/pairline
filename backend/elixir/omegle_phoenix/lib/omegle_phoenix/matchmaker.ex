@@ -107,6 +107,8 @@ defmodule OmeglePhoenix.Matchmaker do
 
           error
       end
+    else
+      _ -> cleanup_unknown_queue_membership(session_id)
     end
   end
 
@@ -713,6 +715,48 @@ defmodule OmeglePhoenix.Matchmaker do
 
     (strict_bucket_keys ++ relaxed_bucket_keys ++ random_keys)
     |> Enum.uniq()
+  end
+
+  defp cleanup_unknown_queue_membership(session_id) do
+    registry_entries =
+      OmeglePhoenix.RedisKeys.queue_registry_keys()
+      |> Enum.flat_map(fn registry_key ->
+        case OmeglePhoenix.Redis.command(["SMEMBERS", registry_key]) do
+          {:ok, queue_keys} when is_list(queue_keys) ->
+            Enum.map(queue_keys, &{registry_key, &1})
+
+          _ ->
+            []
+        end
+      end)
+      |> Enum.uniq()
+
+    queue_keys =
+      registry_entries
+      |> Enum.map(fn {_registry_key, queue_key} -> queue_key end)
+      |> Enum.uniq()
+
+    if queue_keys == [] do
+      :ok
+    else
+      commands = Enum.map(queue_keys, &["ZREM", &1, session_id])
+
+      case OmeglePhoenix.Redis.pipeline(commands) do
+        {:ok, _results} ->
+          Enum.each(registry_entries, fn {registry_key, queue_key} ->
+            prune_queue_if_empty(queue_key, registry_key)
+          end)
+
+          :ok
+
+        {:error, reason} = error ->
+          Logger.warning(
+            "Failed to remove stale queue membership for #{session_id}: #{inspect(reason)}"
+          )
+
+          error
+      end
+    end
   end
 
   defp schedule_fallback_checks(queue_keys, preferences, session_id) do
