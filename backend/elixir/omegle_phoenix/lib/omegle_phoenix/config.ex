@@ -48,6 +48,10 @@ defmodule OmeglePhoenix.Config do
     get("ADMIN_STREAM", "admin:action:stream")
   end
 
+  def get_admin_stream_group do
+    get("ADMIN_STREAM_GROUP", "admin:workers")
+  end
+
   def get_admin_stream_block_ms do
     get("ADMIN_STREAM_BLOCK_MS", "1000") |> String.to_integer()
   end
@@ -112,6 +116,10 @@ defmodule OmeglePhoenix.Config do
     get("MATCH_EVENT_STREAM", "matchmaking:events")
   end
 
+  def get_match_event_stream_group do
+    get("MATCH_EVENT_STREAM_GROUP", "matchmaking:workers")
+  end
+
   def get_match_event_stream_block_ms do
     get("MATCH_EVENT_STREAM_BLOCK_MS", "1000") |> String.to_integer()
   end
@@ -140,5 +148,46 @@ defmodule OmeglePhoenix.Config do
     get("MATCH_RELAXED_WAIT_MS", "5000")
     |> String.to_integer()
     |> max(0)
+  end
+
+  def get_router_owner_ttl_seconds do
+    get("ROUTER_OWNER_TTL_SECONDS", "30")
+    |> String.to_integer()
+    |> max(5)
+  end
+
+  def get_stream_stale_consumer_idle_ms do
+    get("STREAM_STALE_CONSUMER_IDLE_MS", "300000")
+    |> String.to_integer()
+    |> max(60_000)
+  end
+
+  def health_details_enabled? do
+    bool_env("HEALTH_DETAILS_ENABLED", System.get_env("MIX_ENV") != "prod")
+  end
+
+  def turnstile_insecure_bypass_allowed? do
+    bool_env("TURNSTILE_ALLOW_INSECURE_BYPASS", System.get_env("MIX_ENV") != "prod")
+  end
+
+  defp bool_env(key, default) do
+    case get(key) do
+      nil -> default
+      value -> parse_bool(value, default)
+    end
+  end
+
+  defp parse_bool(value, default) when is_binary(value) do
+    case value |> String.trim() |> String.downcase() do
+      "1" -> true
+      "true" -> true
+      "yes" -> true
+      "on" -> true
+      "0" -> false
+      "false" -> false
+      "no" -> false
+      "off" -> false
+      _ -> default
+    end
   end
 end

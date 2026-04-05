@@ -5,20 +5,40 @@ defmodule OmeglePhoenix.Turnstile do
   @max_token_size 2_048
   @min_token_size 100
 
-  def verify(token, remoteip) when is_binary(token) and byte_size(token) >= @min_token_size and byte_size(token) <= @max_token_size do
+  def verify(token, remoteip)
+      when is_binary(token) and byte_size(token) >= @min_token_size and
+             byte_size(token) <= @max_token_size do
     secret = System.get_env("TURNSTILE_SECRET_KEY")
 
     if is_nil(secret) or secret == "" do
-      Logger.warning("TURNSTILE_SECRET_KEY is not set. Bypassing Turnstile verification.")
-      true
-    else
-      body = URI.encode_query(%{
-        "secret" => secret,
-        "response" => token,
-        "remoteip" => remoteip
-      })
+      if OmeglePhoenix.Config.turnstile_insecure_bypass_allowed?() do
+        Logger.warning(
+          "TURNSTILE_SECRET_KEY is not set. Allowing insecure Turnstile bypass outside hardened environments."
+        )
 
-      request = Finch.build(:post, @verify_url, [{"content-type", "application/x-www-form-urlencoded"}], body)
+        true
+      else
+        Logger.error(
+          "TURNSTILE_SECRET_KEY is not set. Rejecting Turnstile verification because insecure bypass is disabled."
+        )
+
+        false
+      end
+    else
+      body =
+        URI.encode_query(%{
+          "secret" => secret,
+          "response" => token,
+          "remoteip" => remoteip
+        })
+
+      request =
+        Finch.build(
+          :post,
+          @verify_url,
+          [{"content-type", "application/x-www-form-urlencoded"}],
+          body
+        )
 
       case Finch.request(request, OmeglePhoenixFinch, receive_timeout: 5000) do
         {:ok, %Finch.Response{status: status, body: resp_body}} when status in 200..299 ->

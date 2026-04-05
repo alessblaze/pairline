@@ -7,6 +7,7 @@ defmodule OmeglePhoenix.Router do
   require Logger
 
   @reconnect_message :connect_router_channel
+  @owner_table :omegle_phoenix_router_owners
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -17,6 +18,7 @@ defmodule OmeglePhoenix.Router do
       {:error, :must_register_from_owner_process}
     else
       :ok = Phoenix.PubSub.subscribe(OmeglePhoenix.PubSub, topic(session_id))
+      track_local_owner(session_id, pid)
       refresh_owner(session_id, pid)
     end
   end
@@ -28,7 +30,7 @@ defmodule OmeglePhoenix.Router do
       OmeglePhoenix.Redis.command([
         "SETEX",
         "session:#{session_id}:owner_node",
-        Integer.to_string(OmeglePhoenix.Config.get_session_ttl()),
+        Integer.to_string(OmeglePhoenix.Config.get_router_owner_ttl_seconds()),
         Atom.to_string(Node.self())
       ])
 
@@ -38,6 +40,7 @@ defmodule OmeglePhoenix.Router do
 
   def unregister(session_id) when is_binary(session_id) do
     Phoenix.PubSub.unsubscribe(OmeglePhoenix.PubSub, topic(session_id))
+    untrack_local_owner(session_id)
     OmeglePhoenix.Redis.command(["DEL", "session:#{session_id}:owner_node"])
     :ok
   end
@@ -65,7 +68,15 @@ defmodule OmeglePhoenix.Router do
 
   @impl true
   def init(_opts) do
-    state = %{connection: nil, channel: node_channel(Atom.to_string(Node.self()))}
+    _ = ensure_owner_table()
+
+    state = %{
+      connection: nil,
+      channel: node_channel(Atom.to_string(Node.self())),
+      owners: %{},
+      owner_refs: %{}
+    }
+
     send(self(), @reconnect_message)
     {:ok, state}
   end
@@ -99,7 +110,56 @@ defmodule OmeglePhoenix.Router do
     {:noreply, %{state | connection: nil}}
   end
 
+  def handle_info({:DOWN, ref, :process, pid, _reason}, state) do
+    case Map.pop(state.owner_refs, ref) do
+      {{session_id, ^pid}, owner_refs} ->
+        case Map.get(state.owners, session_id) do
+          {^pid, ^ref} ->
+            :ets.delete(@owner_table, session_id)
+            OmeglePhoenix.Redis.command(["DEL", "session:#{session_id}:owner_node"])
+
+            {:noreply,
+             %{state | owners: Map.delete(state.owners, session_id), owner_refs: owner_refs}}
+
+          _ ->
+            {:noreply, %{state | owner_refs: owner_refs}}
+        end
+
+      {nil, _owner_refs} ->
+        {:noreply, state}
+    end
+  end
+
   def handle_info(_message, state) do
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_cast({:track_owner, session_id, pid}, state) do
+    {state, old_ref} = drop_owner(state, session_id)
+
+    if old_ref != nil do
+      Process.demonitor(old_ref, [:flush])
+    end
+
+    ref = Process.monitor(pid)
+    :ets.insert(@owner_table, {session_id, pid})
+
+    {:noreply,
+     %{
+       state
+       | owners: Map.put(state.owners, session_id, {pid, ref}),
+         owner_refs: Map.put(state.owner_refs, ref, {session_id, pid})
+     }}
+  end
+
+  def handle_cast({:untrack_owner, session_id}, state) do
+    {state, ref} = drop_owner(state, session_id)
+
+    if ref != nil do
+      Process.demonitor(ref, [:flush])
+    end
+
     {:noreply, state}
   end
 
@@ -114,17 +174,20 @@ defmodule OmeglePhoenix.Router do
 
     case owner_node(session_id) do
       {:ok, nil} ->
-        dispatch_local(session_id, message)
+        dispatch_local_if_owned(session_id, message)
 
       {:ok, owner} when owner == current_node ->
-        dispatch_local(session_id, message)
+        if not dispatch_local_if_owned(session_id, message) do
+          Logger.warning("Router cleared stale local owner for #{session_id}")
+          OmeglePhoenix.Redis.command(["DEL", "session:#{session_id}:owner_node"])
+        end
 
       {:ok, owner} ->
         dispatch_remote(session_id, owner, message)
 
       {:error, reason} ->
         Logger.warning("Router owner lookup failed for #{session_id}: #{inspect(reason)}")
-        dispatch_local(session_id, message)
+        dispatch_local_if_owned(session_id, message)
     end
   end
 
@@ -171,11 +234,27 @@ defmodule OmeglePhoenix.Router do
         )
 
         OmeglePhoenix.Redis.command(["DEL", "session:#{session_id}:owner_node"])
-        dispatch_local(session_id, message)
+        dispatch_local_if_owned(session_id, message)
 
       {:error, reason} ->
         Logger.error("Router remote delivery failed for #{owner}: #{inspect(reason)}")
-        dispatch_local(session_id, message)
+        dispatch_local_if_owned(session_id, message)
+    end
+  end
+
+  defp dispatch_local_if_owned(session_id, message) do
+    case local_owner_pid(session_id) do
+      nil ->
+        false
+
+      pid ->
+        if Process.alive?(pid) do
+          dispatch_local(session_id, message)
+          true
+        else
+          :ets.delete(@owner_table, session_id)
+          false
+        end
     end
   end
 
@@ -262,6 +341,51 @@ defmodule OmeglePhoenix.Router do
       Redix.PubSub.stop(connection)
     rescue
       _ -> :ok
+    end
+  end
+
+  defp track_local_owner(session_id, pid) do
+    _ = ensure_owner_table()
+    :ets.insert(@owner_table, {session_id, pid})
+    GenServer.cast(__MODULE__, {:track_owner, session_id, pid})
+    :ok
+  end
+
+  defp untrack_local_owner(session_id) do
+    if :ets.whereis(@owner_table) != :undefined do
+      :ets.delete(@owner_table, session_id)
+    end
+
+    GenServer.cast(__MODULE__, {:untrack_owner, session_id})
+    :ok
+  end
+
+  defp local_owner_pid(session_id) do
+    if :ets.whereis(@owner_table) == :undefined do
+      nil
+    else
+      case :ets.lookup(@owner_table, session_id) do
+        [{^session_id, pid}] when is_pid(pid) -> pid
+        _ -> nil
+      end
+    end
+  end
+
+  defp ensure_owner_table do
+    case :ets.whereis(@owner_table) do
+      :undefined -> :ets.new(@owner_table, [:named_table, :public, :set, read_concurrency: true])
+      table -> table
+    end
+  end
+
+  defp drop_owner(state, session_id) do
+    case Map.pop(state.owners, session_id) do
+      {{_pid, ref}, owners} ->
+        :ets.delete(@owner_table, session_id)
+        {%{state | owners: owners, owner_refs: Map.delete(state.owner_refs, ref)}, ref}
+
+      {nil, owners} ->
+        {%{state | owners: owners}, nil}
     end
   end
 

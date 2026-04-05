@@ -142,7 +142,7 @@ defmodule OmeglePhoenix.Matchmaker do
     state = %{
       stream_conn: nil,
       stream: OmeglePhoenix.Config.get_match_event_stream(),
-      group: match_stream_group_name(),
+      group: OmeglePhoenix.Config.get_match_event_stream_group(),
       consumer: match_stream_consumer_name(),
       sweep_interval_ms: OmeglePhoenix.Config.get_match_sweep_interval_ms(),
       sweep_stale_after_ms: OmeglePhoenix.Config.get_match_sweep_stale_after_ms(),
@@ -163,6 +163,7 @@ defmodule OmeglePhoenix.Matchmaker do
         case ensure_stream_group(connection, state.stream, state.group) do
           :ok ->
             claim_stale_pending(connection, state.stream, state.group, state.consumer)
+            cleanup_stale_consumers(connection, state.stream, state.group, state.consumer)
             send(self(), @stream_consume_message)
             {:noreply, %{state | stream_conn: connection}}
 
@@ -1074,6 +1075,28 @@ defmodule OmeglePhoenix.Matchmaker do
     end
   end
 
+  defp cleanup_stale_consumers(connection, stream, group, current_consumer) do
+    active_consumers = active_consumer_names(current_consumer)
+    idle_cutoff_ms = OmeglePhoenix.Config.get_stream_stale_consumer_idle_ms()
+
+    case Redix.command(connection, ["XINFO", "CONSUMERS", stream, group]) do
+      {:ok, consumers} when is_list(consumers) ->
+        Enum.each(consumers, fn consumer_info ->
+          info = xinfo_to_map(consumer_info)
+          name = Map.get(info, "name")
+          idle_ms = xinfo_integer(info, "idle")
+
+          if is_binary(name) and name != current_consumer and idle_ms >= idle_cutoff_ms and
+               not MapSet.member?(active_consumers, name) do
+            _ = Redix.command(connection, ["XGROUP", "DELCONSUMER", stream, group, name])
+          end
+        end)
+
+      _ ->
+        :ok
+    end
+  end
+
   defp consume_stream_entries(state) do
     with {:ok, pending_state} <- consume_pending_entries(state),
          {:ok, entries} <- read_stream(pending_state, ">") do
@@ -1249,11 +1272,54 @@ defmodule OmeglePhoenix.Matchmaker do
     end)
   end
 
-  defp match_stream_group_name do
-    "matchmaking:" <> match_stream_consumer_name()
-  end
-
   defp match_stream_consumer_name do
     Node.self() |> Atom.to_string() |> String.replace(~r/[^a-zA-Z0-9:_-]/u, "_")
+  end
+
+  defp active_consumer_names(current_consumer) do
+    [Node.self() | Node.list()]
+    |> Enum.map(&match_stream_consumer_name/1)
+    |> Enum.concat([current_consumer])
+    |> MapSet.new()
+  end
+
+  defp match_stream_consumer_name(node) when is_atom(node) do
+    node |> Atom.to_string() |> String.replace(~r/[^a-zA-Z0-9:_-]/u, "_")
+  end
+
+  defp xinfo_to_map(list) when is_list(list) do
+    cond do
+      Enum.all?(list, &match?([_, _], &1)) ->
+        Map.new(list)
+
+      rem(length(list), 2) == 0 ->
+        list
+        |> Enum.chunk_every(2)
+        |> Enum.reduce(%{}, fn
+          [key, value], acc when is_binary(key) -> Map.put(acc, key, value)
+          _, acc -> acc
+        end)
+
+      true ->
+        %{}
+    end
+  end
+
+  defp xinfo_to_map(_), do: %{}
+
+  defp xinfo_integer(info, key) do
+    case Map.get(info, key) do
+      value when is_integer(value) ->
+        value
+
+      value when is_binary(value) ->
+        case Integer.parse(value) do
+          {parsed, _} -> parsed
+          :error -> 0
+        end
+
+      _ ->
+        0
+    end
   end
 end

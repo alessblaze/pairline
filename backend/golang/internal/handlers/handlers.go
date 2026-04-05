@@ -158,6 +158,12 @@ func UpdateReportHandlerGin(c *gin.Context) {
 		return
 	}
 
+	username, ok := getContextString(c, "username")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
 	var req struct {
 		Status string `json:"status"`
 	}
@@ -175,7 +181,12 @@ func UpdateReportHandlerGin(c *gin.Context) {
 	db := storage.NewDatabase()
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
-	tx := db.GetDB().WithContext(ctx).Model(&storage.Report{}).Where("id = ?", id).Update("status", req.Status)
+	reviewedAt := time.Now()
+	tx := db.GetDB().WithContext(ctx).Model(&storage.Report{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"status":               req.Status,
+		"reviewed_by_username": username,
+		"reviewed_at":          reviewedAt,
+	})
 
 	if tx.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update report"})
@@ -221,6 +232,10 @@ func CreateReportHandlerGin(redisClient *redis.Client) gin.HandlerFunc {
 
 		req.Reason = stripHTML(req.Reason)
 		req.Description = stripHTML(req.Description)
+		if req.Reason == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Reason cannot be empty"})
+			return
+		}
 
 		db := storage.NewDatabase()
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
@@ -306,6 +321,10 @@ func CreateBanHandlerGin(redisClient *redis.Client) gin.HandlerFunc {
 		}
 
 		req.Reason = stripHTML(req.Reason)
+		if req.Reason == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Reason cannot be empty"})
+			return
+		}
 
 		db := storage.NewDatabase()
 
@@ -663,6 +682,20 @@ func CreateAdminHandlerGin(c *gin.Context) {
 	}
 
 	req.Username = stripHTML(req.Username)
+	currentUsername, ok := getContextString(c, "username")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	currentRole, ok := getContextString(c, "role")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	if !canCreateAdminRole(currentRole, req.Role) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Insufficient privileges to assign this role"})
+		return
+	}
 
 	db := storage.NewDatabase()
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
@@ -682,11 +715,12 @@ func CreateAdminHandlerGin(c *gin.Context) {
 	}
 
 	admin := storage.AdminAccount{
-		Username:     req.Username,
-		PasswordHash: hash,
-		Role:         req.Role,
-		IsActive:     true,
-		CreatedAt:    time.Now(),
+		Username:          req.Username,
+		PasswordHash:      hash,
+		Role:              req.Role,
+		IsActive:          true,
+		CreatedAt:         time.Now(),
+		CreatedByUsername: currentUsername,
 	}
 
 	result = db.GetDB().WithContext(ctx).Create(&admin).Error
@@ -810,6 +844,17 @@ func getContextString(c *gin.Context, key string) (string, bool) {
 
 	str, ok := value.(string)
 	return str, ok && str != ""
+}
+
+func canCreateAdminRole(currentRole, targetRole string) bool {
+	switch currentRole {
+	case "root":
+		return targetRole == "moderator" || targetRole == "admin" || targetRole == "root"
+	case "admin":
+		return targetRole == "moderator"
+	default:
+		return false
+	}
 }
 
 func verifySessionToken(ctx context.Context, redisClient *redis.Client, sessionID, providedToken string) bool {

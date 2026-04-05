@@ -14,7 +14,7 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
 
     state = %{
       stream: stream,
-      group: stream_group_name(),
+      group: OmeglePhoenix.Config.get_admin_stream_group(),
       consumer: stream_consumer_name(),
       connection: nil
     }
@@ -32,6 +32,7 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
         case ensure_stream_group(connection, state.stream, state.group) do
           :ok ->
             claim_stale_pending(connection, state.stream, state.group, state.consumer)
+            cleanup_stale_consumers(connection, state.stream, state.group, state.consumer)
             send(self(), :consume_stream)
             {:noreply, %{state | connection: connection}}
 
@@ -140,6 +141,28 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
     end
   end
 
+  defp cleanup_stale_consumers(connection, stream, group, current_consumer) do
+    active_consumers = active_consumer_names(current_consumer)
+    idle_cutoff_ms = OmeglePhoenix.Config.get_stream_stale_consumer_idle_ms()
+
+    case Redix.command(connection, ["XINFO", "CONSUMERS", stream, group]) do
+      {:ok, consumers} when is_list(consumers) ->
+        Enum.each(consumers, fn consumer_info ->
+          info = xinfo_to_map(consumer_info)
+          name = Map.get(info, "name")
+          idle_ms = xinfo_integer(info, "idle")
+
+          if is_binary(name) and name != current_consumer and idle_ms >= idle_cutoff_ms and
+               not MapSet.member?(active_consumers, name) do
+            _ = Redix.command(connection, ["XGROUP", "DELCONSUMER", stream, group, name])
+          end
+        end)
+
+      _ ->
+        :ok
+    end
+  end
+
   defp consume_stream_entries(state) do
     with :ok <- consume_pending_entries(state),
          {:ok, entries} <- read_stream(state, ">") do
@@ -178,7 +201,9 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
       stream_id
     ]
 
-    case Redix.command(state.connection, command, timeout: OmeglePhoenix.Config.get_admin_stream_block_ms() + 2_000) do
+    case Redix.command(state.connection, command,
+           timeout: OmeglePhoenix.Config.get_admin_stream_block_ms() + 2_000
+         ) do
       {:ok, nil} ->
         {:ok, []}
 
@@ -313,12 +338,51 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
 
   defp valid_ip?(_), do: false
 
-  defp stream_group_name do
-    "admin:" <> sanitize_node_name(Node.self())
-  end
-
   defp stream_consumer_name do
     sanitize_node_name(Node.self())
+  end
+
+  defp active_consumer_names(current_consumer) do
+    [Node.self() | Node.list()]
+    |> Enum.map(&sanitize_node_name/1)
+    |> Enum.concat([current_consumer])
+    |> MapSet.new()
+  end
+
+  defp xinfo_to_map(list) when is_list(list) do
+    cond do
+      Enum.all?(list, &match?([_, _], &1)) ->
+        Map.new(list)
+
+      rem(length(list), 2) == 0 ->
+        list
+        |> Enum.chunk_every(2)
+        |> Enum.reduce(%{}, fn
+          [key, value], acc when is_binary(key) -> Map.put(acc, key, value)
+          _, acc -> acc
+        end)
+
+      true ->
+        %{}
+    end
+  end
+
+  defp xinfo_to_map(_), do: %{}
+
+  defp xinfo_integer(info, key) do
+    case Map.get(info, key) do
+      value when is_integer(value) ->
+        value
+
+      value when is_binary(value) ->
+        case Integer.parse(value) do
+          {parsed, _} -> parsed
+          :error -> 0
+        end
+
+      _ ->
+        0
+    end
   end
 
   defp sanitize_node_name(node) do
