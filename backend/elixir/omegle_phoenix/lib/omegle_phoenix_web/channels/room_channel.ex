@@ -532,29 +532,6 @@ defmodule OmeglePhoenixWeb.RoomChannel do
   end
 
   def handle_info(
-        {:router_match, partner_session_id, common_interests, match_generation, partner_route},
-        socket
-      ) do
-    push(socket, "match", %{peer_id: partner_session_id, common_interests: common_interests})
-
-    {:noreply,
-     socket
-     |> assign(:partner_id, partner_session_id)
-     |> assign(:match_generation, match_generation)
-     |> assign(:partner_route, normalize_partner_route(partner_route))
-     |> assign(:partner_owner_node, nil)}
-  end
-
-  def handle_info({:router_match, partner_session_id, common_interests}, socket) do
-    push(socket, "match", %{peer_id: partner_session_id, common_interests: common_interests})
-
-    {:noreply,
-     clear_match_assigns(socket)
-     |> assign(:partner_id, partner_session_id)
-     |> assign(:partner_owner_node, nil)}
-  end
-
-  def handle_info(
         {:router_message, %{type: type, from: from, match_generation: generation} = payload},
         socket
       ) do
@@ -565,7 +542,11 @@ defmodule OmeglePhoenixWeb.RoomChannel do
     {:noreply, socket}
   end
 
-  def handle_info({:router_message, %{type: _type, from: _from}}, socket) do
+  def handle_info({:router_message, %{type: type, from: from} = payload}, socket) do
+    Logger.warning(
+      "Dropping router message with missing match_generation for #{socket.assigns[:session_id]}: #{inspect(%{type: type, from: from, keys: Map.keys(payload)})}"
+    )
+
     {:noreply, socket}
   end
 
@@ -588,7 +569,11 @@ defmodule OmeglePhoenixWeb.RoomChannel do
     {:noreply, socket}
   end
 
-  def handle_info({:router_message, %{"type" => _type, "from" => _from}}, socket) do
+  def handle_info({:router_message, %{"type" => type, "from" => from} = payload}, socket) do
+    Logger.warning(
+      "Dropping router message with missing match_generation for #{socket.assigns[:session_id]}: #{inspect(%{type: type, from: from, keys: Map.keys(payload)})}"
+    )
+
     {:noreply, socket}
   end
 
