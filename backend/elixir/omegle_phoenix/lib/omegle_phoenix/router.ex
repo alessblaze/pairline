@@ -8,6 +8,12 @@ defmodule OmeglePhoenix.Router do
 
   @reconnect_message :connect_router_channel
   @owner_table :omegle_phoenix_router_owners
+  @compare_delete_script """
+  if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('DEL', KEYS[1])
+  end
+  return 0
+  """
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -41,7 +47,7 @@ defmodule OmeglePhoenix.Router do
   def unregister(session_id) when is_binary(session_id) do
     Phoenix.PubSub.unsubscribe(OmeglePhoenix.PubSub, topic(session_id))
     untrack_local_owner(session_id)
-    OmeglePhoenix.Redis.command(["DEL", "session:#{session_id}:owner_node"])
+    compare_and_delete_owner_node(session_id, Atom.to_string(Node.self()))
     :ok
   end
 
@@ -116,7 +122,7 @@ defmodule OmeglePhoenix.Router do
         case Map.get(state.owners, session_id) do
           {^pid, ^ref} ->
             :ets.delete(@owner_table, session_id)
-            OmeglePhoenix.Redis.command(["DEL", "session:#{session_id}:owner_node"])
+            compare_and_delete_owner_node(session_id, Atom.to_string(Node.self()))
 
             {:noreply,
              %{state | owners: Map.delete(state.owners, session_id), owner_refs: owner_refs}}
@@ -179,7 +185,7 @@ defmodule OmeglePhoenix.Router do
       {:ok, owner} when owner == current_node ->
         if not dispatch_local_if_owned(session_id, message) do
           Logger.warning("Router cleared stale local owner for #{session_id}")
-          OmeglePhoenix.Redis.command(["DEL", "session:#{session_id}:owner_node"])
+          compare_and_delete_owner_node(session_id, current_node)
         end
 
       {:ok, owner} ->
@@ -233,7 +239,7 @@ defmodule OmeglePhoenix.Router do
           "Router remote delivery found no subscribers for #{owner}; clearing stale owner for #{session_id}"
         )
 
-        OmeglePhoenix.Redis.command(["DEL", "session:#{session_id}:owner_node"])
+        compare_and_delete_owner_node(session_id, owner)
         dispatch_local_if_owned(session_id, message)
 
       {:error, reason} ->
@@ -391,6 +397,19 @@ defmodule OmeglePhoenix.Router do
 
   defp node_channel(owner_node), do: "router:node:" <> owner_node
   defp topic(session_id), do: "session:" <> session_id
+
+  defp compare_and_delete_owner_node(session_id, expected_owner) do
+    _ =
+      OmeglePhoenix.Redis.command([
+        "EVAL",
+        @compare_delete_script,
+        "1",
+        "session:#{session_id}:owner_node",
+        expected_owner
+      ])
+
+    :ok
+  end
 
   defp valid_owner_node?(owner) do
     owner != "" and not String.starts_with?(owner, "{") and not String.starts_with?(owner, "[")

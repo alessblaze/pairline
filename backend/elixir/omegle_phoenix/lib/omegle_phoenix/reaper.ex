@@ -15,6 +15,12 @@ defmodule OmeglePhoenix.Reaper do
   end
   return 0
   """
+  @release_lock_script """
+  if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('DEL', KEYS[1])
+  end
+  return 0
+  """
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -35,11 +41,12 @@ defmodule OmeglePhoenix.Reaper do
 
   @impl true
   def handle_info(:reap, state) do
-    state = with_reaper_leader(state, fn state ->
-      state
-      |> reap_orphaned_sessions()
-      |> reap_stale_queue_entries()
-    end)
+    state =
+      with_reaper_leader(state, fn state ->
+        state
+        |> reap_orphaned_sessions()
+        |> reap_stale_queue_entries()
+      end)
 
     Process.send_after(self(), :reap, state.interval_ms)
     {:noreply, state}
@@ -50,8 +57,11 @@ defmodule OmeglePhoenix.Reaper do
   end
 
   defp with_reaper_leader(state, fun) do
-    if leader?() do
-      renewer = start_leader_renewer()
+    leader_token = leader_token()
+
+    if leader?(leader_token) do
+      renewer = start_leader_renewer(leader_token)
+
       try do
         fun.(state)
       rescue
@@ -60,23 +70,23 @@ defmodule OmeglePhoenix.Reaper do
           state
       after
         stop_renewer(renewer)
+        release_leader(leader_token)
       end
     else
       state
     end
   end
 
-  defp start_leader_renewer do
+  defp start_leader_renewer(leader_token) do
     parent = self()
-    node_name = Atom.to_string(Node.self())
 
     spawn(fn ->
       parent_ref = Process.monitor(parent)
-      leader_renew_loop(node_name, parent_ref)
+      leader_renew_loop(leader_token, parent_ref)
     end)
   end
 
-  defp leader_renew_loop(node_name, parent_ref) do
+  defp leader_renew_loop(leader_token, parent_ref) do
     receive do
       :stop -> :ok
       {:DOWN, ^parent_ref, :process, _pid, _reason} -> :ok
@@ -88,11 +98,11 @@ defmodule OmeglePhoenix.Reaper do
             @renew_lock_script,
             "1",
             @leader_key,
-            node_name,
+            leader_token,
             Integer.to_string(@leader_ttl_ms)
           ])
 
-        leader_renew_loop(node_name, parent_ref)
+        leader_renew_loop(leader_token, parent_ref)
     end
   end
 
@@ -180,13 +190,11 @@ defmodule OmeglePhoenix.Reaper do
     %{state | queue_cursors: new_queue_cursors}
   end
 
-  defp leader? do
-    node_name = Atom.to_string(Node.self())
-
+  defp leader?(leader_token) do
     case OmeglePhoenix.Redis.command([
            "SET",
            @leader_key,
-           node_name,
+           leader_token,
            "PX",
            Integer.to_string(@leader_ttl_ms),
            "NX"
@@ -195,17 +203,24 @@ defmodule OmeglePhoenix.Reaper do
         true
 
       _ ->
-        case OmeglePhoenix.Redis.command([
-               "EVAL",
-               @renew_lock_script,
-               "1",
-               @leader_key,
-               node_name,
-               Integer.to_string(@leader_ttl_ms)
-             ]) do
-          {:ok, 1} -> true
-          _ -> false
-        end
+        false
     end
+  end
+
+  defp leader_token do
+    "#{Node.self()}:#{System.unique_integer([:positive, :monotonic])}"
+  end
+
+  defp release_leader(leader_token) do
+    _ =
+      OmeglePhoenix.Redis.command([
+        "EVAL",
+        @release_lock_script,
+        "1",
+        @leader_key,
+        leader_token
+      ])
+
+    :ok
   end
 end
