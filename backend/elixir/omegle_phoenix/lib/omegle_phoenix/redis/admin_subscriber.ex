@@ -112,7 +112,7 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
   end
 
   defp ensure_stream_group(connection, stream, group) do
-    case Redix.command(connection, ["XGROUP", "CREATE", stream, group, "0", "MKSTREAM"]) do
+    case Redix.command(connection, ["XGROUP", "CREATE", stream, group, "$", "MKSTREAM"]) do
       {:ok, "OK"} ->
         :ok
 

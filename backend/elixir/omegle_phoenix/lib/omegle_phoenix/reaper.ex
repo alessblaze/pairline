@@ -130,9 +130,11 @@ defmodule OmeglePhoenix.Reaper do
   end
 
   defp reap_stale_queue_entries(state) do
+    active_queue_keys = OmeglePhoenix.Matchmaker.queue_keys()
+
     new_queue_cursors =
-      Enum.reduce(OmeglePhoenix.Matchmaker.queue_keys(), state.queue_cursors, fn queue_key, acc ->
-        cursor = Map.get(acc, queue_key, "0")
+      Enum.reduce(active_queue_keys, %{}, fn queue_key, acc ->
+        cursor = Map.get(state.queue_cursors, queue_key, "0")
 
         next_cursor =
           case OmeglePhoenix.Redis.command([
@@ -156,7 +158,7 @@ defmodule OmeglePhoenix.Reaper do
                     :ok
 
                   _ ->
-                    OmeglePhoenix.Redis.command(["ZREM", queue_key, session_id])
+                    _ = OmeglePhoenix.Matchmaker.leave_queue(session_id)
 
                     :telemetry.execute(
                       [:omegle_phoenix, :reaper, :queue_entry_removed],

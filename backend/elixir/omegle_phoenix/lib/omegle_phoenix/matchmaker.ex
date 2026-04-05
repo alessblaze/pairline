@@ -289,49 +289,60 @@ defmodule OmeglePhoenix.Matchmaker do
             []
         end
 
-      match_from_pool(sessions_with_prefs, MapSet.new())
+      match_from_pool(queue_key, sessions_with_prefs, MapSet.new())
       attempt_overflow_matching(queue_key, sessions_with_prefs, now, batch_size)
 
       prune_queue_if_empty(queue_key)
     end)
   end
 
-  defp match_from_pool([], _matched), do: :ok
+  defp match_from_pool(_queue_key, [], _matched), do: :ok
 
-  defp match_from_pool([{sid1, session1, wait1} | rest], matched) do
+  defp match_from_pool(queue_key, [{sid1, session1, wait1} | rest], matched) do
     if MapSet.member?(matched, sid1) do
-      match_from_pool(rest, matched)
+      match_from_pool(queue_key, rest, matched)
     else
-      case find_compatible_partner(sid1, session1, wait1, rest, matched) do
+      case find_compatible_partner(queue_key, sid1, session1, wait1, rest, matched) do
         {sid2, _session2, remaining} ->
           case pair_users(sid1, sid2, :local) do
             :ok ->
-              match_from_pool(remaining, MapSet.put(MapSet.put(matched, sid1), sid2))
+              match_from_pool(
+                queue_key,
+                remaining,
+                MapSet.put(MapSet.put(matched, sid1), sid2)
+              )
 
             _ ->
               # Pairing failed (locked/unavailable); skip sid2, retry sid1 with remaining
-              match_from_pool(remaining, MapSet.put(matched, sid2))
+              match_from_pool(queue_key, remaining, MapSet.put(matched, sid2))
           end
 
         nil ->
-          match_from_pool(rest, matched)
+          match_from_pool(queue_key, rest, matched)
       end
     end
   end
 
-  defp find_compatible_partner(_sid1, _session1, _wait1, [], _matched), do: nil
+  defp find_compatible_partner(_queue_key, _sid1, _session1, _wait1, [], _matched), do: nil
 
-  defp find_compatible_partner(sid1, session1, wait1, [{sid2, session2, wait2} | rest], matched) do
+  defp find_compatible_partner(
+         queue_key,
+         sid1,
+         session1,
+         wait1,
+         [{sid2, session2, wait2} | rest],
+         matched
+       ) do
     if MapSet.member?(matched, sid2) do
-      find_compatible_partner(sid1, session1, wait1, rest, matched)
+      find_compatible_partner(queue_key, sid1, session1, wait1, rest, matched)
     else
       if session1.last_partner_id == sid2 or session2.last_partner_id == sid1 do
-        find_compatible_partner(sid1, session1, wait1, rest, matched)
+        find_compatible_partner(queue_key, sid1, session1, wait1, rest, matched)
       else
-        if compatible?(session1.preferences, wait1, session2.preferences, wait2) do
+        if compatible?(queue_key, session1.preferences, wait1, session2.preferences, wait2) do
           {sid2, session2, rest}
         else
-          find_compatible_partner(sid1, session1, wait1, rest, matched)
+          find_compatible_partner(queue_key, sid1, session1, wait1, rest, matched)
         end
       end
     end
@@ -419,7 +430,7 @@ defmodule OmeglePhoenix.Matchmaker do
     end
   end
 
-  defp compatible?(preferences1, wait1, preferences2, wait2) do
+  defp compatible?(queue_key, preferences1, wait1, preferences2, wait2) do
     preferences1 = normalize_preferences(preferences1)
     preferences2 = normalize_preferences(preferences2)
 
@@ -429,29 +440,37 @@ defmodule OmeglePhoenix.Matchmaker do
     if mode1 != mode2 do
       false
     else
-      interests1 = Map.get(preferences1, "interests", "") |> String.trim()
-      interests2 = Map.get(preferences2, "interests", "") |> String.trim()
+      if random_queue?(queue_key) do
+        true
+      else
+        interests1 = Map.get(preferences1, "interests", "") |> String.trim()
+        interests2 = Map.get(preferences2, "interests", "") |> String.trim()
 
-      cond do
-        interests1 == "" and interests2 == "" ->
-          true
-
-        interests1 != "" and interests2 != "" ->
-          tags1 = parse_interests(interests1)
-          tags2 = parse_interests(interests2)
-
-          if not MapSet.disjoint?(tags1, tags2) do
+        cond do
+          interests1 == "" and interests2 == "" ->
             true
-          else
+
+          interests1 != "" and interests2 != "" ->
+            tags1 = parse_interests(interests1)
+            tags2 = parse_interests(interests2)
+
+            if not MapSet.disjoint?(tags1, tags2) do
+              true
+            else
+              can_fallback_to_random?(interests1, wait1) and
+                can_fallback_to_random?(interests2, wait2)
+            end
+
+          true ->
             can_fallback_to_random?(interests1, wait1) and
               can_fallback_to_random?(interests2, wait2)
-          end
-
-        true ->
-          can_fallback_to_random?(interests1, wait1) and
-            can_fallback_to_random?(interests2, wait2)
+        end
       end
     end
+  end
+
+  defp random_queue?(queue_key) do
+    String.contains?(queue_key, ":random:")
   end
 
   defp can_fallback_to_random?(interests, wait_time_ms) do
@@ -514,7 +533,7 @@ defmodule OmeglePhoenix.Matchmaker do
       if bucket_keys == [] do
         [shared_random_queue_key(mode)]
       else
-        random_queue_keys(mode, session_id)
+        [shared_random_queue_key(mode) | random_queue_keys(mode, session_id)]
       end
 
     (bucket_keys ++ random_keys)
@@ -591,25 +610,33 @@ defmodule OmeglePhoenix.Matchmaker do
               not Enum.any?(local_candidates, fn {local_sid, _, _} -> local_sid == sid end)
           end)
 
-        match_across_pools(local_candidates, remote_candidates, MapSet.new())
+        match_across_pools(overflow_queue_key, local_candidates, remote_candidates, MapSet.new())
       end
     else
       _ -> :ok
     end
   end
 
-  defp match_across_pools([], _remote_candidates, _matched_remote), do: :ok
+  defp match_across_pools(_queue_key, [], _remote_candidates, _matched_remote), do: :ok
 
-  defp match_across_pools([{sid1, session1, wait1} | rest], remote_candidates, matched_remote) do
-    case find_compatible_partner(sid1, session1, wait1, remote_candidates, matched_remote) do
+  defp match_across_pools(queue_key, [{sid1, session1, wait1} | rest], remote_candidates, matched_remote) do
+    case find_compatible_partner(
+           queue_key,
+           sid1,
+           session1,
+           wait1,
+           remote_candidates,
+           matched_remote
+         ) do
       {sid2, _session2, _remaining} ->
         case pair_users(sid1, sid2, :overflow) do
           :ok ->
-            match_across_pools(rest, remote_candidates, MapSet.put(matched_remote, sid2))
+            match_across_pools(queue_key, rest, remote_candidates, MapSet.put(matched_remote, sid2))
 
           _ ->
             # Pairing failed (locked/unavailable); mark sid2 and retry sid1
             match_across_pools(
+              queue_key,
               [{sid1, session1, wait1} | rest],
               remote_candidates,
               MapSet.put(matched_remote, sid2)
@@ -617,7 +644,7 @@ defmodule OmeglePhoenix.Matchmaker do
         end
 
       nil ->
-        match_across_pools(rest, remote_candidates, matched_remote)
+        match_across_pools(queue_key, rest, remote_candidates, matched_remote)
     end
   end
 
@@ -919,9 +946,7 @@ defmodule OmeglePhoenix.Matchmaker do
   defp consume_stream_entries(state) do
     with :ok <- consume_pending_entries(state),
          {:ok, entries} <- read_stream(state, ">") do
-      Enum.each(entries, &handle_stream_entry/1)
-      _ = ack_stream_entries(state, entries)
-      :ok
+      process_stream_entries(state, entries)
     end
   end
 
@@ -931,12 +956,18 @@ defmodule OmeglePhoenix.Matchmaker do
         :ok
 
       {:ok, entries} ->
-        Enum.each(entries, &handle_stream_entry/1)
-        ack_stream_entries(state, entries)
+        process_stream_entries(state, entries)
 
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  defp process_stream_entries(_state, []), do: :ok
+
+  defp process_stream_entries(state, entries) do
+    Enum.each(entries, &handle_stream_entry/1)
+    ack_stream_entries(state, entries)
   end
 
   defp read_stream(state, stream_id) do
@@ -1008,18 +1039,16 @@ defmodule OmeglePhoenix.Matchmaker do
     queue_keys
     |> Enum.uniq()
     |> Enum.each(fn queue_key ->
-      Task.start(fn ->
-        try do
-          do_matching(queue_key)
-        rescue
-          e -> Logger.error("Stream-triggered matching error for #{queue_key}: #{inspect(e)}")
-        end
-      end)
+      try do
+        do_matching(queue_key)
+      rescue
+        e -> Logger.error("Stream-triggered matching error for #{queue_key}: #{inspect(e)}")
+      end
     end)
   end
 
   defp match_stream_group_name do
-    "matchmaking:workers"
+    "matchmaking:" <> match_stream_consumer_name()
   end
 
   defp match_stream_consumer_name do
