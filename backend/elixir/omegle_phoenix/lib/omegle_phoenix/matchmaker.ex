@@ -9,6 +9,7 @@ defmodule OmeglePhoenix.Matchmaker do
   @stream_reconnect_message :connect_match_stream
   @stream_consume_message :consume_match_stream
   @sweep_message :sweep_match_queues
+  @delayed_match_event_message :delayed_match_event
   @prune_queue_script """
   if redis.call('ZCARD', KEYS[1]) == 0 then
     redis.call('SREM', KEYS[2], KEYS[1])
@@ -46,6 +47,7 @@ defmodule OmeglePhoenix.Matchmaker do
     case OmeglePhoenix.Redis.pipeline(commands) do
       {:ok, _result} ->
         emit_match_event(queue_keys, "join", session_id)
+        schedule_fallback_checks(queue_keys, normalized_preferences, session_id)
 
         :telemetry.execute([:omegle_phoenix, :matchmaking, :queued], %{count: 1}, %{
           session_id: session_id
@@ -235,6 +237,11 @@ defmodule OmeglePhoenix.Matchmaker do
              state.sweep_stale_after_ms
            )
      }}
+  end
+
+  def handle_info({@delayed_match_event_message, queue_keys, session_id, phase}, state) do
+    emit_match_event(queue_keys, phase, session_id)
+    {:noreply, state}
   end
 
   def handle_info(_info, state) do
@@ -476,6 +483,10 @@ defmodule OmeglePhoenix.Matchmaker do
             (can_relax_interest_match?(session1.interest_buckets, wait1) and
                can_relax_interest_match?(session2.interest_buckets, wait2))
 
+        shared_random_queue?(queue_key) ->
+          can_match_in_shared_random_queue?(session1.interest_buckets, wait1) and
+            can_match_in_shared_random_queue?(session2.interest_buckets, wait2)
+
         random_queue?(queue_key) ->
           can_match_in_random_queue?(session1.interest_buckets, wait1) and
             can_match_in_random_queue?(session2.interest_buckets, wait2)
@@ -488,6 +499,7 @@ defmodule OmeglePhoenix.Matchmaker do
 
   defp strict_bucket_queue?(queue_key), do: String.contains?(queue_key, ":bucket:strict:")
   defp relaxed_bucket_queue?(queue_key), do: String.contains?(queue_key, ":bucket:relaxed:")
+  defp shared_random_queue?(queue_key), do: String.ends_with?(queue_key, ":random:shared")
 
   defp random_queue?(queue_key) do
     String.contains?(queue_key, ":random:")
@@ -506,6 +518,14 @@ defmodule OmeglePhoenix.Matchmaker do
       interest_buckets == [] -> true
       OmeglePhoenix.Config.get_match_overflow_wait_ms() <= 0 -> true
       true -> wait_time_ms >= OmeglePhoenix.Config.get_match_overflow_wait_ms()
+    end
+  end
+
+  defp can_match_in_shared_random_queue?(interest_buckets, wait_time_ms) do
+    cond do
+      interest_buckets == [] -> true
+      OmeglePhoenix.Config.get_match_relaxed_wait_ms() <= 0 -> true
+      true -> wait_time_ms >= OmeglePhoenix.Config.get_match_relaxed_wait_ms()
     end
   end
 
@@ -577,6 +597,41 @@ defmodule OmeglePhoenix.Matchmaker do
     |> Enum.uniq()
   end
 
+  defp schedule_fallback_checks(queue_keys, preferences, session_id) do
+    if interest_buckets(preferences) != [] do
+      schedule_delayed_match_event(
+        queue_keys,
+        session_id,
+        "relaxed_wait_elapsed",
+        OmeglePhoenix.Config.get_match_relaxed_wait_ms()
+      )
+
+      schedule_delayed_match_event(
+        queue_keys,
+        session_id,
+        "overflow_wait_elapsed",
+        OmeglePhoenix.Config.get_match_overflow_wait_ms()
+      )
+    end
+
+    :ok
+  end
+
+  defp schedule_delayed_match_event(_queue_keys, _session_id, _phase, delay_ms)
+       when not is_integer(delay_ms) or delay_ms <= 0 do
+    :ok
+  end
+
+  defp schedule_delayed_match_event(queue_keys, session_id, phase, delay_ms) do
+    Process.send_after(
+      __MODULE__,
+      {@delayed_match_event_message, queue_keys, session_id, phase},
+      delay_ms
+    )
+
+    :ok
+  end
+
   defp interest_buckets(preferences) do
     preferences
     |> Map.get("interests", "")
@@ -604,8 +659,8 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   defp relaxed_bucket_queue_keys(mode, family, session_id) do
-    queue_shards(mode, {family, session_id})
-    |> Enum.map(fn shard -> relaxed_bucket_queue_key(mode, family, shard) end)
+    _ = session_id
+    [relaxed_bucket_queue_key(mode, family)]
   end
 
   defp random_queue_keys(mode, session_id) do
@@ -762,12 +817,12 @@ defmodule OmeglePhoenix.Matchmaker do
     "#{@mode_queue_prefix}:text:bucket:strict:#{bucket}"
   end
 
-  defp relaxed_bucket_queue_key(mode, family, shard) when mode in ["lobby", "text", "video"] do
-    "#{@mode_queue_prefix}:#{mode}:bucket:relaxed:#{family}:shard:#{shard}"
+  defp relaxed_bucket_queue_key(mode, family) when mode in ["lobby", "text", "video"] do
+    "#{@mode_queue_prefix}:#{mode}:bucket:relaxed:#{family}"
   end
 
-  defp relaxed_bucket_queue_key(_mode, family, shard) do
-    "#{@mode_queue_prefix}:text:bucket:relaxed:#{family}:shard:#{shard}"
+  defp relaxed_bucket_queue_key(_mode, family) do
+    "#{@mode_queue_prefix}:text:bucket:relaxed:#{family}"
   end
 
   defp relaxed_bucket_family(bucket) do
