@@ -27,6 +27,14 @@ defmodule OmeglePhoenix.RedisState do
   return 1
   """
 
+  @cleanup_ip_sessions_script """
+  redis.call('SREM', KEYS[1], ARGV[1])
+  if redis.call('SCARD', KEYS[1]) == 0 then
+    redis.call('EXPIRE', KEYS[1], ARGV[2])
+  end
+  return 1
+  """
+
   @pair_script """
   redis.call('SETEX', KEYS[1], ARGV[1], ARGV[5])
   redis.call('SETEX', KEYS[2], ARGV[1], ARGV[3])
@@ -270,18 +278,26 @@ defmodule OmeglePhoenix.RedisState do
         {locator_result, locator_us} = timed_us(fn -> cleanup_locators(session_id) end)
 
         with :ok <- locator_result do
-          {index_result, index_us} = timed_us(fn -> cleanup_indexes(session_id, ip, report_grace_ttl) end)
+          case Keyword.get(opts, :index_cleanup, :sync) do
+            :async ->
+              schedule_async_index_cleanup(session_id, ip, report_grace_ttl)
+              {:ok, 1}
 
-          with :ok <- index_result do
-            maybe_log_slow_delete_session(
-              session_id,
-              resolve_route_us,
-              delete_us,
-              locator_us,
-              index_us
-            )
+            _ ->
+              {index_result, index_us} =
+                timed_us(fn -> cleanup_indexes(session_id, ip, report_grace_ttl) end)
 
-            {:ok, 1}
+              with :ok <- index_result do
+                maybe_log_slow_delete_session(
+                  session_id,
+                  resolve_route_us,
+                  delete_us,
+                  locator_us,
+                  index_us
+                )
+
+                {:ok, 1}
+              end
           end
         end
       end
@@ -639,6 +655,28 @@ defmodule OmeglePhoenix.RedisState do
   defp format_duration_us(us) when us >= 1_000, do: "#{Float.round(us / 1_000, 1)}ms"
   defp format_duration_us(us), do: "#{us}us"
 
+  defp schedule_async_index_cleanup(session_id, ip, report_grace_ttl) do
+    Task.Supervisor.start_child(OmeglePhoenix.TaskSupervisor, fn ->
+      {result, duration_us} = timed_us(fn -> cleanup_indexes(session_id, ip, report_grace_ttl) end)
+
+      case result do
+        :ok ->
+          if duration_us >= 500_000 do
+            Logger.warning(
+              "Slow async RedisState.cleanup_indexes for #{session_id}: #{format_duration_us(duration_us)}"
+            )
+          end
+
+        {:error, reason} ->
+          Logger.warning(
+            "Async RedisState.cleanup_indexes failed for #{session_id}: #{inspect(reason)} after #{format_duration_us(duration_us)}"
+          )
+      end
+    end)
+
+    :ok
+  end
+
   defp persist_locators(session_id, route, ip, ttl_seconds) do
     ttl = normalize_ttl!(ttl_seconds)
 
@@ -691,14 +729,23 @@ defmodule OmeglePhoenix.RedisState do
   end
 
   defp cleanup_indexes(session_id, ip, report_grace_ttl) do
-    commands = [
-      ["SREM", OmeglePhoenix.RedisKeys.active_sessions_key(), session_id],
-      ["SREM", OmeglePhoenix.RedisKeys.ip_sessions_key(ip), session_id],
-      ["EXPIRE", OmeglePhoenix.RedisKeys.ip_sessions_key(ip), report_grace_ttl]
-    ]
-
-    case OmeglePhoenix.Redis.pipeline(commands) do
-      {:ok, _} -> :ok
+    with {:ok, _} <-
+           OmeglePhoenix.Redis.command([
+             "SREM",
+             OmeglePhoenix.RedisKeys.active_sessions_key(),
+             session_id
+           ]),
+         {:ok, _} <-
+           OmeglePhoenix.Redis.command([
+             "EVAL",
+             @cleanup_ip_sessions_script,
+             "1",
+             OmeglePhoenix.RedisKeys.ip_sessions_key(ip),
+             session_id,
+             report_grace_ttl
+           ]) do
+      :ok
+    else
       {:error, reason} -> {:error, reason}
     end
   end

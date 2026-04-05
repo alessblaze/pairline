@@ -249,7 +249,8 @@ defmodule OmeglePhoenix.SessionManager do
                session_id,
                session.ip,
                report_grace_seconds(),
-               route: route
+               route: route,
+               index_cleanup: :async
              ) do
           {:ok, _} -> :ok
           {:error, reason} -> {:error, reason}

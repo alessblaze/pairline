@@ -8,6 +8,7 @@ defmodule OmeglePhoenix.Application do
     children = [
       {Finch, name: OmeglePhoenixFinch, pools: %{default: [size: 10]}},
       {Phoenix.PubSub, name: OmeglePhoenix.PubSub},
+      {Task.Supervisor, name: OmeglePhoenix.TaskSupervisor},
       OmeglePhoenix.Redis,
       OmeglePhoenix.ClusterConnector,
       OmeglePhoenix.Metrics,
