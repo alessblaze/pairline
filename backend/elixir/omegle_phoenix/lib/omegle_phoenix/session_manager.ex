@@ -197,7 +197,11 @@ defmodule OmeglePhoenix.SessionManager do
   def delete_session(session_id) do
     case get_session(session_id) do
       {:ok, session} ->
-        case OmeglePhoenix.RedisState.delete_session(session_id, session.ip) do
+        case OmeglePhoenix.RedisState.delete_session(
+               session_id,
+               session.ip,
+               report_grace_seconds()
+             ) do
           {:ok, _} -> :ok
           {:error, reason} -> {:error, reason}
         end
@@ -314,7 +318,7 @@ defmodule OmeglePhoenix.SessionManager do
            updated_session1,
            updated_session2,
            ttl_seconds(),
-           900
+           report_grace_seconds()
          ) do
       {:ok, _} -> {:ok, updated_session1, updated_session2, common_interests}
       {:error, reason} -> {:error, reason}
@@ -441,6 +445,10 @@ defmodule OmeglePhoenix.SessionManager do
       {:ok, _} -> :ok
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  defp report_grace_seconds do
+    OmeglePhoenix.Config.get_report_grace_seconds()
   end
 
   defp decode_session(payload) do

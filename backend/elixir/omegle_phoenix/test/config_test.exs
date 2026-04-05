@@ -7,6 +7,7 @@ defmodule OmeglePhoenix.ConfigTest do
       "ADMIN_STREAM_GROUP",
       "HEALTH_DETAILS_ENABLED",
       "MATCH_EVENT_STREAM_GROUP",
+      "REPORT_GRACE_SECONDS",
       "ROUTER_OWNER_TTL_SECONDS",
       "STREAM_STALE_CONSUMER_IDLE_MS",
       "TURNSTILE_ALLOW_INSECURE_BYPASS",
@@ -50,6 +51,12 @@ defmodule OmeglePhoenix.ConfigTest do
     System.put_env("ROUTER_OWNER_TTL_SECONDS", "1")
 
     assert OmeglePhoenix.Config.get_router_owner_ttl_seconds() == 5
+  end
+
+  test "report grace is clamped to a safe minimum" do
+    System.put_env("REPORT_GRACE_SECONDS", "1")
+
+    assert OmeglePhoenix.Config.get_report_grace_seconds() == 60
   end
 
   test "stream group defaults are stable across nodes" do

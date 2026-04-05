@@ -19,7 +19,16 @@ defmodule OmeglePhoenix.RedisState do
   @delete_script """
   redis.call('SREM', KEYS[1], ARGV[1])
   redis.call('SREM', KEYS[2], ARGV[1])
-  redis.call('DEL', KEYS[3], KEYS[4], KEYS[5], KEYS[6], KEYS[7], KEYS[8], KEYS[9])
+  redis.call('DEL', KEYS[3], KEYS[6], KEYS[7], KEYS[9])
+  if redis.call('EXISTS', KEYS[4]) == 1 then
+    redis.call('EXPIRE', KEYS[4], ARGV[2])
+  end
+  if redis.call('EXISTS', KEYS[5]) == 1 then
+    redis.call('EXPIRE', KEYS[5], ARGV[2])
+  end
+  if redis.call('EXISTS', KEYS[8]) == 1 then
+    redis.call('EXPIRE', KEYS[8], ARGV[2])
+  end
   if redis.call('SCARD', KEYS[2]) == 0 then
     redis.call('DEL', KEYS[2])
   end
@@ -239,7 +248,9 @@ defmodule OmeglePhoenix.RedisState do
     exec(command, opts)
   end
 
-  def delete_session(session_id, ip, opts \\ []) do
+  def delete_session(session_id, ip, report_grace_seconds, opts \\ []) do
+    report_grace_ttl = normalize_ttl!(report_grace_seconds)
+
     command = [
       "EVAL",
       @delete_script,
@@ -253,7 +264,8 @@ defmodule OmeglePhoenix.RedisState do
       match_key(session_id),
       recent_match_key(session_id),
       queue_meta_key(session_id),
-      session_id
+      session_id,
+      report_grace_ttl
     ]
 
     exec(command, opts)

@@ -44,6 +44,12 @@ defmodule OmeglePhoenix.Config do
     get("SESSION_TTL", "3600") |> String.to_integer()
   end
 
+  def get_report_grace_seconds do
+    get("REPORT_GRACE_SECONDS", "900")
+    |> String.to_integer()
+    |> max(60)
+  end
+
   def get_admin_stream do
     get("ADMIN_STREAM", "admin:action:stream")
   end
