@@ -49,7 +49,7 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 
-		if !verifySessionToken(ctx, redisClient, sessionID, sessionToken) {
+		if !verifySessionToken(ctx, redisClient.GetClient(), sessionID, sessionToken) {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid session"})
 			return
 		}

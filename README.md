@@ -35,8 +35,8 @@ Phoenix handles websocket sessions, matchmaking, and session IP tracking. The Go
 
 ## Notes
 
-- The default local ports are `5173` for the frontend, `8080` for Phoenix, and `8082` for the Go service.
-- `docker compose up -d redis postgres` starts the local data services.
+- The default local ports are `5173` for the frontend, `8080` for Phoenix ingress, and `8081` for Go ingress.
+- `docker compose up -d` at the repo root now boots a 6-node local Valkey/Redis Cluster on ports `7000` through `7005` for migration work.
 - `SHARED_SECRET` must match across the backend services.
 
 ## Why Pairline Scales

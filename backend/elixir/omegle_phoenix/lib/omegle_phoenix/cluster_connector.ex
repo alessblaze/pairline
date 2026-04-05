@@ -18,10 +18,15 @@ defmodule OmeglePhoenix.ClusterConnector do
 
   @impl true
   def init(_opts) do
-    state = %{interval_ms: OmeglePhoenix.Config.get_cluster_connect_interval_ms()}
+    state = %{
+      interval_ms: OmeglePhoenix.Config.get_cluster_connect_interval_ms(),
+      initial_delay_ms: OmeglePhoenix.Config.get_cluster_initial_connect_delay_ms(),
+      retry_attempts: OmeglePhoenix.Config.get_cluster_connect_retry_attempts(),
+      retry_delay_ms: OmeglePhoenix.Config.get_cluster_connect_retry_delay_ms()
+    }
 
     if clustering_enabled?() do
-      send(self(), @reconnect_message)
+      Process.send_after(self(), @reconnect_message, state.initial_delay_ms)
     else
       Logger.info("Cluster connector disabled: CLUSTER_NODES is empty")
     end
@@ -31,7 +36,7 @@ defmodule OmeglePhoenix.ClusterConnector do
 
   @impl true
   def handle_info(@reconnect_message, state) do
-    connect_configured_nodes()
+    connect_configured_nodes(state)
     Process.send_after(self(), @reconnect_message, state.interval_ms)
     {:noreply, state}
   end
@@ -40,7 +45,7 @@ defmodule OmeglePhoenix.ClusterConnector do
     {:noreply, state}
   end
 
-  defp connect_configured_nodes do
+  defp connect_configured_nodes(state) do
     current_node = Node.self()
 
     OmeglePhoenix.Config.get_cluster_nodes()
@@ -49,7 +54,7 @@ defmodule OmeglePhoenix.ClusterConnector do
       if target_node in Node.list() do
         :ok
       else
-        case Node.connect(target_node) do
+        case connect_with_retry(target_node, state.retry_attempts, state.retry_delay_ms) do
           true ->
             Logger.info(
               "Connected Phoenix node #{inspect(current_node)} -> #{inspect(target_node)}"
@@ -65,6 +70,26 @@ defmodule OmeglePhoenix.ClusterConnector do
         end
       end
     end)
+  end
+
+  defp connect_with_retry(target_node, attempts, retry_delay_ms)
+
+  defp connect_with_retry(target_node, attempts, retry_delay_ms) when attempts > 1 do
+    case Node.connect(target_node) do
+      true ->
+        true
+
+      false ->
+        Process.sleep(retry_delay_ms)
+        connect_with_retry(target_node, attempts - 1, retry_delay_ms)
+
+      :ignored = ignored ->
+        ignored
+    end
+  end
+
+  defp connect_with_retry(target_node, _attempts, _retry_delay_ms) do
+    Node.connect(target_node)
   end
 
   defp clustering_enabled? do

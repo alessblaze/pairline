@@ -140,5 +140,10 @@ defmodule OmeglePhoenix.SessionLock do
     :ok
   end
 
-  defp lock_key(session_id), do: "session:lock:" <> session_id
+  defp lock_key(session_id) do
+    case OmeglePhoenix.SessionManager.get_session_route(session_id) do
+      {:ok, route} -> OmeglePhoenix.RedisKeys.session_lock_key(session_id, route)
+      _ -> "session:lock:" <> session_id
+    end
+  end
 end

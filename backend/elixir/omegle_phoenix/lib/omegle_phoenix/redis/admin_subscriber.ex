@@ -2,7 +2,7 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
   use GenServer
   require Logger
 
-  defstruct [:connection, :stream, :group, :consumer]
+  defstruct [:stream, :group, :consumer]
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -15,8 +15,7 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
     state = %{
       stream: stream,
       group: OmeglePhoenix.Config.get_admin_stream_group(),
-      consumer: stream_consumer_name(),
-      connection: nil
+      consumer: stream_consumer_name()
     }
 
     send(self(), :connect)
@@ -25,36 +24,21 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
 
   @impl true
   def handle_info(:connect, state) do
-    stop_connection(state.connection)
-
-    case start_connection() do
-      {:ok, connection} ->
-        case ensure_stream_group(connection, state.stream, state.group) do
-          :ok ->
-            claim_stale_pending(connection, state.stream, state.group, state.consumer)
-            cleanup_stale_consumers(connection, state.stream, state.group, state.consumer)
-            send(self(), :consume_stream)
-            {:noreply, %{state | connection: connection}}
-
-          {:error, reason} ->
-            Logger.error(
-              "Failed to initialize admin stream #{state.stream} / #{state.group}: #{inspect(reason)}"
-            )
-
-            stop_connection(connection)
-            Process.send_after(self(), :connect, 1_000)
-            {:noreply, %{state | connection: nil}}
-        end
+    case ensure_stream_group(state.stream, state.group) do
+      :ok ->
+        claim_stale_pending(state.stream, state.group, state.consumer)
+        cleanup_stale_consumers(state.stream, state.group, state.consumer)
+        send(self(), :consume_stream)
+        {:noreply, state}
 
       {:error, reason} ->
-        Logger.error("Failed to connect admin stream consumer: #{inspect(reason)}")
-        Process.send_after(self(), :connect, 1_000)
-        {:noreply, %{state | connection: nil}}
-    end
-  end
+        Logger.error(
+          "Failed to initialize admin stream #{state.stream} / #{state.group}: #{inspect(reason)}"
+        )
 
-  def handle_info(:consume_stream, %{connection: nil} = state) do
-    {:noreply, state}
+        Process.send_after(self(), :connect, 1_000)
+        {:noreply, state}
+    end
   end
 
   def handle_info(:consume_stream, state) do
@@ -65,14 +49,11 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
 
         {:error, reason} ->
           Logger.warning("Redis admin stream consumer disconnected: #{inspect(reason)}")
-          stop_connection(state.connection)
           Process.send_after(self(), :connect, 1_000)
-          %{state | connection: nil}
+          state
       end
 
-    if state.connection != nil do
-      send(self(), :consume_stream)
-    end
+    send(self(), :consume_stream)
 
     {:noreply, state}
   end
@@ -82,38 +63,10 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
   end
 
   @impl true
-  def terminate(_reason, state) do
-    stop_connection(state.connection)
-    :ok
-  end
+  def terminate(_reason, _state), do: :ok
 
-  defp start_connection do
-    opts = [
-      host: OmeglePhoenix.Config.get_redis_host(),
-      port: OmeglePhoenix.Config.get_redis_port()
-    ]
-
-    opts =
-      case OmeglePhoenix.Config.get_redis_password() do
-        nil -> opts
-        password -> Keyword.put(opts, :password, password)
-      end
-
-    Redix.start_link(opts)
-  end
-
-  defp stop_connection(nil), do: :ok
-
-  defp stop_connection(connection) do
-    try do
-      Redix.stop(connection)
-    rescue
-      _ -> :ok
-    end
-  end
-
-  defp ensure_stream_group(connection, stream, group) do
-    case Redix.command(connection, ["XGROUP", "CREATE", stream, group, "$", "MKSTREAM"]) do
+  defp ensure_stream_group(stream, group) do
+    case OmeglePhoenix.Redis.command(["XGROUP", "CREATE", stream, group, "$", "MKSTREAM"]) do
       {:ok, "OK"} ->
         :ok
 
@@ -125,17 +78,17 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
     end
   end
 
-  defp claim_stale_pending(connection, stream, group, consumer) do
-    do_claim_stale_pending(connection, stream, group, consumer, "0-0", 0)
+  defp claim_stale_pending(stream, group, consumer) do
+    do_claim_stale_pending(stream, group, consumer, "0-0", 0)
   end
 
-  defp do_claim_stale_pending(_connection, _stream, _group, _consumer, _start_id, attempts)
+  defp do_claim_stale_pending(_stream, _group, _consumer, _start_id, attempts)
        when attempts >= 100 do
     :ok
   end
 
-  defp do_claim_stale_pending(connection, stream, group, consumer, start_id, attempts) do
-    case Redix.command(connection, [
+  defp do_claim_stale_pending(stream, group, consumer, start_id, attempts) do
+    case OmeglePhoenix.Redis.command([
            "XAUTOCLAIM",
            stream,
            group,
@@ -149,7 +102,7 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
         if entries == [] or next_start_id == start_id do
           :ok
         else
-          do_claim_stale_pending(connection, stream, group, consumer, next_start_id, attempts + 1)
+          do_claim_stale_pending(stream, group, consumer, next_start_id, attempts + 1)
         end
 
       {:ok, [next_start_id, entries, _deleted_ids]}
@@ -157,7 +110,7 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
         if entries == [] or next_start_id == start_id do
           :ok
         else
-          do_claim_stale_pending(connection, stream, group, consumer, next_start_id, attempts + 1)
+          do_claim_stale_pending(stream, group, consumer, next_start_id, attempts + 1)
         end
 
       {:error, _} ->
@@ -168,11 +121,11 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
     end
   end
 
-  defp cleanup_stale_consumers(connection, stream, group, current_consumer) do
+  defp cleanup_stale_consumers(stream, group, current_consumer) do
     active_consumers = active_consumer_names(current_consumer)
     idle_cutoff_ms = OmeglePhoenix.Config.get_stream_stale_consumer_idle_ms()
 
-    case Redix.command(connection, ["XINFO", "CONSUMERS", stream, group]) do
+    case OmeglePhoenix.Redis.command(["XINFO", "CONSUMERS", stream, group]) do
       {:ok, consumers} when is_list(consumers) ->
         Enum.each(consumers, fn consumer_info ->
           info = xinfo_to_map(consumer_info)
@@ -181,7 +134,7 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
 
           if is_binary(name) and name != current_consumer and idle_ms >= idle_cutoff_ms and
                not MapSet.member?(active_consumers, name) do
-            _ = Redix.command(connection, ["XGROUP", "DELCONSUMER", stream, group, name])
+            _ = OmeglePhoenix.Redis.command(["XGROUP", "DELCONSUMER", stream, group, name])
           end
         end)
 
@@ -228,7 +181,7 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
       stream_id
     ]
 
-    case Redix.command(state.connection, command,
+    case OmeglePhoenix.Redis.command(command,
            timeout: OmeglePhoenix.Config.get_admin_stream_block_ms() + 2_000
          ) do
       {:ok, nil} ->
@@ -250,7 +203,7 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
   defp ack_stream_entries(state, entries) do
     ids = Enum.map(entries, fn [entry_id, _fields] -> entry_id end)
 
-    case Redix.command(state.connection, ["XACK", state.stream, state.group | ids]) do
+    case OmeglePhoenix.Redis.command(["XACK", state.stream, state.group | ids]) do
       {:ok, _} -> :ok
       {:error, reason} -> {:error, reason}
     end

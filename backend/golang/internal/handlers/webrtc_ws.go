@@ -148,8 +148,10 @@ func (h *RedisSignalingHub) Unregister(sessionID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	_ = h.compareAndDelete(ctx, ownerKey(sessionID), h.instanceID)
-	_ = h.redis.GetClient().Del(ctx, readyKey(sessionID)).Err()
+	if route, err := appredis.ResolveSessionRoute(ctx, h.redis.GetClient(), sessionID); err == nil {
+		_ = h.compareAndDelete(ctx, ownerKey(sessionID, route), h.instanceID)
+		_ = h.redis.GetClient().Del(ctx, readyKey(sessionID, route)).Err()
+	}
 }
 
 func (h *RedisSignalingHub) MarkReady(sessionID string) {
@@ -160,7 +162,12 @@ func (h *RedisSignalingHub) MarkReady(sessionID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	_ = h.redis.GetClient().Set(ctx, readyKey(sessionID), "1", readySignalTTL).Err()
+	route, err := appredis.ResolveSessionRoute(ctx, h.redis.GetClient(), sessionID)
+	if err != nil {
+		return
+	}
+
+	_ = h.redis.GetClient().Set(ctx, readyKey(sessionID, route), "1", readySignalTTL).Err()
 }
 
 func (h *RedisSignalingHub) IsReady(sessionID string) bool {
@@ -171,7 +178,12 @@ func (h *RedisSignalingHub) IsReady(sessionID string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	exists, err := h.redis.GetClient().Exists(ctx, readyKey(sessionID)).Result()
+	route, err := appredis.ResolveSessionRoute(ctx, h.redis.GetClient(), sessionID)
+	if err != nil {
+		return false
+	}
+
+	exists, err := h.redis.GetClient().Exists(ctx, readyKey(sessionID, route)).Result()
 	return err == nil && exists > 0
 }
 
@@ -183,7 +195,12 @@ func (h *RedisSignalingHub) SendOrQueue(targetSessionID string, payload []byte) 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	owner, err := h.redis.GetClient().Get(ctx, ownerKey(targetSessionID)).Result()
+	route, err := appredis.ResolveSessionRoute(ctx, h.redis.GetClient(), targetSessionID)
+	if err != nil {
+		return h.enqueuePending(ctx, targetSessionID, payload)
+	}
+
+	owner, err := h.redis.GetClient().Get(ctx, ownerKey(targetSessionID, route)).Result()
 	if err == nil && owner != "" {
 		envelope, marshalErr := json.Marshal(redisSignalEnvelope{
 			TargetSessionID: targetSessionID,
@@ -193,10 +210,6 @@ func (h *RedisSignalingHub) SendOrQueue(targetSessionID string, payload []byte) 
 			delivered, publishErr := h.redis.GetClient().Publish(ctx, signalChannel(owner), envelope).Result()
 			if publishErr == nil && delivered > 0 {
 				return nil
-			}
-
-			if publishErr == nil && delivered == 0 {
-				_ = h.compareAndDelete(ctx, ownerKey(targetSessionID), owner)
 			}
 		}
 	}
@@ -322,10 +335,15 @@ table.insert(pending, 1, "ok")
 return pending
 `
 
+	route, err := appredis.ResolveSessionRoute(ctx, h.redis.GetClient(), sessionID)
+	if err != nil {
+		return nil, err
+	}
+
 	result, err := h.redis.GetClient().Eval(
 		ctx,
 		claimScript,
-		[]string{ownerKey(sessionID), readyKey(sessionID), pendingKey(sessionID)},
+		[]string{ownerKey(sessionID, route), readyKey(sessionID, route), pendingKey(sessionID, route)},
 		h.instanceID,
 		int(ownerTTL/time.Second),
 		maxPendingMsgs,
@@ -368,11 +386,17 @@ return pending
 }
 
 func (h *RedisSignalingHub) enqueuePending(ctx context.Context, sessionID string, payload []byte) error {
+	route, err := appredis.ResolveSessionRoute(ctx, h.redis.GetClient(), sessionID)
+	if err != nil {
+		return err
+	}
+
 	pipe := h.redis.GetClient().TxPipeline()
-	pipe.RPush(ctx, pendingKey(sessionID), string(payload))
-	pipe.LTrim(ctx, pendingKey(sessionID), -maxPendingMsgs, -1)
-	pipe.Expire(ctx, pendingKey(sessionID), pendingSignalTTL)
-	_, err := pipe.Exec(ctx)
+	key := pendingKey(sessionID, route)
+	pipe.RPush(ctx, key, string(payload))
+	pipe.LTrim(ctx, key, -maxPendingMsgs, -1)
+	pipe.Expire(ctx, key, pendingSignalTTL)
+	_, err = pipe.Exec(ctx)
 	return err
 }
 
@@ -398,10 +422,15 @@ if not owner then
 end
 return 0
 `
+	route, err := appredis.ResolveSessionRoute(ctx, h.redis.GetClient(), sessionID)
+	if err != nil {
+		return err
+	}
+
 	result, err := h.redis.GetClient().Eval(
 		ctx,
 		refreshOwnerScript,
-		[]string{ownerKey(sessionID)},
+		[]string{ownerKey(sessionID, route)},
 		h.instanceID,
 		int(ownerTTL/time.Second),
 	).Result()
@@ -424,18 +453,21 @@ return 0
 }
 
 func (h *RedisSignalingHub) claimPreconditions(ctx context.Context, sessionID string) (string, bool, error) {
-	currentOwner, err := h.redis.GetClient().Get(ctx, ownerKey(sessionID)).Result()
+	route, err := appredis.ResolveSessionRoute(ctx, h.redis.GetClient(), sessionID)
+	if err != nil {
+		return "", false, nil
+	}
+
+	currentOwner, err := h.redis.GetClient().Get(ctx, ownerKey(sessionID, route)).Result()
 	if err == nil {
 		if currentOwner == h.instanceID {
 			return currentOwner, false, nil
 		}
 
-		counts, countErr := h.redis.GetClient().PubSubNumSub(ctx, signalChannel(currentOwner)).Result()
-		if countErr != nil {
-			return "", false, countErr
-		}
-
-		return currentOwner, counts[signalChannel(currentOwner)] == 0, nil
+		// Ownership takeover is intentionally conservative in cluster mode.
+		// We wait for the TTL or an explicit compare-and-delete path instead of
+		// relying on Pub/Sub subscriber counts from Redis.
+		return currentOwner, false, nil
 	}
 
 	return "", false, nil
@@ -448,16 +480,16 @@ func boolToLuaFlag(value bool) string {
 	return "0"
 }
 
-func ownerKey(sessionID string) string {
-	return "webrtc:owner:" + sessionID
+func ownerKey(sessionID string, route appredis.SessionRoute) string {
+	return appredis.WebRTCOwnerKey(sessionID, route)
 }
 
-func readyKey(sessionID string) string {
-	return "webrtc:ready:" + sessionID
+func readyKey(sessionID string, route appredis.SessionRoute) string {
+	return appredis.WebRTCReadyKey(sessionID, route)
 }
 
-func pendingKey(sessionID string) string {
-	return "webrtc:pending:" + sessionID
+func pendingKey(sessionID string, route appredis.SessionRoute) string {
+	return appredis.WebRTCPendingKey(sessionID, route)
 }
 
 func signalChannel(instanceID string) string {
@@ -482,7 +514,7 @@ func WebRTCWebSocketHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		if !verifySessionToken(ctx, redisClient, sessionID, sessionToken) {
+		if !verifySessionToken(ctx, redisClient.GetClient(), sessionID, sessionToken) {
 			cancel()
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid session"})
 			return
@@ -580,7 +612,14 @@ func WebRTCWebSocketHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			matchedPartner, err := redisClient.GetClient().Get(ctx, "match:"+sessionID).Result()
+			route, routeErr := appredis.ResolveSessionRoute(ctx, redisClient.GetClient(), sessionID)
+			if routeErr != nil {
+				cancel()
+				log.Printf("WebRTC WS missing session route for %s: %v", sessionID, routeErr)
+				continue
+			}
+
+			matchedPartner, err := redisClient.GetClient().Get(ctx, appredis.MatchKey(sessionID, route)).Result()
 			cancel()
 
 			if err != nil || matchedPartner != msg.ToSessionID {

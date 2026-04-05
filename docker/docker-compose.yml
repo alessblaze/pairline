@@ -5,6 +5,7 @@ services:
     depends_on:
       - phoenix1
       - phoenix2
+      - phoenix3
       - golang-public-1
       - golang-public-2
       - golang-admin
@@ -17,15 +18,235 @@ services:
     volumes:
       - ./nginx/pairline.conf:/etc/nginx/conf.d/default.conf:ro
 
-  redis:
+  redis-node-1:
     image: valkey/valkey:9-trixie
-    container_name: pairline-redis
-    command: valkey-server --appendonly yes --requirepass pairline-dev-redis-password
+    container_name: pairline-redis-node-1
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        exec valkey-server \
+          --port 7000 \
+          --bind 0.0.0.0 \
+          --protected-mode no \
+          --appendonly yes \
+          --cluster-enabled yes \
+          --cluster-config-file /data/nodes.conf \
+          --cluster-node-timeout 5000 \
+          --requirepass pairline-dev-redis-password \
+          --masterauth pairline-dev-redis-password
     networks:
       pairline_cluster:
         ipv4_address: 172.30.0.20
+    ports:
+      - "7000:7000"
     volumes:
-      - redis_cluster_data:/data
+      - redis_node_1_data:/data
+
+  redis-node-2:
+    image: valkey/valkey:9-trixie
+    container_name: pairline-redis-node-2
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        exec valkey-server \
+          --port 7001 \
+          --bind 0.0.0.0 \
+          --protected-mode no \
+          --appendonly yes \
+          --cluster-enabled yes \
+          --cluster-config-file /data/nodes.conf \
+          --cluster-node-timeout 5000 \
+          --requirepass pairline-dev-redis-password \
+          --masterauth pairline-dev-redis-password
+    networks:
+      pairline_cluster:
+        ipv4_address: 172.30.0.21
+    ports:
+      - "7001:7001"
+    volumes:
+      - redis_node_2_data:/data
+
+  redis-node-3:
+    image: valkey/valkey:9-trixie
+    container_name: pairline-redis-node-3
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        exec valkey-server \
+          --port 7002 \
+          --bind 0.0.0.0 \
+          --protected-mode no \
+          --appendonly yes \
+          --cluster-enabled yes \
+          --cluster-config-file /data/nodes.conf \
+          --cluster-node-timeout 5000 \
+          --requirepass pairline-dev-redis-password \
+          --masterauth pairline-dev-redis-password
+    networks:
+      pairline_cluster:
+        ipv4_address: 172.30.0.22
+    ports:
+      - "7002:7002"
+    volumes:
+      - redis_node_3_data:/data
+
+  redis-node-4:
+    image: valkey/valkey:9-trixie
+    container_name: pairline-redis-node-4
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        exec valkey-server \
+          --port 7003 \
+          --bind 0.0.0.0 \
+          --protected-mode no \
+          --appendonly yes \
+          --cluster-enabled yes \
+          --cluster-config-file /data/nodes.conf \
+          --cluster-node-timeout 5000 \
+          --requirepass pairline-dev-redis-password \
+          --masterauth pairline-dev-redis-password
+    networks:
+      pairline_cluster:
+        ipv4_address: 172.30.0.23
+    ports:
+      - "7003:7003"
+    volumes:
+      - redis_node_4_data:/data
+
+  redis-node-5:
+    image: valkey/valkey:9-trixie
+    container_name: pairline-redis-node-5
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        exec valkey-server \
+          --port 7004 \
+          --bind 0.0.0.0 \
+          --protected-mode no \
+          --appendonly yes \
+          --cluster-enabled yes \
+          --cluster-config-file /data/nodes.conf \
+          --cluster-node-timeout 5000 \
+          --requirepass pairline-dev-redis-password \
+          --masterauth pairline-dev-redis-password
+    networks:
+      pairline_cluster:
+        ipv4_address: 172.30.0.24
+    ports:
+      - "7004:7004"
+    volumes:
+      - redis_node_5_data:/data
+
+  redis-node-6:
+    image: valkey/valkey:9-trixie
+    container_name: pairline-redis-node-6
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        exec valkey-server \
+          --port 7005 \
+          --bind 0.0.0.0 \
+          --protected-mode no \
+          --appendonly yes \
+          --cluster-enabled yes \
+          --cluster-config-file /data/nodes.conf \
+          --cluster-node-timeout 5000 \
+          --requirepass pairline-dev-redis-password \
+          --masterauth pairline-dev-redis-password
+    networks:
+      pairline_cluster:
+        ipv4_address: 172.30.0.25
+    ports:
+      - "7005:7005"
+    volumes:
+      - redis_node_6_data:/data
+
+  redis-cluster-init:
+    image: valkey/valkey:9-trixie
+    container_name: pairline-redis-cluster-init
+    depends_on:
+      - redis-node-1
+      - redis-node-2
+      - redis-node-3
+      - redis-node-4
+      - redis-node-5
+      - redis-node-6
+    restart: "no"
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        set -e
+        for target in \
+          redis-node-1:7000 \
+          redis-node-2:7001 \
+          redis-node-3:7002 \
+          redis-node-4:7003 \
+          redis-node-5:7004 \
+          redis-node-6:7005
+        do
+          host="$${target%:*}"
+          port="$${target#*:}"
+          until valkey-cli -h "$$host" -p "$$port" -a pairline-dev-redis-password PING >/dev/null 2>&1; do
+            sleep 1
+          done
+        done
+
+        if valkey-cli -h redis-node-1 -p 7000 -a pairline-dev-redis-password cluster info 2>/dev/null | grep -q 'cluster_state:ok'; then
+          echo "Redis cluster already initialized"
+          exit 0
+        fi
+
+        existing_nodes="$$(valkey-cli -h redis-node-1 -p 7000 -a pairline-dev-redis-password cluster nodes 2>/dev/null | grep -c . || true)"
+        if [ "$$existing_nodes" -gt 1 ]; then
+          echo "Redis cluster already configured; waiting for healthy state"
+          for attempt in $$(seq 1 30); do
+            if valkey-cli -h redis-node-1 -p 7000 -a pairline-dev-redis-password cluster info 2>/dev/null | grep -q 'cluster_state:ok'; then
+              echo "Redis cluster already initialized"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Redis cluster is configured but not healthy yet"
+          exit 1
+        fi
+
+        for target in \
+          redis-node-1:7000 \
+          redis-node-2:7001 \
+          redis-node-3:7002 \
+          redis-node-4:7003 \
+          redis-node-5:7004 \
+          redis-node-6:7005
+        do
+          host="$${target%:*}"
+          port="$${target#*:}"
+          dbsize="$$(valkey-cli -h "$$host" -p "$$port" -a pairline-dev-redis-password DBSIZE 2>/dev/null || true)"
+          if [ -n "$$dbsize" ] && [ "$$dbsize" != "0" ]; then
+            echo "Redis node $$host:$$port already contains data; refusing to create a new cluster on non-empty volumes"
+            exit 1
+          fi
+        done
+
+        yes yes | valkey-cli --cluster create \
+          redis-node-1:7000 \
+          redis-node-2:7001 \
+          redis-node-3:7002 \
+          redis-node-4:7003 \
+          redis-node-5:7004 \
+          redis-node-6:7005 \
+          --cluster-replicas 1 \
+          -a pairline-dev-redis-password
+    networks:
+      pairline_cluster:
+        ipv4_address: 172.30.0.26
 
   postgres:
     image: postgres:17-alpine
@@ -51,19 +272,23 @@ services:
     hostname: phoenix1
     working_dir: /app
     depends_on:
-      - redis
+      redis-cluster-init:
+        condition: service_completed_successfully
     environment:
       PORT: "8080"
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
+      PHX_HOST: kalogar.negro.sbs
+      REDIS_MODE: cluster
+      REDIS_HOST: redis-node-1
+      REDIS_PORT: "7000"
+      REDIS_CLUSTER_NODES: redis-node-1:7000,redis-node-2:7001,redis-node-3:7002
       REDIS_PASSWORD: pairline-dev-redis-password
       SHARED_SECRET: pairline-dev-shared-secret
       SECRET_KEY_BASE: pairline-dev-secret-key-base
-      CORS_ORIGINS: http://localhost:8080,http://127.0.0.1:8080
+      CORS_ORIGINS: http://localhost:8080,http://127.0.0.1:8080,https://kalogar.negro.sbs
       TRUSTED_PROXY_CIDRS: 127.0.0.0/8,::1/128,172.16.0.0/12
       NODE_NAME: phoenix1
       NODE_COOKIE: pairline-dev-cookie
-      CLUSTER_NODES: phoenix1@phoenix1,phoenix2@phoenix2
+      CLUSTER_NODES: phoenix1@phoenix1,phoenix2@phoenix2,phoenix3@phoenix3
       NODE_DISTRIBUTION: short
       CLUSTER_CONNECT_INTERVAL_MS: "2000"
       REAPER_INTERVAL_MS: "5000"
@@ -82,6 +307,8 @@ services:
       - /bin/bash
       - -lc
       - |
+        apt-get update &&
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential &&
         mix local.hex --force &&
         mix local.rebar --force &&
         mix deps.get &&
@@ -93,19 +320,23 @@ services:
     hostname: phoenix2
     working_dir: /app
     depends_on:
-      - redis
+      redis-cluster-init:
+        condition: service_completed_successfully
     environment:
       PORT: "8080"
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
+      PHX_HOST: kalogar.negro.sbs
+      REDIS_MODE: cluster
+      REDIS_HOST: redis-node-1
+      REDIS_PORT: "7000"
+      REDIS_CLUSTER_NODES: redis-node-1:7000,redis-node-2:7001,redis-node-3:7002
       REDIS_PASSWORD: pairline-dev-redis-password
       SHARED_SECRET: pairline-dev-shared-secret
       SECRET_KEY_BASE: pairline-dev-secret-key-base
-      CORS_ORIGINS: http://localhost:8080,http://127.0.0.1:8080
+      CORS_ORIGINS: http://localhost:8080,http://127.0.0.1:8080,https://kalogar.negro.sbs
       TRUSTED_PROXY_CIDRS: 127.0.0.0/8,::1/128,172.16.0.0/12
       NODE_NAME: phoenix2
       NODE_COOKIE: pairline-dev-cookie
-      CLUSTER_NODES: phoenix1@phoenix1,phoenix2@phoenix2
+      CLUSTER_NODES: phoenix1@phoenix1,phoenix2@phoenix2,phoenix3@phoenix3
       NODE_DISTRIBUTION: short
       CLUSTER_CONNECT_INTERVAL_MS: "2000"
       REAPER_INTERVAL_MS: "5000"
@@ -124,6 +355,56 @@ services:
       - /bin/bash
       - -lc
       - |
+        apt-get update &&
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential &&
+        mix local.hex --force &&
+        mix local.rebar --force &&
+        mix deps.get &&
+        ./start.sh
+
+  phoenix3:
+    image: hexpm/elixir:1.17.3-erlang-27.1.2-debian-bookworm-20260316-slim
+    container_name: pairline-phoenix3
+    hostname: phoenix3
+    working_dir: /app
+    depends_on:
+      redis-cluster-init:
+        condition: service_completed_successfully
+    environment:
+      PORT: "8080"
+      PHX_HOST: kalogar.negro.sbs
+      REDIS_MODE: cluster
+      REDIS_HOST: redis-node-1
+      REDIS_PORT: "7000"
+      REDIS_CLUSTER_NODES: redis-node-1:7000,redis-node-2:7001,redis-node-3:7002
+      REDIS_PASSWORD: pairline-dev-redis-password
+      SHARED_SECRET: pairline-dev-shared-secret
+      SECRET_KEY_BASE: pairline-dev-secret-key-base
+      CORS_ORIGINS: http://localhost:8080,http://127.0.0.1:8080,https://kalogar.negro.sbs
+      TRUSTED_PROXY_CIDRS: 127.0.0.0/8,::1/128,172.16.0.0/12
+      NODE_NAME: phoenix3
+      NODE_COOKIE: pairline-dev-cookie
+      CLUSTER_NODES: phoenix1@phoenix1,phoenix2@phoenix2,phoenix3@phoenix3
+      NODE_DISTRIBUTION: short
+      CLUSTER_CONNECT_INTERVAL_MS: "2000"
+      REAPER_INTERVAL_MS: "5000"
+      SKIP_DOTENV: "1"
+      MIX_ENV: dev
+    networks:
+      pairline_cluster:
+        ipv4_address: 172.30.0.13
+    volumes:
+      - ../backend/elixir/omegle_phoenix:/app
+      - phoenix3_deps:/app/deps
+      - phoenix3_build:/app/_build
+      - phoenix3_hex:/root/.hex
+      - phoenix3_rebar:/root/.cache/rebar3
+    command:
+      - /bin/bash
+      - -lc
+      - |
+        apt-get update &&
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential &&
         mix local.hex --force &&
         mix local.rebar --force &&
         mix deps.get &&
@@ -134,8 +415,8 @@ services:
     container_name: pairline-golang-public-1
     working_dir: /app
     depends_on:
-      redis:
-        condition: service_started
+      redis-cluster-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     environment:
@@ -147,14 +428,16 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: omegle
       POSTGRES_SSLMODE: disable
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
+      REDIS_MODE: cluster
+      REDIS_HOST: redis-node-1
+      REDIS_PORT: "7000"
+      REDIS_CLUSTER_NODES: redis-node-1:7000,redis-node-2:7001,redis-node-3:7002
       REDIS_PASSWORD: pairline-dev-redis-password
       SHARED_SECRET: pairline-dev-shared-secret
       JWT_SECRET: pairline-dev-jwt-secret-must-be-32-characters-long
       ROOT_ADMIN_USERNAME: admin
       ROOT_ADMIN_PASSWORD: adminpassword123
-      CORS_ORIGIN: http://localhost:8080,http://127.0.0.1:8080
+      CORS_ORIGIN: http://localhost:8080,http://127.0.0.1:8080,https://kalogar.negro.sbs
       TRUSTED_PROXY_CIDRS: 127.0.0.0/8,::1/128,172.16.0.0/12
       GOCACHE: /tmp/go-build
     networks:
@@ -176,8 +459,8 @@ services:
     container_name: pairline-golang-public-2
     working_dir: /app
     depends_on:
-      redis:
-        condition: service_started
+      redis-cluster-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     environment:
@@ -189,14 +472,16 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: omegle
       POSTGRES_SSLMODE: disable
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
+      REDIS_MODE: cluster
+      REDIS_HOST: redis-node-1
+      REDIS_PORT: "7000"
+      REDIS_CLUSTER_NODES: redis-node-1:7000,redis-node-2:7001,redis-node-3:7002
       REDIS_PASSWORD: pairline-dev-redis-password
       SHARED_SECRET: pairline-dev-shared-secret
       JWT_SECRET: pairline-dev-jwt-secret-must-be-32-characters-long
       ROOT_ADMIN_USERNAME: admin
       ROOT_ADMIN_PASSWORD: adminpassword123
-      CORS_ORIGIN: http://localhost:8080,http://127.0.0.1:8080
+      CORS_ORIGIN: http://localhost:8080,http://127.0.0.1:8080,https://kalogar.negro.sbs
       TRUSTED_PROXY_CIDRS: 127.0.0.0/8,::1/128,172.16.0.0/12
       GOCACHE: /tmp/go-build
     networks:
@@ -218,8 +503,8 @@ services:
     container_name: pairline-golang-admin
     working_dir: /app
     depends_on:
-      redis:
-        condition: service_started
+      redis-cluster-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     environment:
@@ -231,14 +516,16 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: omegle
       POSTGRES_SSLMODE: disable
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
+      REDIS_MODE: cluster
+      REDIS_HOST: redis-node-1
+      REDIS_PORT: "7000"
+      REDIS_CLUSTER_NODES: redis-node-1:7000,redis-node-2:7001,redis-node-3:7002
       REDIS_PASSWORD: pairline-dev-redis-password
       SHARED_SECRET: pairline-dev-shared-secret
       JWT_SECRET: pairline-dev-jwt-secret-must-be-32-characters-long
       ROOT_ADMIN_USERNAME: admin
       ROOT_ADMIN_PASSWORD: adminpassword123
-      CORS_ORIGIN: http://localhost:8080,http://127.0.0.1:8080
+      CORS_ORIGIN: http://localhost:8080,http://127.0.0.1:8080,https://kalogar.negro.sbs
       TRUSTED_PROXY_CIDRS: 127.0.0.0/8,::1/128,172.16.0.0/12
       GOCACHE: /tmp/go-build
     networks:
@@ -256,8 +543,13 @@ services:
         /usr/local/go/bin/go run ./cmd/admin
 
 volumes:
-  redis_cluster_data:
   postgres_cluster_data:
+  redis_node_1_data:
+  redis_node_2_data:
+  redis_node_3_data:
+  redis_node_4_data:
+  redis_node_5_data:
+  redis_node_6_data:
   phoenix1_deps:
   phoenix1_build:
   phoenix1_hex:
@@ -266,6 +558,10 @@ volumes:
   phoenix2_build:
   phoenix2_hex:
   phoenix2_rebar:
+  phoenix3_deps:
+  phoenix3_build:
+  phoenix3_hex:
+  phoenix3_rebar:
   golang_mod_cache:
   golang_build_cache:
 

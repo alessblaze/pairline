@@ -6,9 +6,7 @@ defmodule OmeglePhoenix.Router do
   use GenServer
   require Logger
 
-  @reconnect_message :connect_router_channel
   @owner_table :omegle_phoenix_router_owners
-  @owner_key_prefix "session"
   @owner_value_separator "|"
   @compare_delete_script """
   if redis.call('GET', KEYS[1]) == ARGV[1] then
@@ -96,45 +94,22 @@ defmodule OmeglePhoenix.Router do
   @impl true
   def init(_opts) do
     _ = ensure_owner_table()
+    node_channel = node_channel(Atom.to_string(Node.self()))
+    :ok = Phoenix.PubSub.subscribe(OmeglePhoenix.PubSub, node_channel)
 
     state = %{
-      connection: nil,
-      channel: node_channel(Atom.to_string(Node.self())),
+      channel: node_channel,
       owners: %{},
       owner_refs: %{}
     }
 
-    send(self(), @reconnect_message)
     {:ok, state}
   end
 
   @impl true
-  def handle_info(@reconnect_message, state) do
-    stop_connection(state.connection)
-
-    case start_subscription(state.channel) do
-      {:ok, connection} ->
-        {:noreply, %{state | connection: connection}}
-
-      {:error, reason} ->
-        Logger.error("Router Redis subscription failed for #{state.channel}: #{inspect(reason)}")
-        Process.send_after(self(), @reconnect_message, 1_000)
-        {:noreply, %{state | connection: nil}}
-    end
-  end
-
-  def handle_info(
-        {:redix_pubsub, _pid, _ref, :message, %{channel: channel, payload: payload}},
-        state
-      ) do
-    handle_remote_message(channel, payload, state.channel)
+  def handle_info({:router_remote, session_id, message}, state) do
+    dispatch_local(session_id, message)
     {:noreply, state}
-  end
-
-  def handle_info({:redix_pubsub, _pid, _ref, :disconnected, reason}, state) do
-    Logger.warning("Router Redis pub/sub disconnected: #{inspect(reason)}")
-    Process.send_after(self(), @reconnect_message, 1_000)
-    {:noreply, %{state | connection: nil}}
   end
 
   def handle_info({:DOWN, ref, :process, pid, _reason}, state) do
@@ -191,10 +166,7 @@ defmodule OmeglePhoenix.Router do
   end
 
   @impl true
-  def terminate(_reason, state) do
-    stop_connection(state.connection)
-    :ok
-  end
+  def terminate(_reason, _state), do: :ok
 
   defp route(session_id, message) do
     current_node = Atom.to_string(Node.self())
@@ -219,19 +191,21 @@ defmodule OmeglePhoenix.Router do
   end
 
   defp owner_record(session_id) do
-    case OmeglePhoenix.Redis.command(["GET", owner_key(session_id)]) do
-      {:ok, encoded_owner} when is_binary(encoded_owner) ->
-        case decode_owner_record(encoded_owner) do
-          {:ok, owner} ->
-            {:ok, owner}
+    with {:ok, owner_key} <- owner_key(session_id) do
+      case OmeglePhoenix.Redis.command(["GET", owner_key]) do
+        {:ok, encoded_owner} when is_binary(encoded_owner) ->
+          case decode_owner_record(encoded_owner) do
+            {:ok, owner} ->
+              {:ok, owner}
 
-          :error ->
-            _ = compare_and_delete_owner_value(session_id, encoded_owner)
-            {:error, :invalid_owner}
-        end
+            :error ->
+              _ = compare_and_delete_owner_value(session_id, encoded_owner)
+              {:error, :invalid_owner}
+          end
 
-      other ->
-        other
+        other ->
+          other
+      end
     end
   end
 
@@ -248,25 +222,27 @@ defmodule OmeglePhoenix.Router do
   end
 
   defp dispatch_remote(session_id, %{node: owner_node} = owner, message) do
-    payload =
-      session_id
-      |> serialize_remote_message(message)
-      |> Jason.encode!()
+    owner_node_atom = String.to_atom(owner_node)
 
-    case OmeglePhoenix.Redis.command(["PUBLISH", node_channel(owner_node), payload]) do
-      {:ok, subscribers} when is_integer(subscribers) and subscribers > 0 ->
+    cond do
+      owner_node_atom == Node.self() ->
+        dispatch_local_if_owned(session_id, message)
+
+      owner_node_atom in Node.list() ->
+        Phoenix.PubSub.broadcast(
+          OmeglePhoenix.PubSub,
+          node_channel(owner_node),
+          {:router_remote, session_id, message}
+        )
+
         :ok
 
-      {:ok, 0} ->
+      true ->
         Logger.warning(
-          "Router remote delivery found no subscribers for #{owner_node}; clearing stale owner for #{session_id}"
+          "Router remote delivery found no connected node #{owner_node}; clearing stale owner for #{session_id}"
         )
 
         compare_and_delete_owner(session_id, owner)
-        dispatch_local_if_owned(session_id, message)
-
-      {:error, reason} ->
-        Logger.error("Router remote delivery failed for #{owner_node}: #{inspect(reason)}")
         dispatch_local_if_owned(session_id, message)
     end
   end
@@ -284,92 +260,6 @@ defmodule OmeglePhoenix.Router do
           :ets.delete(@owner_table, session_id)
           false
         end
-    end
-  end
-
-  defp serialize_remote_message(session_id, {:router_message, message}) do
-    %{"session_id" => session_id, "kind" => "message", "payload" => message}
-  end
-
-  defp serialize_remote_message(session_id, {:router_match, partner_session_id, common_interests}) do
-    %{
-      "session_id" => session_id,
-      "kind" => "match",
-      "partner_session_id" => partner_session_id,
-      "common_interests" => common_interests
-    }
-  end
-
-  defp serialize_remote_message(session_id, {:router_disconnect, reason}) do
-    %{"session_id" => session_id, "kind" => "disconnect", "reason" => reason}
-  end
-
-  defp serialize_remote_message(session_id, :router_timeout) do
-    %{"session_id" => session_id, "kind" => "timeout"}
-  end
-
-  defp serialize_remote_message(session_id, {:router_banned, reason}) do
-    %{"session_id" => session_id, "kind" => "banned", "reason" => reason}
-  end
-
-  defp handle_remote_message(channel, payload, expected_channel)
-       when channel == expected_channel do
-    with {:ok, %{"session_id" => session_id, "kind" => kind} = decoded} <- Jason.decode(payload),
-         message when not is_nil(message) <- deserialize_remote_message(kind, decoded) do
-      dispatch_local(session_id, message)
-    else
-      {:error, reason} ->
-        Logger.warning("Router failed to decode remote message: #{inspect(reason)}")
-
-      nil ->
-        Logger.warning("Router received unsupported remote message payload")
-    end
-  end
-
-  defp handle_remote_message(_channel, _payload, _expected_channel), do: :ok
-
-  defp deserialize_remote_message("message", %{"payload" => payload}),
-    do: {:router_message, payload}
-
-  defp deserialize_remote_message("match", %{
-         "partner_session_id" => partner_session_id,
-         "common_interests" => common_interests
-       }) do
-    {:router_match, partner_session_id, common_interests}
-  end
-
-  defp deserialize_remote_message("disconnect", %{"reason" => reason}),
-    do: {:router_disconnect, reason}
-
-  defp deserialize_remote_message("timeout", _payload), do: :router_timeout
-  defp deserialize_remote_message("banned", %{"reason" => reason}), do: {:router_banned, reason}
-  defp deserialize_remote_message(_kind, _payload), do: nil
-
-  defp start_subscription(channel) do
-    opts = [
-      host: OmeglePhoenix.Config.get_redis_host(),
-      port: OmeglePhoenix.Config.get_redis_port()
-    ]
-
-    opts =
-      case OmeglePhoenix.Config.get_redis_password() do
-        nil -> opts
-        password -> Keyword.put(opts, :password, password)
-      end
-
-    with {:ok, connection} <- Redix.PubSub.start_link(opts),
-         {:ok, _ref} <- Redix.PubSub.subscribe(connection, channel, self()) do
-      {:ok, connection}
-    end
-  end
-
-  defp stop_connection(nil), do: :ok
-
-  defp stop_connection(connection) do
-    try do
-      Redix.PubSub.stop(connection)
-    rescue
-      _ -> :ok
     end
   end
 
@@ -455,38 +345,42 @@ defmodule OmeglePhoenix.Router do
 
   defp compare_and_delete_owner_value(session_id, expected_owner_value)
        when is_binary(expected_owner_value) do
-    _ =
-      OmeglePhoenix.Redis.command([
-        "EVAL",
-        @compare_delete_script,
-        "1",
-        owner_key(session_id),
-        expected_owner_value
-      ])
+    with {:ok, owner_key} <- owner_key(session_id) do
+      _ =
+        OmeglePhoenix.Redis.command([
+          "EVAL",
+          @compare_delete_script,
+          "1",
+          owner_key,
+          expected_owner_value
+        ])
+    end
 
     :ok
   end
 
   defp persist_owner(session_id, owner) do
-    case OmeglePhoenix.Redis.command([
-           "SETEX",
-           owner_key(session_id),
-           Integer.to_string(OmeglePhoenix.Config.get_router_owner_ttl_seconds()),
-           encode_owner_record(owner)
-         ]) do
-      {:ok, "OK"} ->
-        :ok
+    with {:ok, owner_key} <- owner_key(session_id) do
+      case OmeglePhoenix.Redis.command([
+             "SETEX",
+             owner_key,
+             Integer.to_string(OmeglePhoenix.Config.get_router_owner_ttl_seconds()),
+             encode_owner_record(owner)
+           ]) do
+        {:ok, "OK"} ->
+          :ok
 
-      {:error, reason} = error ->
-        Logger.warning("Router failed to persist owner for #{session_id}: #{inspect(reason)}")
-        error
+        {:error, reason} = error ->
+          Logger.warning("Router failed to persist owner for #{session_id}: #{inspect(reason)}")
+          error
 
-      other ->
-        Logger.warning(
-          "Router received unexpected owner persist result for #{session_id}: #{inspect(other)}"
-        )
+        other ->
+          Logger.warning(
+            "Router received unexpected owner persist result for #{session_id}: #{inspect(other)}"
+          )
 
-        {:error, :unexpected_result}
+          {:error, :unexpected_result}
+      end
     end
   end
 
@@ -494,7 +388,11 @@ defmodule OmeglePhoenix.Router do
     %{node: Atom.to_string(Node.self()), token: token}
   end
 
-  defp owner_key(session_id), do: "#{@owner_key_prefix}:#{session_id}:owner"
+  defp owner_key(session_id) do
+    with {:ok, route} <- OmeglePhoenix.SessionManager.get_session_route(session_id) do
+      {:ok, OmeglePhoenix.RedisKeys.session_owner_key(session_id, route)}
+    end
+  end
 
   defp owner_token do
     Integer.to_string(System.unique_integer([:positive, :monotonic]))

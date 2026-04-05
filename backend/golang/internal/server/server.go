@@ -15,7 +15,7 @@ import (
 
 	"github.com/anish/omegle/backend/golang/internal/handlers"
 	"github.com/anish/omegle/backend/golang/internal/middleware"
-	"github.com/anish/omegle/backend/golang/internal/redis"
+	appredis "github.com/anish/omegle/backend/golang/internal/redis"
 	"github.com/anish/omegle/backend/golang/internal/storage"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -25,7 +25,7 @@ import (
 type Server struct {
 	router       *gin.Engine
 	db           *storage.Database
-	redis        *redis.Client
+	redis        *appredis.Client
 	sharedSecret string
 	jwtSecret    string
 	serviceName  string
@@ -49,7 +49,7 @@ func NewAdminServer() *Server {
 
 func newServer(enablePublic, enableAdmin bool, serviceName string) *Server {
 	db := storage.NewDatabase()
-	redisClient := redis.NewClient()
+	redisClient := appredis.NewClient()
 
 	sharedSecret := os.Getenv("SHARED_SECRET")
 	if sharedSecret == "" {
@@ -123,7 +123,14 @@ func (s *Server) syncActiveBansToRedis() {
 		}
 
 		if ban.SessionID != "" {
-			if err := s.redis.GetClient().Set(ctx, "ban:"+ban.SessionID, ban.Reason, expiration).Err(); err != nil {
+			if err := appredis.SetIndexedValue(
+				ctx,
+				s.redis.GetClient(),
+				appredis.BanIndexKey(),
+				appredis.BanSessionKey(ban.SessionID),
+				ban.Reason,
+				expiration,
+			); err != nil {
 				log.Printf("Failed to sync session ban %s to Redis: %v", ban.SessionID, err)
 			} else {
 				syncedKeys++
@@ -131,7 +138,14 @@ func (s *Server) syncActiveBansToRedis() {
 		}
 
 		if ban.IPAddress != "" {
-			if err := s.redis.GetClient().Set(ctx, "ban:ip:"+ban.IPAddress, ban.Reason, expiration).Err(); err != nil {
+			if err := appredis.SetIndexedValue(
+				ctx,
+				s.redis.GetClient(),
+				appredis.BanIndexKey(),
+				appredis.BanIPKey(ban.IPAddress),
+				ban.Reason,
+				expiration,
+			); err != nil {
 				log.Printf("Failed to sync IP ban %s to Redis: %v", ban.IPAddress, err)
 			} else {
 				syncedKeys++
@@ -185,16 +199,16 @@ func (s *Server) reconcileBanKeys(ctx context.Context, bans []storage.Ban) error
 			continue
 		}
 		if ban.SessionID != "" {
-			activeKeys["ban:"+ban.SessionID] = struct{}{}
+			activeKeys[appredis.BanSessionKey(ban.SessionID)] = struct{}{}
 		}
 		if ban.IPAddress != "" {
-			activeKeys["ban:ip:"+ban.IPAddress] = struct{}{}
+			activeKeys[appredis.BanIPKey(ban.IPAddress)] = struct{}{}
 		}
 	}
 
 	var cursor uint64
 	for {
-		keys, nextCursor, err := s.redis.GetClient().Scan(ctx, cursor, "ban:*", 200).Result()
+		keys, nextCursor, err := s.redis.GetClient().SScan(ctx, appredis.BanIndexKey(), cursor, "*", 200).Result()
 		if err != nil {
 			return err
 		}
@@ -207,8 +221,10 @@ func (s *Server) reconcileBanKeys(ctx context.Context, bans []storage.Ban) error
 		}
 
 		if len(staleKeys) > 0 {
-			if err := s.redis.GetClient().Del(ctx, staleKeys...).Err(); err != nil {
-				return err
+			for _, key := range staleKeys {
+				if err := appredis.DeleteIndexedKey(ctx, s.redis.GetClient(), appredis.BanIndexKey(), key); err != nil {
+					return err
+				}
 			}
 		}
 
@@ -369,7 +385,7 @@ func (s *Server) setupRoutes() {
 
 		moderation := s.router.Group("/api/v1/moderation")
 		{
-			moderation.POST("/report", handlers.CreateReportHandlerGin(s.redis))
+			moderation.POST("/report", handlers.CreateReportHandlerGin(s.redis.GetClient()))
 		}
 	}
 }

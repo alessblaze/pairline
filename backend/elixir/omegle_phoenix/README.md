@@ -69,7 +69,7 @@ Additional Phoenix nodes can be plugged into the cluster by giving each node:
 
 - a unique `NODE_NAME`
 - the same `NODE_COOKIE`
-- `NODE_DISTRIBUTION=short` for container/local hostnames, or `long` for FQDNs
+- `NODE_DISTRIBUTION=short` for short hostnames, or `long` for FQDNs/IP-style full names
 - the same `CLUSTER_NODES` list
 - access to the same Redis instance
 
@@ -78,12 +78,20 @@ Example local two-node cluster:
 ```bash
 # node 1
 PORT=8080 NODE_NAME=phoenix1 NODE_DISTRIBUTION=short NODE_COOKIE=pairline-dev-cookie \
-CLUSTER_NODES=phoenix1@127.0.0.1,phoenix2@127.0.0.1 \
+CLUSTER_NODES=phoenix1@localhost,phoenix2@localhost \
 ./start.sh
 
 # node 2
 PORT=8081 NODE_NAME=phoenix2 NODE_DISTRIBUTION=short NODE_COOKIE=pairline-dev-cookie \
-CLUSTER_NODES=phoenix1@127.0.0.1,phoenix2@127.0.0.1 \
+CLUSTER_NODES=phoenix1@localhost,phoenix2@localhost \
+./start.sh
+```
+
+For long-name distribution, use full node names instead:
+
+```bash
+PORT=8080 NODE_NAME=phoenix1@example.internal NODE_DISTRIBUTION=long NODE_COOKIE=pairline-dev-cookie \
+CLUSTER_NODES=phoenix1@example.internal,phoenix2@example.internal \
 ./start.sh
 ```
 

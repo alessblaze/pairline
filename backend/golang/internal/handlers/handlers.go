@@ -21,10 +21,11 @@ import (
 	"sync"
 	"time"
 
+	appredis "github.com/anish/omegle/backend/golang/internal/redis"
 	"github.com/anish/omegle/backend/golang/internal/middleware"
-	"github.com/anish/omegle/backend/golang/internal/redis"
 	"github.com/anish/omegle/backend/golang/internal/storage"
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
 
@@ -203,7 +204,7 @@ func UpdateReportHandlerGin(c *gin.Context) {
 	})
 }
 
-func CreateReportHandlerGin(redisClient *redis.Client) gin.HandlerFunc {
+func CreateReportHandlerGin(redisClient redis.UniversalClient) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Per-endpoint request size limit: reports with chat logs can be larger but still bounded
 		if c.Request.ContentLength > 262144 { // 256 KB
@@ -251,8 +252,18 @@ func CreateReportHandlerGin(redisClient *redis.Client) gin.HandlerFunc {
 			return
 		}
 
-		rawReporterIP, _ := redisClient.GetClient().Get(ctx, "session:"+req.ReporterSessionID+":ip").Result()
-		rawReportedIP, _ := redisClient.GetClient().Get(ctx, "session:"+req.ReportedSessionID+":ip").Result()
+		reporterRoute, reporterRouteErr := appredis.ResolveSessionRoute(ctx, redisClient, req.ReporterSessionID)
+		reportedRoute, reportedRouteErr := appredis.ResolveSessionRoute(ctx, redisClient, req.ReportedSessionID)
+
+		rawReporterIP := ""
+		if reporterRouteErr == nil {
+			rawReporterIP, _ = redisClient.Get(ctx, appredis.SessionIPKey(req.ReporterSessionID, reporterRoute)).Result()
+		}
+
+		rawReportedIP := ""
+		if reportedRouteErr == nil {
+			rawReportedIP, _ = redisClient.Get(ctx, appredis.SessionIPKey(req.ReportedSessionID, reportedRoute)).Result()
+		}
 
 		reporterIP := normalizeIP(rawReporterIP)
 		reportedIP := normalizeIP(rawReportedIP)
@@ -290,7 +301,7 @@ func CreateReportHandlerGin(redisClient *redis.Client) gin.HandlerFunc {
 	}
 }
 
-func CreateBanHandlerGin(redisClient *redis.Client) gin.HandlerFunc {
+func CreateBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Per-endpoint request size limit: prevent DoS through large payloads
 		if c.Request.ContentLength > 4096 {
@@ -342,8 +353,7 @@ func CreateBanHandlerGin(redisClient *redis.Client) gin.HandlerFunc {
 
 		if req.SessionID != "" {
 			sessionID = req.SessionID
-			raw, _ := redisClient.GetClient().Get(ctx, "session:"+req.SessionID+":ip").Result()
-			ipAddress = normalizeIP(raw)
+			ipAddress = lookupSessionIP(ctx, redisClient.GetClient(), req.SessionID)
 		} else {
 			ipAddress = normalizeIP(req.IP)
 			if ipAddress == "" {
@@ -428,28 +438,47 @@ func CreateBanHandlerGin(redisClient *redis.Client) gin.HandlerFunc {
 		if expiresAt != nil {
 			redisTTL = time.Until(*expiresAt)
 		}
+		redisPropagationFailed := false
 
 		if sessionID != "" {
-			err := redisClient.GetClient().Set(ctx, "ban:"+sessionID, req.Reason, redisTTL).Err()
+			err := appredis.SetIndexedValue(
+				ctx,
+				redisClient.GetClient(),
+				appredis.BanIndexKey(),
+				appredis.BanSessionKey(sessionID),
+				req.Reason,
+				redisTTL,
+			)
 			if err != nil {
 				log.Printf("Failed to store ban in Redis: %v", err)
+				redisPropagationFailed = true
 			}
 
 			err = redisClient.PublishBanAction(ctx, sessionID, ipAddress, req.Reason)
 			if err != nil {
 				log.Printf("Failed to publish ban action: %v", err)
+				redisPropagationFailed = true
 			}
 		}
 
 		if ipAddress != "" {
-			err := redisClient.GetClient().Set(ctx, "ban:ip:"+ipAddress, req.Reason, redisTTL).Err()
+			err := appredis.SetIndexedValue(
+				ctx,
+				redisClient.GetClient(),
+				appredis.BanIndexKey(),
+				appredis.BanIPKey(ipAddress),
+				req.Reason,
+				redisTTL,
+			)
 			if err != nil {
 				log.Printf("Failed to store IP ban in Redis: %v", err)
+				redisPropagationFailed = true
 			}
 
 			err = redisClient.PublishBanIPAction(ctx, ipAddress, req.Reason)
 			if err != nil {
 				log.Printf("Failed to publish ban IP action: %v", err)
+				redisPropagationFailed = true
 			}
 		}
 
@@ -472,6 +501,13 @@ func CreateBanHandlerGin(redisClient *redis.Client) gin.HandlerFunc {
 			"reviewed_at":          reviewedAt,
 		}).Error; err != nil {
 			log.Printf("Failed to auto-approve related reports after ban: %v", err)
+		}
+
+		if redisPropagationFailed {
+			c.JSON(http.StatusBadGateway, gin.H{
+				"error": "Ban saved, but Redis propagation failed",
+			})
+			return
 		}
 
 		c.JSON(http.StatusOK, gin.H{
@@ -532,7 +568,7 @@ func GetBansHandlerGin(c *gin.Context) {
 	})
 }
 
-func DeleteBanHandlerGin(redisClient *redis.Client) gin.HandlerFunc {
+func DeleteBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		banIdentifier := c.Param("session_id")
 
@@ -614,41 +650,79 @@ func DeleteBanHandlerGin(redisClient *redis.Client) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to unban"})
 			return
 		}
+		redisPropagationFailed := false
 
 		if ban.SessionID != "" {
 			if remainingSessionBan != nil {
-				if err := redisClient.GetClient().Set(ctx, "ban:"+ban.SessionID, remainingSessionBan.Reason, redisBanTTL(*remainingSessionBan)).Err(); err != nil {
+				if err := appredis.SetIndexedValue(
+					ctx,
+					redisClient.GetClient(),
+					appredis.BanIndexKey(),
+					appredis.BanSessionKey(ban.SessionID),
+					remainingSessionBan.Reason,
+					redisBanTTL(*remainingSessionBan),
+				); err != nil {
 					log.Printf("Failed to refresh session ban in Redis: %v", err)
+					redisPropagationFailed = true
 				}
 			} else {
-				err := redisClient.GetClient().Del(ctx, "ban:"+ban.SessionID).Err()
+				err := appredis.DeleteIndexedKey(
+					ctx,
+					redisClient.GetClient(),
+					appredis.BanIndexKey(),
+					appredis.BanSessionKey(ban.SessionID),
+				)
 				if err != nil {
 					log.Printf("Failed to delete ban from Redis: %v", err)
+					redisPropagationFailed = true
 				}
 
 				err = redisClient.PublishUnbanAction(ctx, ban.SessionID, ban.IPAddress)
 				if err != nil {
 					log.Printf("Failed to publish unban action: %v", err)
+					redisPropagationFailed = true
 				}
 			}
 		}
 
 		if ban.IPAddress != "" {
 			if remainingIPBan != nil {
-				if err := redisClient.GetClient().Set(ctx, "ban:ip:"+ban.IPAddress, remainingIPBan.Reason, redisBanTTL(*remainingIPBan)).Err(); err != nil {
+				if err := appredis.SetIndexedValue(
+					ctx,
+					redisClient.GetClient(),
+					appredis.BanIndexKey(),
+					appredis.BanIPKey(ban.IPAddress),
+					remainingIPBan.Reason,
+					redisBanTTL(*remainingIPBan),
+				); err != nil {
 					log.Printf("Failed to refresh IP ban in Redis: %v", err)
+					redisPropagationFailed = true
 				}
 			} else {
-				err := redisClient.GetClient().Del(ctx, "ban:ip:"+ban.IPAddress).Err()
+				err := appredis.DeleteIndexedKey(
+					ctx,
+					redisClient.GetClient(),
+					appredis.BanIndexKey(),
+					appredis.BanIPKey(ban.IPAddress),
+				)
 				if err != nil {
 					log.Printf("Failed to delete IP ban from Redis: %v", err)
+					redisPropagationFailed = true
 				}
 
 				err = redisClient.PublishUnbanIPAction(ctx, ban.IPAddress)
 				if err != nil {
 					log.Printf("Failed to publish unban IP action: %v", err)
+					redisPropagationFailed = true
 				}
 			}
+		}
+
+		if redisPropagationFailed {
+			c.JSON(http.StatusBadGateway, gin.H{
+				"error": "Unban saved, but Redis propagation failed",
+			})
+			return
 		}
 
 		c.JSON(http.StatusOK, gin.H{
@@ -857,8 +931,13 @@ func canCreateAdminRole(currentRole, targetRole string) bool {
 	}
 }
 
-func verifySessionToken(ctx context.Context, redisClient *redis.Client, sessionID, providedToken string) bool {
-	expectedToken, err := redisClient.GetClient().Get(ctx, "session:"+sessionID+":token").Result()
+func verifySessionToken(ctx context.Context, redisClient redis.UniversalClient, sessionID, providedToken string) bool {
+	route, err := appredis.ResolveSessionRoute(ctx, redisClient, sessionID)
+	if err != nil {
+		return false
+	}
+
+	expectedToken, err := redisClient.Get(ctx, appredis.SessionTokenKey(sessionID, route)).Result()
 	if err != nil || expectedToken == "" {
 		return false
 	}
@@ -869,14 +948,19 @@ func verifySessionToken(ctx context.Context, redisClient *redis.Client, sessionI
 	return subtle.ConstantTimeCompare([]byte(expectedToken), []byte(providedHashHex)) == 1
 }
 
-func sessionCanReportPeer(ctx context.Context, redisClient *redis.Client, reporterSessionID, reportedSessionID string) bool {
+func sessionCanReportPeer(ctx context.Context, redisClient redis.UniversalClient, reporterSessionID, reportedSessionID string) bool {
+	route, err := appredis.ResolveSessionRoute(ctx, redisClient, reporterSessionID)
+	if err != nil {
+		return false
+	}
+
 	keys := []string{
-		"match:" + reporterSessionID,
-		"recent_match:" + reporterSessionID,
+		appredis.MatchKey(reporterSessionID, route),
+		appredis.RecentMatchKey(reporterSessionID, route),
 	}
 
 	for _, key := range keys {
-		peerID, err := redisClient.GetClient().Get(ctx, key).Result()
+		peerID, err := redisClient.Get(ctx, key).Result()
 		if err == nil && peerID == reportedSessionID {
 			return true
 		}
@@ -1062,10 +1146,10 @@ func stripHTML(s string) string {
 func lockBanTargets(tx *gorm.DB, sessionID, ipAddress string) error {
 	keys := make([]string, 0, 2)
 	if sessionID != "" {
-		keys = append(keys, "ban:session:"+sessionID)
+		keys = append(keys, appredis.BanSessionKey(sessionID))
 	}
 	if ipAddress != "" {
-		keys = append(keys, "ban:ip:"+ipAddress)
+		keys = append(keys, appredis.BanIPKey(ipAddress))
 	}
 	sort.Strings(keys)
 
@@ -1076,6 +1160,20 @@ func lockBanTargets(tx *gorm.DB, sessionID, ipAddress string) error {
 	}
 
 	return nil
+}
+
+func lookupSessionIP(ctx context.Context, redisClient redis.UniversalClient, sessionID string) string {
+	route, err := appredis.ResolveSessionRoute(ctx, redisClient, sessionID)
+	if err != nil {
+		return ""
+	}
+
+	raw, err := redisClient.Get(ctx, appredis.SessionIPKey(sessionID, route)).Result()
+	if err != nil {
+		return ""
+	}
+
+	return normalizeIP(raw)
 }
 
 func activeBanLookup(tx *gorm.DB, sessionID, ipAddress string, now time.Time) *gorm.DB {

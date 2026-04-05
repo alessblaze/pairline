@@ -1,36 +1,27 @@
 defmodule OmeglePhoenix.RedisState do
   @moduledoc false
 
-  @queue_meta_key_prefix "session"
-
   @persist_script """
   redis.call('SETEX', KEYS[1], ARGV[1], ARGV[5])
   redis.call('SETEX', KEYS[2], ARGV[1], ARGV[3])
   redis.call('SETEX', KEYS[3], ARGV[1], ARGV[4])
-  redis.call('SADD', KEYS[4], ARGV[2])
-  redis.call('SADD', KEYS[5], ARGV[2])
-  redis.call('SETEX', KEYS[7], ARGV[1], ARGV[6])
-  if redis.call('EXISTS', KEYS[6]) == 1 then
-    redis.call('EXPIRE', KEYS[6], ARGV[1])
+  redis.call('SETEX', KEYS[4], ARGV[1], ARGV[6])
+  if redis.call('EXISTS', KEYS[5]) == 1 then
+    redis.call('EXPIRE', KEYS[5], ARGV[1])
   end
   return 1
   """
 
   @delete_script """
-  redis.call('SREM', KEYS[1], ARGV[1])
-  redis.call('SREM', KEYS[2], ARGV[1])
-  redis.call('DEL', KEYS[3], KEYS[6], KEYS[7], KEYS[9])
-  if redis.call('EXISTS', KEYS[4]) == 1 then
-    redis.call('EXPIRE', KEYS[4], ARGV[2])
+  redis.call('DEL', KEYS[1], KEYS[4], KEYS[5], KEYS[7])
+  if redis.call('EXISTS', KEYS[2]) == 1 then
+    redis.call('EXPIRE', KEYS[2], ARGV[2])
   end
-  if redis.call('EXISTS', KEYS[5]) == 1 then
-    redis.call('EXPIRE', KEYS[5], ARGV[2])
+  if redis.call('EXISTS', KEYS[3]) == 1 then
+    redis.call('EXPIRE', KEYS[3], ARGV[2])
   end
-  if redis.call('EXISTS', KEYS[8]) == 1 then
-    redis.call('EXPIRE', KEYS[8], ARGV[2])
-  end
-  if redis.call('SCARD', KEYS[2]) == 0 then
-    redis.call('DEL', KEYS[2])
+  if redis.call('EXISTS', KEYS[6]) == 1 then
+    redis.call('EXPIRE', KEYS[6], ARGV[2])
   end
   return 1
   """
@@ -44,15 +35,12 @@ defmodule OmeglePhoenix.RedisState do
   redis.call('SETEX', KEYS[7], ARGV[1], ARGV[9])
   redis.call('SETEX', KEYS[8], ARGV[1], ARGV[10])
   redis.call('SETEX', KEYS[9], ARGV[1], ARGV[12])
-  redis.call('SADD', KEYS[11], ARGV[2], ARGV[8])
-  redis.call('SADD', KEYS[12], ARGV[2])
-  redis.call('SADD', KEYS[13], ARGV[8])
   if redis.call('EXISTS', KEYS[5]) == 1 then redis.call('EXPIRE', KEYS[5], ARGV[1]) end
   if redis.call('EXISTS', KEYS[10]) == 1 then redis.call('EXPIRE', KEYS[10], ARGV[1]) end
-  redis.call('SETEX', KEYS[14], ARGV[1], ARGV[8])
-  redis.call('SETEX', KEYS[15], ARGV[1], ARGV[2])
-  redis.call('SETEX', KEYS[16], ARGV[7], ARGV[8])
-  redis.call('SETEX', KEYS[17], ARGV[7], ARGV[2])
+  redis.call('SETEX', KEYS[11], ARGV[1], ARGV[8])
+  redis.call('SETEX', KEYS[12], ARGV[1], ARGV[2])
+  redis.call('SETEX', KEYS[13], ARGV[7], ARGV[8])
+  redis.call('SETEX', KEYS[14], ARGV[7], ARGV[2])
   return 1
   """
 
@@ -107,11 +95,7 @@ defmodule OmeglePhoenix.RedisState do
     redis.call('EXPIRE', KEYS[10], ARGV[1])
   end
 
-  redis.call('SADD', KEYS[11], ARGV[2], ARGV[7])
-  redis.call('SADD', KEYS[12], ARGV[2])
-  redis.call('SADD', KEYS[13], ARGV[7])
-
-  redis.call('DEL', KEYS[14], KEYS[15])
+  redis.call('DEL', KEYS[11], KEYS[12])
   return 1
   """
 
@@ -225,77 +209,91 @@ defmodule OmeglePhoenix.RedisState do
   def persist_session(session, ttl_seconds, opts \\ []) do
     ttl = normalize_ttl!(ttl_seconds)
     hashed_token = hashed_token(session.token)
+    route = session_route(session)
 
-    command = [
-      "EVAL",
-      @persist_script,
-      "7",
-      session_key(session.id),
-      session_ip_key(session.id),
-      session_token_key(session.id),
-      active_sessions_key(),
-      ip_sessions_key(session.ip),
-      session_owner_key(session.id),
-      queue_meta_key(session.id),
-      ttl,
-      session.id,
-      session.ip,
-      hashed_token,
-      encode_session(session),
-      encode_queue_meta(session)
-    ]
-
-    exec(command, opts)
+    with {:ok, _} <-
+           exec(
+             [
+               "EVAL",
+               @persist_script,
+               "5",
+               session_key(session.id, route),
+               session_ip_key(session.id, route),
+               session_token_key(session.id, route),
+               queue_meta_key(session.id, route),
+               session_owner_key(session.id, route),
+               ttl,
+               session.id,
+               session.ip,
+               hashed_token,
+               encode_session(session),
+               encode_queue_meta(session)
+             ],
+             opts
+           ),
+         :ok <- persist_locator(session.id, route, ttl_seconds),
+         :ok <- sync_indexes(session.id, session.ip, ttl_seconds) do
+      {:ok, 1}
+    else
+      {:error, _reason} = error ->
+        _ = cleanup_locator(session.id)
+        _ = rollback_indexes(session.id, session.ip)
+        rollback_hot_session(session.id, route)
+        error
+    end
   end
 
   def delete_session(session_id, ip, report_grace_seconds, opts \\ []) do
     report_grace_ttl = normalize_ttl!(report_grace_seconds)
 
-    command = [
-      "EVAL",
-      @delete_script,
-      "9",
-      active_sessions_key(),
-      ip_sessions_key(ip),
-      session_key(session_id),
-      session_ip_key(session_id),
-      session_token_key(session_id),
-      session_owner_key(session_id),
-      match_key(session_id),
-      recent_match_key(session_id),
-      queue_meta_key(session_id),
-      session_id,
-      report_grace_ttl
-    ]
-
-    exec(command, opts)
+    with {:ok, route} <- resolve_route(session_id),
+         {:ok, _} <-
+           exec(
+             [
+               "EVAL",
+               @delete_script,
+               "7",
+               session_key(session_id, route),
+               session_ip_key(session_id, route),
+               session_token_key(session_id, route),
+               session_owner_key(session_id, route),
+               match_key(session_id, route),
+               recent_match_key(session_id, route),
+               queue_meta_key(session_id, route),
+               session_id,
+               report_grace_ttl
+             ],
+             opts
+           ),
+         :ok <- cleanup_locator(session_id),
+         :ok <- cleanup_indexes(session_id, ip, report_grace_ttl) do
+      {:ok, 1}
+    end
   end
 
   def pair_sessions(session1, session2, ttl_seconds, recent_ttl_seconds, opts \\ []) do
     ttl = normalize_ttl!(ttl_seconds)
     recent_ttl = normalize_ttl!(recent_ttl_seconds)
+    route = session_route(session1)
 
     command = [
       "EVAL",
       @pair_script,
-      "17",
-      session_key(session1.id),
-      session_ip_key(session1.id),
-      session_token_key(session1.id),
-      queue_meta_key(session1.id),
-      session_owner_key(session1.id),
-      session_key(session2.id),
-      session_ip_key(session2.id),
-      session_token_key(session2.id),
-      queue_meta_key(session2.id),
-      session_owner_key(session2.id),
-      active_sessions_key(),
-      ip_sessions_key(session1.ip),
-      ip_sessions_key(session2.ip),
-      match_key(session1.id),
-      match_key(session2.id),
-      recent_match_key(session1.id),
-      recent_match_key(session2.id),
+      "14",
+      session_key(session1.id, route),
+      session_ip_key(session1.id, route),
+      session_token_key(session1.id, route),
+      queue_meta_key(session1.id, route),
+      session_owner_key(session1.id, route),
+      session_key(session2.id, route),
+      session_ip_key(session2.id, route),
+      session_token_key(session2.id, route),
+      queue_meta_key(session2.id, route),
+      session_owner_key(session2.id, route),
+      match_key(session1.id, route),
+      match_key(session2.id, route),
+      recent_match_key(session1.id, route),
+      recent_match_key(session2.id, route),
       ttl,
       session1.id,
       session1.ip,
@@ -315,26 +313,24 @@ defmodule OmeglePhoenix.RedisState do
 
   def reset_pair(session1, session2, ttl_seconds, opts \\ []) do
     ttl = normalize_ttl!(ttl_seconds)
+    route = session_route(session1)
 
     command = [
       "EVAL",
       @reset_pair_script,
-      "15",
-      session_key(session1.id),
-      session_ip_key(session1.id),
-      session_token_key(session1.id),
-      queue_meta_key(session1.id),
-      session_owner_key(session1.id),
-      session_key(session2.id),
-      session_ip_key(session2.id),
-      session_token_key(session2.id),
-      queue_meta_key(session2.id),
-      session_owner_key(session2.id),
-      active_sessions_key(),
-      ip_sessions_key(session1.ip),
-      ip_sessions_key(session2.ip),
-      match_key(session1.id),
-      match_key(session2.id),
+      "12",
+      session_key(session1.id, route),
+      session_ip_key(session1.id, route),
+      session_token_key(session1.id, route),
+      queue_meta_key(session1.id, route),
+      session_owner_key(session1.id, route),
+      session_key(session2.id, route),
+      session_ip_key(session2.id, route),
+      session_token_key(session2.id, route),
+      queue_meta_key(session2.id, route),
+      session_owner_key(session2.id, route),
+      match_key(session1.id, route),
+      match_key(session2.id, route),
       ttl,
       session1.id,
       session1.ip,
@@ -355,74 +351,86 @@ defmodule OmeglePhoenix.RedisState do
     ttl = normalize_ttl!(ttl_seconds)
     now = Integer.to_string(System.system_time(:second))
 
-    command = [
-      "EVAL",
-      @emergency_ban_script,
-      "2",
-      session_key(session_id),
-      match_key(session_id),
-      ttl,
-      reason,
-      now
-    ]
-
-    exec(command, opts)
+    with {:ok, route} <- resolve_route(session_id) do
+      exec(
+        [
+          "EVAL",
+          @emergency_ban_script,
+          "2",
+          session_key(session_id, route),
+          match_key(session_id, route),
+          ttl,
+          reason,
+          now
+        ],
+        opts
+      )
+    end
   end
 
   def atomic_emergency_disconnect(session_id, ttl_seconds, opts \\ []) do
     ttl = normalize_ttl!(ttl_seconds)
     now = Integer.to_string(System.system_time(:second))
 
-    command = [
-      "EVAL",
-      @emergency_disconnect_script,
-      "2",
-      session_key(session_id),
-      match_key(session_id),
-      ttl,
-      now
-    ]
-
-    exec(command, opts)
+    with {:ok, route} <- resolve_route(session_id) do
+      exec(
+        [
+          "EVAL",
+          @emergency_disconnect_script,
+          "2",
+          session_key(session_id, route),
+          match_key(session_id, route),
+          ttl,
+          now
+        ],
+        opts
+      )
+    end
   end
 
   def atomic_disconnect_partner(partner_id, expected_peer_id, ttl_seconds, opts \\ []) do
     ttl = normalize_ttl!(ttl_seconds)
     now = Integer.to_string(System.system_time(:second))
 
-    command = [
-      "EVAL",
-      @disconnect_partner_script,
-      "2",
-      session_key(partner_id),
-      match_key(partner_id),
-      ttl,
-      now,
-      expected_peer_id
-    ]
-
-    exec(command, opts)
+    with {:ok, route} <- resolve_route(partner_id) do
+      exec(
+        [
+          "EVAL",
+          @disconnect_partner_script,
+          "2",
+          session_key(partner_id, route),
+          match_key(partner_id, route),
+          ttl,
+          now,
+          expected_peer_id
+        ],
+        opts
+      )
+    end
   end
 
   def touch_session(session_id, ttl_seconds, opts \\ []) do
     ttl = normalize_ttl!(ttl_seconds)
     now = Integer.to_string(System.system_time(:second))
 
-    command = [
-      "EVAL",
-      @touch_session_script,
-      "6",
-      session_key(session_id),
-      session_ip_key(session_id),
-      session_token_key(session_id),
-      session_owner_key(session_id),
-      match_key(session_id),
-      queue_meta_key(session_id),
-      ttl,
-      now
-    ]
-
-    exec(command, opts)
+    with {:ok, route} <- resolve_route(session_id) do
+      exec(
+        [
+          "EVAL",
+          @touch_session_script,
+          "6",
+          session_key(session_id, route),
+          session_ip_key(session_id, route),
+          session_token_key(session_id, route),
+          session_owner_key(session_id, route),
+          match_key(session_id, route),
+          queue_meta_key(session_id, route),
+          ttl,
+          now
+        ],
+        opts
+      )
+    end
   end
 
   def cleanup_orphaned_session(session_id, ip \\ nil, report_grace_or_opts \\ nil, opts \\ [])
@@ -441,8 +449,12 @@ defmodule OmeglePhoenix.RedisState do
     ip_value =
       case ip do
         nil ->
-          case OmeglePhoenix.Redis.command(["GET", session_ip_key(session_id)]) do
-            {:ok, value} when is_binary(value) -> value
+          with {:ok, route} <- resolve_route(session_id) do
+            case OmeglePhoenix.Redis.command(["GET", session_ip_key(session_id, route)]) do
+              {:ok, value} when is_binary(value) -> value
+              _ -> "unknown"
+            end
+          else
             _ -> "unknown"
           end
 
@@ -510,6 +522,7 @@ defmodule OmeglePhoenix.RedisState do
 
     %{
       "id" => Map.get(session, :id),
+      "redis_shard" => Map.get(session, :redis_shard, 0),
       "status" => normalize_status(Map.get(session, :status, :waiting)),
       "partner_id" => Map.get(session, :partner_id),
       "last_partner_id" => Map.get(session, :last_partner_id),
@@ -569,13 +582,86 @@ defmodule OmeglePhoenix.RedisState do
     :crypto.hash(:sha256, token) |> Base.encode16(case: :lower)
   end
 
-  defp active_sessions_key, do: "sessions:active"
-  defp session_key(session_id), do: "session:data:#{session_id}"
-  defp session_ip_key(session_id), do: "session:#{session_id}:ip"
-  defp session_token_key(session_id), do: "session:#{session_id}:token"
-  defp queue_meta_key(session_id), do: "#{@queue_meta_key_prefix}:#{session_id}:queue_meta"
-  defp session_owner_key(session_id), do: "session:#{session_id}:owner"
-  defp ip_sessions_key(ip), do: "ip:#{ip}"
-  defp match_key(session_id), do: "match:#{session_id}"
-  defp recent_match_key(session_id), do: "recent_match:#{session_id}"
+  defp session_route(session), do: OmeglePhoenix.RedisKeys.route_for_session(session)
+  defp resolve_route(session_id), do: OmeglePhoenix.RedisKeys.resolve_session_route(session_id)
+
+  defp persist_locator(session_id, route, ttl_seconds) do
+    case OmeglePhoenix.Redis.command([
+           "SETEX",
+           OmeglePhoenix.RedisKeys.session_locator_key(session_id),
+           normalize_ttl!(ttl_seconds),
+           OmeglePhoenix.RedisKeys.encode_locator(route)
+         ]) do
+      {:ok, "OK"} -> :ok
+      {:error, reason} -> {:error, reason}
+      other -> {:error, {:unexpected_locator_result, other}}
+    end
+  end
+
+  defp cleanup_locator(session_id) do
+    case OmeglePhoenix.Redis.command(["DEL", OmeglePhoenix.RedisKeys.session_locator_key(session_id)]) do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, reason}
+      other -> {:error, {:unexpected_locator_cleanup_result, other}}
+    end
+  end
+
+  defp sync_indexes(session_id, ip, ttl_seconds) do
+    commands = [
+      ["SADD", OmeglePhoenix.RedisKeys.active_sessions_key(), session_id],
+      ["SADD", OmeglePhoenix.RedisKeys.ip_sessions_key(ip), session_id],
+      ["EXPIRE", OmeglePhoenix.RedisKeys.ip_sessions_key(ip), normalize_ttl!(ttl_seconds)]
+    ]
+
+    case OmeglePhoenix.Redis.pipeline(commands) do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp cleanup_indexes(session_id, ip, report_grace_ttl) do
+    commands = [
+      ["SREM", OmeglePhoenix.RedisKeys.active_sessions_key(), session_id],
+      ["SREM", OmeglePhoenix.RedisKeys.ip_sessions_key(ip), session_id],
+      ["EXPIRE", OmeglePhoenix.RedisKeys.ip_sessions_key(ip), report_grace_ttl]
+    ]
+
+    case OmeglePhoenix.Redis.pipeline(commands) do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp rollback_indexes(session_id, ip) do
+    commands = [
+      ["SREM", OmeglePhoenix.RedisKeys.active_sessions_key(), session_id],
+      ["SREM", OmeglePhoenix.RedisKeys.ip_sessions_key(ip), session_id]
+    ]
+
+    case OmeglePhoenix.Redis.pipeline(commands) do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp rollback_hot_session(session_id, route) do
+    _ =
+      OmeglePhoenix.Redis.command([
+        "DEL",
+        session_key(session_id, route),
+        session_ip_key(session_id, route),
+        session_token_key(session_id, route),
+        queue_meta_key(session_id, route)
+      ])
+
+    :ok
+  end
+
+  defp session_key(session_id, route), do: OmeglePhoenix.RedisKeys.session_key(session_id, route)
+  defp session_ip_key(session_id, route), do: OmeglePhoenix.RedisKeys.session_ip_key(session_id, route)
+  defp session_token_key(session_id, route), do: OmeglePhoenix.RedisKeys.session_token_key(session_id, route)
+  defp queue_meta_key(session_id, route), do: OmeglePhoenix.RedisKeys.queue_meta_key(session_id, route)
+  defp session_owner_key(session_id, route), do: OmeglePhoenix.RedisKeys.session_owner_key(session_id, route)
+  defp match_key(session_id, route), do: OmeglePhoenix.RedisKeys.match_key(session_id, route)
+  defp recent_match_key(session_id, route), do: OmeglePhoenix.RedisKeys.recent_match_key(session_id, route)
 end

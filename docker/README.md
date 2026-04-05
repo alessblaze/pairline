@@ -2,10 +2,10 @@
 
 This folder contains a local end-to-end Docker Compose stack for testing:
 
-- a 2-node Elixir/Phoenix cluster
+- a 3-node Elixir/Phoenix cluster
 - a 2-node public Go backend
 - a separate admin Go backend
-- Redis
+- a 6-node Valkey/Redis Cluster
 - Postgres
 - Nginx ingress ports split by backend
 
@@ -14,10 +14,12 @@ This folder contains a local end-to-end Docker Compose stack for testing:
 - `nginx` on:
   - `http://localhost:8080` for Phoenix
   - `http://localhost:8081` for Go
-- `redis`
+- `redis-node-1` through `redis-node-6`
+- `redis-cluster-init`
 - `postgres`
 - `phoenix1`
 - `phoenix2`
+- `phoenix3`
 - `golang-public-1`
 - `golang-public-2`
 - `golang-admin`
@@ -25,9 +27,9 @@ This folder contains a local end-to-end Docker Compose stack for testing:
 Nginx is the only exposed ingress layer. Phoenix and Go stay internal to the
 Docker network, while host access is split cleanly by port.
 
-Both Phoenix nodes share:
+All Phoenix nodes share:
 
-- the same Redis instance
+- the same Redis Cluster seed list
 - the same Redis password: `pairline-dev-redis-password`
 - the same Erlang cookie
 - the same cluster node list
@@ -38,7 +40,14 @@ Static IP assignments on `172.30.0.0/24`:
 - `nginx` -> `172.30.0.10`
 - `phoenix1` -> `172.30.0.11`
 - `phoenix2` -> `172.30.0.12`
-- `redis` -> `172.30.0.20`
+- `phoenix3` -> `172.30.0.13`
+- `redis-node-1` -> `172.30.0.20`
+- `redis-node-2` -> `172.30.0.21`
+- `redis-node-3` -> `172.30.0.22`
+- `redis-node-4` -> `172.30.0.23`
+- `redis-node-5` -> `172.30.0.24`
+- `redis-node-6` -> `172.30.0.25`
+- `redis-cluster-init` -> `172.30.0.26`
 - `postgres` -> `172.30.0.30`
 - `golang-public-1` -> `172.30.0.40`
 - `golang-public-2` -> `172.30.0.42`
@@ -47,13 +56,14 @@ Static IP assignments on `172.30.0.0/24`:
 Internal app ports:
 
 - `phoenix1` -> `8080`
-- `phoenix2` -> `8081`
+- `phoenix2` -> `8080`
+- `phoenix3` -> `8080`
 - `golang-public-1` -> `8081`
 - `golang-public-2` -> `8081`
 - `golang-admin` -> `8082`
 - `nginx` -> exposed on host `8080` and `8081`
 
-All Go services share the same Redis and Postgres backing services.
+All Go services share the same Redis Cluster and Postgres backing services.
 
 ## Start the cluster
 
@@ -85,8 +95,8 @@ curl http://localhost:8081/health
 
 You should see for `/api/health`:
 
-- `node` set to either `phoenix1@phoenix1` or `phoenix2@phoenix2`
-- `connected_nodes` listing the peer Phoenix node
+- `node` set to one of `phoenix1@phoenix1`, `phoenix2@phoenix2`, or `phoenix3@phoenix3`
+- `connected_nodes` listing the peer Phoenix nodes
 - shared-state counters and `active_sessions`
 
 ## Useful commands
@@ -94,7 +104,7 @@ You should see for `/api/health`:
 View logs:
 
 ```bash
-docker compose -f docker/docker-compose.yml logs -f nginx phoenix1 phoenix2 golang-public-1 golang-public-2 golang-admin
+docker compose -f docker/docker-compose.yml logs -f nginx phoenix1 phoenix2 phoenix3 golang-public-1 golang-public-2 golang-admin redis-cluster-init
 ```
 
 Stop:
@@ -113,7 +123,8 @@ Inspect a specific Phoenix node directly:
 
 ```bash
 docker compose -f docker/docker-compose.yml exec phoenix1 curl -s http://localhost:8080/api/health
-docker compose -f docker/docker-compose.yml exec phoenix2 curl -s http://localhost:8081/api/health
+docker compose -f docker/docker-compose.yml exec phoenix2 curl -s http://localhost:8080/api/health
+docker compose -f docker/docker-compose.yml exec phoenix3 curl -s http://localhost:8080/api/health
 ```
 
 ## Notes
@@ -122,6 +133,7 @@ docker compose -f docker/docker-compose.yml exec phoenix2 curl -s http://localho
 - The services mount the local Elixir app source into the containers.
 - Phoenix containers set `SKIP_DOTENV=1` so a local mounted `.env` does not
   override Docker-provided Redis/cluster settings.
+- The app services run with `REDIS_MODE=cluster` and seed from `redis-node-1:7000`, `redis-node-2:7001`, and `redis-node-3:7002`.
 - If you are testing through a public hostname or tunnel, add that origin to the
   Phoenix `CORS_ORIGINS` values in the Compose file so websocket origin checks pass.
 - Each Phoenix node gets its own `_build` and `deps` volume to avoid local build collisions.
@@ -129,6 +141,7 @@ docker compose -f docker/docker-compose.yml exec phoenix2 curl -s http://localho
 - The stack uses a named Docker network `pairline_cluster`, which makes it easier
   to plug in more Phoenix nodes or attach ad hoc debug containers.
 - The network has a fixed subnet `172.30.0.0/24`, and each service has a static IP.
+- The Redis Cluster nodes expose ports `7000` through `7005` on the host for direct cluster debugging.
 - Nginx routes:
   - port `8080`: `/ws` and `/api/health` to the Phoenix cluster
   - port `8081`: `/api/v1/moderation/*`, `/api/v1/webrtc/*`, and `/health` to the public Go worker pool

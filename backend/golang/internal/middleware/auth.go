@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/anish/omegle/backend/golang/internal/redis"
+	appredis "github.com/anish/omegle/backend/golang/internal/redis"
 	"github.com/anish/omegle/backend/golang/internal/storage"
 	"github.com/gorilla/mux"
 )
@@ -71,7 +71,7 @@ func RequireDatabase(db *storage.Database) mux.MiddlewareFunc {
 	}
 }
 
-func RequireRedis(redisClient *redis.Client) mux.MiddlewareFunc {
+func RequireRedis(redisClient *appredis.Client) mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := context.WithValue(r.Context(), RedisKey, redisClient)

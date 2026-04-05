@@ -11,6 +11,33 @@ defmodule OmeglePhoenix.Config do
     get("REDIS_HOST", "localhost")
   end
 
+  def get_redis_mode do
+    case get("REDIS_MODE", "standalone") |> String.downcase() do
+      "cluster" -> :cluster
+      _ -> :standalone
+    end
+  end
+
+  def redis_cluster? do
+    get_redis_mode() == :cluster
+  end
+
+  def get_redis_cluster_nodes do
+    get("REDIS_CLUSTER_NODES", "")
+    |> String.split(",", trim: true)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.map(fn node ->
+      case String.split(node, ":", parts: 2) do
+        [host, port] ->
+          {host, String.to_integer(port)}
+
+        [host] ->
+          {host, get_redis_port()}
+      end
+    end)
+  end
+
   def get_redis_port do
     get("REDIS_PORT", "6379") |> String.to_integer()
   end
@@ -86,6 +113,20 @@ defmodule OmeglePhoenix.Config do
 
   def get_cluster_connect_interval_ms do
     get("CLUSTER_CONNECT_INTERVAL_MS", "5000") |> String.to_integer()
+  end
+
+  def get_cluster_initial_connect_delay_ms do
+    get("CLUSTER_INITIAL_CONNECT_DELAY_MS", "3000") |> String.to_integer()
+  end
+
+  def get_cluster_connect_retry_attempts do
+    get("CLUSTER_CONNECT_RETRY_ATTEMPTS", "3")
+    |> String.to_integer()
+    |> max(1)
+  end
+
+  def get_cluster_connect_retry_delay_ms do
+    get("CLUSTER_CONNECT_RETRY_DELAY_MS", "1000") |> String.to_integer()
   end
 
   def get_reaper_interval_ms do

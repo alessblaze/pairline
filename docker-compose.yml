@@ -1,39 +1,215 @@
-version: '3.8'
-
 services:
-  redis:
+  redis-node-1:
     image: valkey/valkey:9-trixie
+    container_name: pairline-redis-node-1
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        exec valkey-server \
+          --port 7000 \
+          --bind 0.0.0.0 \
+          --protected-mode no \
+          --appendonly yes \
+          --cluster-enabled yes \
+          --cluster-config-file /data/nodes.conf \
+          --cluster-node-timeout 5000 \
+          --requirepass testpassword123 \
+          --masterauth testpassword123
     ports:
-      - "6379:6379"
+      - "7000:7000"
+    networks:
+      redis_cluster:
+        ipv4_address: 172.31.0.11
     volumes:
-      - redis_data:/data
-    command: valkey-server --appendonly yes --requirepass testpassword123
+      - redis_node_1_data:/data
 
-  postgres:
-    image: postgres:17-alpine
+  redis-node-2:
+    image: valkey/valkey:9-trixie
+    container_name: pairline-redis-node-2
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        exec valkey-server \
+          --port 7001 \
+          --bind 0.0.0.0 \
+          --protected-mode no \
+          --appendonly yes \
+          --cluster-enabled yes \
+          --cluster-config-file /data/nodes.conf \
+          --cluster-node-timeout 5000 \
+          --requirepass testpassword123 \
+          --masterauth testpassword123
     ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_DB: omegle
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      - "7001:7001"
+    networks:
+      redis_cluster:
+        ipv4_address: 172.31.0.12
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - redis_node_2_data:/data
+
+  redis-node-3:
+    image: valkey/valkey:9-trixie
+    container_name: pairline-redis-node-3
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        exec valkey-server \
+          --port 7002 \
+          --bind 0.0.0.0 \
+          --protected-mode no \
+          --appendonly yes \
+          --cluster-enabled yes \
+          --cluster-config-file /data/nodes.conf \
+          --cluster-node-timeout 5000 \
+          --requirepass testpassword123 \
+          --masterauth testpassword123
+    ports:
+      - "7002:7002"
+    networks:
+      redis_cluster:
+        ipv4_address: 172.31.0.13
+    volumes:
+      - redis_node_3_data:/data
+
+  redis-node-4:
+    image: valkey/valkey:9-trixie
+    container_name: pairline-redis-node-4
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        exec valkey-server \
+          --port 7003 \
+          --bind 0.0.0.0 \
+          --protected-mode no \
+          --appendonly yes \
+          --cluster-enabled yes \
+          --cluster-config-file /data/nodes.conf \
+          --cluster-node-timeout 5000 \
+          --requirepass testpassword123 \
+          --masterauth testpassword123
+    ports:
+      - "7003:7003"
+    networks:
+      redis_cluster:
+        ipv4_address: 172.31.0.14
+    volumes:
+      - redis_node_4_data:/data
+
+  redis-node-5:
+    image: valkey/valkey:9-trixie
+    container_name: pairline-redis-node-5
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        exec valkey-server \
+          --port 7004 \
+          --bind 0.0.0.0 \
+          --protected-mode no \
+          --appendonly yes \
+          --cluster-enabled yes \
+          --cluster-config-file /data/nodes.conf \
+          --cluster-node-timeout 5000 \
+          --requirepass testpassword123 \
+          --masterauth testpassword123
+    ports:
+      - "7004:7004"
+    networks:
+      redis_cluster:
+        ipv4_address: 172.31.0.15
+    volumes:
+      - redis_node_5_data:/data
+
+  redis-node-6:
+    image: valkey/valkey:9-trixie
+    container_name: pairline-redis-node-6
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        exec valkey-server \
+          --port 7005 \
+          --bind 0.0.0.0 \
+          --protected-mode no \
+          --appendonly yes \
+          --cluster-enabled yes \
+          --cluster-config-file /data/nodes.conf \
+          --cluster-node-timeout 5000 \
+          --requirepass testpassword123 \
+          --masterauth testpassword123
+    ports:
+      - "7005:7005"
+    networks:
+      redis_cluster:
+        ipv4_address: 172.31.0.16
+    volumes:
+      - redis_node_6_data:/data
+
+  redis-cluster-init:
+    image: valkey/valkey:9-trixie
+    container_name: pairline-redis-cluster-init
+    depends_on:
+      - redis-node-1
+      - redis-node-2
+      - redis-node-3
+      - redis-node-4
+      - redis-node-5
+      - redis-node-6
+    restart: "no"
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        set -e
+        for target in \
+          redis-node-1:7000 \
+          redis-node-2:7001 \
+          redis-node-3:7002 \
+          redis-node-4:7003 \
+          redis-node-5:7004 \
+          redis-node-6:7005
+        do
+          host="$${target%:*}"
+          port="$${target#*:}"
+          until valkey-cli -h "$$host" -p "$$port" -a testpassword123 PING >/dev/null 2>&1; do
+            sleep 1
+          done
+        done
+
+        if valkey-cli -h redis-node-1 -p 7000 -a testpassword123 cluster info 2>/dev/null | grep -q 'cluster_state:ok'; then
+          echo "Redis cluster already initialized"
+          exit 0
+        fi
+
+        yes yes | valkey-cli --cluster create \
+          redis-node-1:7000 \
+          redis-node-2:7001 \
+          redis-node-3:7002 \
+          redis-node-4:7003 \
+          redis-node-5:7004 \
+          redis-node-6:7005 \
+          --cluster-replicas 1 \
+          -a testpassword123
+    networks:
+      redis_cluster:
+        ipv4_address: 172.31.0.20
 
 volumes:
-  redis_data:
-  postgres_data:
+  redis_node_1_data:
+  redis_node_2_data:
+  redis_node_3_data:
+  redis_node_4_data:
+  redis_node_5_data:
+  redis_node_6_data:
 
-# ---------------------------------------------------------------------------
-# IPv6 networking (optional)
-# Uncomment the block below and set ENABLE_IPV6=true in both service .env
-# files to run the stack in dual-stack (IPv4 + IPv6) mode.
-# ---------------------------------------------------------------------------
-# networks:
-#   default:
-#     driver: bridge
-#     enable_ipv6: true
-#     ipam:
-#       config:
-#         - subnet: "172.28.0.0/16"
-#         - subnet: "fd00:dead:beef::/80"
+networks:
+  redis_cluster:
+    name: pairline_redis_cluster
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24

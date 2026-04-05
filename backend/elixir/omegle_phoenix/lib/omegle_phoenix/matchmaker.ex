@@ -2,9 +2,6 @@ defmodule OmeglePhoenix.Matchmaker do
   use GenServer
   require Logger
 
-  @mode_queue_prefix "matchmaking_queue"
-  @queue_registry_key "matchmaking:queues"
-  @session_queue_prefix "matchmaking:session_queues"
   @lock_key_prefix "matchmaking:leader"
   @stream_reconnect_message :connect_match_stream
   @stream_consume_message :consume_match_stream
@@ -38,70 +35,78 @@ defmodule OmeglePhoenix.Matchmaker do
   def join_queue(session_id, preferences) do
     timestamp = System.system_time(:millisecond)
     normalized_preferences = normalize_preferences(preferences)
-    queue_keys = queue_keys_for_session(session_id, normalized_preferences)
-    membership_key = session_queue_key(session_id)
 
-    commands =
-      Enum.flat_map(queue_keys, fn queue_key ->
-        [
-          ["ZADD", queue_key, to_string(timestamp), session_id],
-          ["SADD", @queue_registry_key, queue_key],
-          ["SADD", membership_key, queue_key]
-        ]
-      end) ++
-        [["EXPIRE", membership_key, Integer.to_string(OmeglePhoenix.Config.get_session_ttl())]]
+    with {:ok, route} <- OmeglePhoenix.SessionManager.get_session_route(session_id) do
+      queue_keys = queue_keys_for_session(session_id, normalized_preferences, route)
+      membership_key = session_queue_key(session_id, route)
+      registry_key = queue_registry_key(route)
 
-    case OmeglePhoenix.Redis.pipeline(commands) do
-      {:ok, _result} ->
-        schedule_local_match_attempts(queue_keys)
-        emit_match_event(queue_keys, "join", session_id)
-        schedule_fallback_checks(queue_keys, normalized_preferences, session_id)
+      commands =
+        Enum.flat_map(queue_keys, fn queue_key ->
+          [
+            ["ZADD", queue_key, to_string(timestamp), session_id],
+            ["SADD", registry_key, queue_key],
+            ["SADD", membership_key, queue_key]
+          ]
+        end) ++
+          [["EXPIRE", membership_key, Integer.to_string(OmeglePhoenix.Config.get_session_ttl())]]
 
-        :telemetry.execute([:omegle_phoenix, :matchmaking, :queued], %{count: 1}, %{
-          session_id: session_id
-        })
+      case OmeglePhoenix.Redis.pipeline(commands) do
+        {:ok, _result} ->
+          schedule_local_match_attempts(queue_keys)
+          emit_match_event(queue_keys, "join", session_id)
+          schedule_fallback_checks(queue_keys, normalized_preferences, session_id)
 
-        :ok
+          :telemetry.execute([:omegle_phoenix, :matchmaking, :queued], %{count: 1}, %{
+            session_id: session_id,
+            shard: route.shard
+          })
 
-      {:error, reason} = error ->
-        Logger.warning("Failed to queue #{session_id}: #{inspect(reason)}")
-        error
+          :ok
+
+        {:error, reason} = error ->
+          Logger.warning("Failed to queue #{session_id}: #{inspect(reason)}")
+          error
+      end
     end
   end
 
   def leave_queue(session_id) do
-    membership_key = session_queue_key(session_id)
+    with {:ok, route} <- OmeglePhoenix.SessionManager.get_session_route(session_id) do
+      membership_key = session_queue_key(session_id, route)
+      registry_key = queue_registry_key(route)
 
-    case OmeglePhoenix.Redis.command(["SMEMBERS", membership_key]) do
-      {:ok, []} ->
-        :ok
+      case OmeglePhoenix.Redis.command(["SMEMBERS", membership_key]) do
+        {:ok, []} ->
+          :ok
 
-      {:ok, queue_keys} when is_list(queue_keys) ->
-        commands =
-          Enum.map(queue_keys, fn queue_key ->
-            ["ZREM", queue_key, session_id]
-          end) ++
+        {:ok, queue_keys} when is_list(queue_keys) ->
+          commands =
             Enum.map(queue_keys, fn queue_key ->
-              ["SREM", membership_key, queue_key]
-            end)
+              ["ZREM", queue_key, session_id]
+            end) ++
+              Enum.map(queue_keys, fn queue_key ->
+                ["SREM", membership_key, queue_key]
+              end) ++ [["DEL", membership_key]]
 
-        case OmeglePhoenix.Redis.pipeline(commands) do
-          {:ok, _results} ->
-            Enum.each(queue_keys, &prune_queue_if_empty/1)
-            :ok
+          case OmeglePhoenix.Redis.pipeline(commands) do
+            {:ok, _results} ->
+              Enum.each(queue_keys, &prune_queue_if_empty(&1, registry_key))
+              :ok
 
-          {:error, reason} = error ->
-            Logger.warning(
-              "Failed to remove #{session_id} from matchmaking queues: #{inspect(reason)}"
-            )
+            {:error, reason} = error ->
+              Logger.warning(
+                "Failed to remove #{session_id} from matchmaking queues: #{inspect(reason)}"
+              )
 
-            error
-        end
+              error
+          end
 
-      {:error, reason} = error ->
-        Logger.warning("Failed to load queue membership for #{session_id}: #{inspect(reason)}")
+        {:error, reason} = error ->
+          Logger.warning("Failed to load queue membership for #{session_id}: #{inspect(reason)}")
 
-        error
+          error
+      end
     end
   end
 
@@ -122,15 +127,16 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   def queue_keys do
-    case OmeglePhoenix.Redis.command(["SMEMBERS", @queue_registry_key]) do
-      {:ok, queue_keys} when is_list(queue_keys) ->
-        queue_keys
-        |> Enum.filter(&is_binary/1)
-        |> Enum.sort()
-
-      _ ->
-        []
-    end
+    OmeglePhoenix.RedisKeys.queue_registry_keys()
+    |> Enum.flat_map(fn registry_key ->
+      case OmeglePhoenix.Redis.command(["SMEMBERS", registry_key]) do
+        {:ok, queue_keys} when is_list(queue_keys) -> queue_keys
+        _ -> []
+      end
+    end)
+    |> Enum.filter(&is_binary/1)
+    |> Enum.uniq()
+    |> Enum.sort()
   end
 
   def queue_depths do
@@ -166,29 +172,18 @@ defmodule OmeglePhoenix.Matchmaker do
 
   @impl true
   def handle_info(@stream_reconnect_message, state) do
-    stop_stream_connection(state.stream_conn)
-
-    case start_stream_connection() do
-      {:ok, connection} ->
-        case ensure_stream_group(connection, state.stream, state.group) do
-          :ok ->
-            claim_stale_pending(connection, state.stream, state.group, state.consumer)
-            cleanup_stale_consumers(connection, state.stream, state.group, state.consumer)
-            send(self(), @stream_consume_message)
-            {:noreply, %{state | stream_conn: connection}}
-
-          {:error, reason} ->
-            Logger.error(
-              "Failed to initialize matchmaking stream #{state.stream} / #{state.group}: #{inspect(reason)}"
-            )
-
-            stop_stream_connection(connection)
-            Process.send_after(self(), @stream_reconnect_message, 1_000)
-            {:noreply, %{state | stream_conn: nil}}
-        end
+    case ensure_stream_group(state.stream, state.group) do
+      :ok ->
+        claim_stale_pending(state.stream, state.group, state.consumer)
+        cleanup_stale_consumers(state.stream, state.group, state.consumer)
+        send(self(), @stream_consume_message)
+        {:noreply, %{state | stream_conn: :redis}}
 
       {:error, reason} ->
-        Logger.error("Failed to connect matchmaking stream consumer: #{inspect(reason)}")
+        Logger.error(
+          "Failed to initialize matchmaking stream #{state.stream} / #{state.group}: #{inspect(reason)}"
+        )
+
         Process.send_after(self(), @stream_reconnect_message, 1_000)
         {:noreply, %{state | stream_conn: nil}}
     end
@@ -206,7 +201,6 @@ defmodule OmeglePhoenix.Matchmaker do
 
         {:error, reason} ->
           Logger.warning("Matchmaking stream consumer disconnected: #{inspect(reason)}")
-          stop_stream_connection(state.stream_conn)
           Process.send_after(self(), @stream_reconnect_message, 1_000)
           %{state | stream_conn: nil}
       end
@@ -280,7 +274,12 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   def handle_info({@delayed_match_event_message, queue_keys, session_id, phase}, state) do
-    emit_match_event(queue_keys, phase, session_id)
+    if phase == "overflow_wait_elapsed" do
+      maybe_shift_to_overflow_shard(session_id)
+    else
+      emit_match_event(queue_keys, phase, session_id)
+    end
+
     {:noreply, state}
   end
 
@@ -289,8 +288,7 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   @impl true
-  def terminate(_reason, state) do
-    stop_stream_connection(Map.get(state, :stream_conn))
+  def terminate(_reason, _state) do
     :ok
   end
 
@@ -370,9 +368,11 @@ defmodule OmeglePhoenix.Matchmaker do
         end
 
       match_from_pool(queue_key, sessions_with_prefs, MapSet.new())
-      attempt_overflow_matching(queue_key, sessions_with_prefs, now, batch_size)
 
-      prune_queue_if_empty(queue_key)
+      case queue_route(queue_key) do
+        {:ok, route} -> prune_queue_if_empty(queue_key, queue_registry_key(route))
+        _ -> :ok
+      end
     end)
   end
 
@@ -686,13 +686,14 @@ defmodule OmeglePhoenix.Matchmaker do
   defp normalize_mode(mode, _default) when mode in ["lobby", "text", "video"], do: mode
   defp normalize_mode(_mode, default), do: default
 
-  defp queue_keys_for_session(session_id, preferences) do
-    mode = Map.get(preferences, "mode", "text")
+  defp queue_keys_for_session(session_id, preferences, route) do
+    mode = route.mode
+    shard = route.shard
     interest_buckets = interest_buckets(preferences)
 
     strict_bucket_keys =
       Enum.flat_map(interest_buckets, fn bucket ->
-        strict_bucket_queue_keys(mode, bucket, session_id)
+        strict_bucket_queue_keys(mode, shard, bucket, session_id)
       end)
 
     relaxed_bucket_keys =
@@ -700,14 +701,14 @@ defmodule OmeglePhoenix.Matchmaker do
       |> Enum.map(&relaxed_bucket_family/1)
       |> Enum.uniq()
       |> Enum.flat_map(fn family ->
-        relaxed_bucket_queue_keys(mode, family, session_id)
+        relaxed_bucket_queue_keys(mode, shard, family, session_id)
       end)
 
     random_keys =
       if strict_bucket_keys == [] do
-        [shared_random_queue_key(mode)]
+        [shared_random_queue_key(mode, shard)]
       else
-        [shared_random_queue_key(mode) | random_queue_keys(mode, session_id)]
+        [shared_random_queue_key(mode, shard) | random_queue_keys(mode, shard, session_id)]
       end
 
     (strict_bucket_keys ++ relaxed_bucket_keys ++ random_keys)
@@ -771,124 +772,45 @@ defmodule OmeglePhoenix.Matchmaker do
     if normalized == "", do: "misc", else: normalized
   end
 
-  defp strict_bucket_queue_keys(mode, bucket, _session_id) do
-    [strict_bucket_queue_key(mode, bucket)]
+  defp strict_bucket_queue_keys(mode, shard, bucket, _session_id) do
+    [strict_bucket_queue_key(mode, shard, bucket)]
   end
 
-  defp relaxed_bucket_queue_keys(mode, family, session_id) do
+  defp relaxed_bucket_queue_keys(mode, shard, family, session_id) do
     _ = session_id
-    [relaxed_bucket_queue_key(mode, family)]
+    [relaxed_bucket_queue_key(mode, shard, family)]
   end
 
-  defp random_queue_keys(mode, session_id) do
-    queue_shards(mode, {:random, session_id})
-    |> Enum.map(fn shard -> random_queue_key(mode, shard) end)
+  defp random_queue_keys(mode, shard, _session_id) do
+    [random_queue_key(mode, shard)]
   end
 
-  defp queue_shards(mode, identity) do
-    shard_count = OmeglePhoenix.Config.get_match_shard_count()
-    primary = :erlang.phash2({mode, identity}, shard_count)
+  defp maybe_shift_to_overflow_shard(session_id) do
+    OmeglePhoenix.SessionLock.with_lock(session_id, fn ->
+      with {:ok, session} <- OmeglePhoenix.SessionManager.get_session(session_id),
+           true <- pairable_session?(session) do
+        mode = OmeglePhoenix.RedisKeys.mode(session.preferences)
+        next_shard = overflow_shard(mode, session.redis_shard)
 
-    [primary, rem(primary + 1, shard_count)]
-    |> Enum.uniq()
-  end
+        if next_shard == session.redis_shard do
+          :ok
+        else
+          _ = leave_queue(session_id)
 
-  defp attempt_overflow_matching(queue_key, sessions_with_prefs, now_ms, batch_size) do
-    overflow_wait_ms =
-      adaptive_overflow_wait_ms(
-        OmeglePhoenix.Config.get_match_overflow_wait_ms(),
-        length(sessions_with_prefs),
-        batch_size
-      )
+          case OmeglePhoenix.SessionManager.move_session_shard(session_id, next_shard) do
+            {:ok, updated_session} ->
+              _ = join_queue(session_id, updated_session.preferences)
+              :ok
 
-    with true <- overflow_wait_ms > 0,
-         {:ok, mode, shard} <- parse_random_queue_key(queue_key) do
-      local_candidates =
-        Enum.filter(sessions_with_prefs, fn {_sid, session, wait_ms} ->
-          wait_ms >= overflow_wait_ms and queue_ready_session?(session)
-        end)
-
-      if local_candidates == [] do
-        :ok
-      else
-        :telemetry.execute([:omegle_phoenix, :matchmaking, :overflow_attempt], %{count: 1}, %{
-          queue_key: queue_key,
-          candidates: length(local_candidates),
-          overflow_wait_ms: overflow_wait_ms
-        })
-
-        overflow_queue_key = random_queue_key(mode, overflow_shard(mode, shard))
-
-        remote_candidates =
-          overflow_queue_key
-          |> fetch_queue_entries(batch_size)
-          |> build_session_pool(now_ms)
-          |> Enum.filter(fn {sid, session, wait_ms} ->
-            wait_ms >= overflow_wait_ms and queue_ready_session?(session) and
-              not Enum.any?(local_candidates, fn {local_sid, _, _} -> local_sid == sid end)
-          end)
-
-        match_across_pools(overflow_queue_key, local_candidates, remote_candidates, MapSet.new())
-      end
-    else
-      _ -> :ok
-    end
-  end
-
-  defp match_across_pools(_queue_key, [], _remote_candidates, _matched_remote), do: :ok
-
-  defp match_across_pools(
-         queue_key,
-         [{sid1, session1, wait1} | rest],
-         remote_candidates,
-         matched_remote
-       ) do
-    {frontier, remaining_tail} = take_frontier(remote_candidates, matched_remote)
-
-    case find_compatible_partner(
-           queue_key,
-           sid1,
-           session1,
-           wait1,
-           frontier,
-           matched_remote
-         ) do
-      {sid2, _session2, remaining_frontier} ->
-        remaining = remaining_frontier ++ remaining_tail
-
-        case pair_users(sid1, sid2, :overflow) do
-          :ok ->
-            match_across_pools(queue_key, rest, remaining, MapSet.put(matched_remote, sid2))
-
-          _ ->
-            # Pairing failed (locked/unavailable); mark sid2 and retry sid1
-            match_across_pools(
-              queue_key,
-              [{sid1, session1, wait1} | rest],
-              remaining,
-              MapSet.put(matched_remote, sid2)
-            )
+            _ ->
+              _ = join_queue(session_id, session.preferences)
+              :ok
+          end
         end
-
-      nil ->
-        match_across_pools(queue_key, rest, remote_candidates, matched_remote)
-    end
-  end
-
-  defp fetch_queue_entries(queue_key, batch_size) do
-    case OmeglePhoenix.Redis.command([
-           "ZRANGEBYSCORE",
-           queue_key,
-           "0",
-           "+inf",
-           "WITHSCORES",
-           "LIMIT",
-           "0",
-           Integer.to_string(batch_size)
-         ]) do
-      {:ok, entries} when is_list(entries) -> entries
-      _ -> []
-    end
+      else
+        _ -> :ok
+      end
+    end)
   end
 
   defp build_session_pool(session_ids_with_scores, now_ms)
@@ -926,20 +848,20 @@ defmodule OmeglePhoenix.Matchmaker do
     |> Enum.filter(fn {_sid, session, _wait} -> queue_ready_session?(session) end)
   end
 
-  defp strict_bucket_queue_key(mode, bucket) when mode in ["lobby", "text", "video"] do
-    "#{@mode_queue_prefix}:#{mode}:bucket:strict:#{bucket}"
+  defp strict_bucket_queue_key(mode, shard, bucket) when mode in ["lobby", "text", "video"] do
+    OmeglePhoenix.RedisKeys.strict_bucket_queue_key(mode, shard, bucket)
   end
 
-  defp strict_bucket_queue_key(_mode, bucket) do
-    "#{@mode_queue_prefix}:text:bucket:strict:#{bucket}"
+  defp strict_bucket_queue_key(_mode, shard, bucket) do
+    OmeglePhoenix.RedisKeys.strict_bucket_queue_key("text", shard, bucket)
   end
 
-  defp relaxed_bucket_queue_key(mode, family) when mode in ["lobby", "text", "video"] do
-    "#{@mode_queue_prefix}:#{mode}:bucket:relaxed:#{family}"
+  defp relaxed_bucket_queue_key(mode, shard, family) when mode in ["lobby", "text", "video"] do
+    OmeglePhoenix.RedisKeys.relaxed_bucket_queue_key(mode, shard, family)
   end
 
-  defp relaxed_bucket_queue_key(_mode, family) do
-    "#{@mode_queue_prefix}:text:bucket:relaxed:#{family}"
+  defp relaxed_bucket_queue_key(_mode, shard, family) do
+    OmeglePhoenix.RedisKeys.relaxed_bucket_queue_key("text", shard, family)
   end
 
   defp relaxed_bucket_family(bucket) do
@@ -951,71 +873,47 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   defp random_queue_key(mode, shard) when mode in ["lobby", "text", "video"] do
-    "#{@mode_queue_prefix}:#{mode}:random:shard:#{shard}"
+    OmeglePhoenix.RedisKeys.random_queue_key(mode, shard)
   end
 
-  defp random_queue_key(_mode, shard), do: "#{@mode_queue_prefix}:text:random:shard:#{shard}"
+  defp random_queue_key(_mode, shard), do: OmeglePhoenix.RedisKeys.random_queue_key("text", shard)
 
-  defp shared_random_queue_key(mode) when mode in ["lobby", "text", "video"] do
-    "#{@mode_queue_prefix}:#{mode}:random:shared"
+  defp shared_random_queue_key(mode, shard) when mode in ["lobby", "text", "video"] do
+    OmeglePhoenix.RedisKeys.shared_random_queue_key(mode, shard)
   end
 
-  defp shared_random_queue_key(_mode), do: "#{@mode_queue_prefix}:text:random:shared"
+  defp shared_random_queue_key(_mode, shard),
+    do: OmeglePhoenix.RedisKeys.shared_random_queue_key("text", shard)
 
-  defp parse_random_queue_key(queue_key) do
-    prefix = "#{@mode_queue_prefix}:"
+  defp overflow_shard(mode, shard), do: OmeglePhoenix.RedisKeys.overflow_shard(mode, shard)
 
-    with true <- String.starts_with?(queue_key, prefix),
-         [mode, "random", "shard", shard_str] <-
-           String.split(String.replace_prefix(queue_key, prefix, ""), ":"),
-         {shard, ""} <- Integer.parse(shard_str) do
-      {:ok, mode, shard}
-    else
-      _ -> :error
+  defp session_queue_key(session_id, route),
+    do: OmeglePhoenix.RedisKeys.session_queue_key(session_id, route)
+
+  defp queue_registry_key(route),
+    do: OmeglePhoenix.RedisKeys.queue_registry_key(route.mode, route.shard)
+
+  defp queue_route(queue_key) do
+    case Regex.run(~r/\{(lobby|text|video):(\d+)\}/, queue_key) do
+      [_, mode, shard_str] ->
+        case Integer.parse(shard_str) do
+          {shard, ""} -> {:ok, %{mode: mode, shard: shard}}
+          _ -> :error
+        end
+
+      _ ->
+        :error
     end
   end
 
-  defp overflow_shard(mode, shard) do
-    shard_count = OmeglePhoenix.Config.get_match_shard_count()
-    step = overflow_step(mode, shard_count)
-    rem(shard + step, shard_count)
-  end
-
-  defp overflow_step(mode, shard_count) do
-    if shard_count <= 2 do
-      1
-    else
-      base = :erlang.phash2({mode, "overflow"}, shard_count - 1) + 1
-      if base == 1, do: 2, else: base
-    end
-  end
-
-  defp adaptive_overflow_wait_ms(base_wait_ms, queue_depth, batch_size) do
-    cond do
-      base_wait_ms <= 0 ->
-        0
-
-      queue_depth <= 2 ->
-        max(div(base_wait_ms, 2), 1_000)
-
-      queue_depth >= max(div(batch_size, 2), 8) ->
-        trunc(base_wait_ms * 1.5)
-
-      true ->
-        base_wait_ms
-    end
-  end
-
-  defp session_queue_key(session_id), do: "#{@session_queue_prefix}:#{session_id}"
-
-  defp prune_queue_if_empty(queue_key) do
+  defp prune_queue_if_empty(queue_key, registry_key) do
     _ =
       OmeglePhoenix.Redis.command([
         "EVAL",
         @prune_queue_script,
         "2",
         queue_key,
-        @queue_registry_key
+        registry_key
       ])
 
     :ok
@@ -1189,33 +1087,8 @@ defmodule OmeglePhoenix.Matchmaker do
     end
   end
 
-  defp start_stream_connection do
-    opts = [
-      host: OmeglePhoenix.Config.get_redis_host(),
-      port: OmeglePhoenix.Config.get_redis_port()
-    ]
-
-    opts =
-      case OmeglePhoenix.Config.get_redis_password() do
-        nil -> opts
-        password -> Keyword.put(opts, :password, password)
-      end
-
-    Redix.start_link(opts)
-  end
-
-  defp stop_stream_connection(nil), do: :ok
-
-  defp stop_stream_connection(connection) do
-    try do
-      Redix.stop(connection)
-    rescue
-      _ -> :ok
-    end
-  end
-
-  defp ensure_stream_group(connection, stream, group) do
-    case Redix.command(connection, ["XGROUP", "CREATE", stream, group, "$", "MKSTREAM"]) do
+  defp ensure_stream_group(stream, group) do
+    case OmeglePhoenix.Redis.command(["XGROUP", "CREATE", stream, group, "$", "MKSTREAM"]) do
       {:ok, "OK"} ->
         :ok
 
@@ -1227,17 +1100,17 @@ defmodule OmeglePhoenix.Matchmaker do
     end
   end
 
-  defp claim_stale_pending(connection, stream, group, consumer) do
-    do_claim_stale_pending(connection, stream, group, consumer, "0-0", 0)
+  defp claim_stale_pending(stream, group, consumer) do
+    do_claim_stale_pending(stream, group, consumer, "0-0", 0)
   end
 
-  defp do_claim_stale_pending(_connection, _stream, _group, _consumer, _start_id, attempts)
+  defp do_claim_stale_pending(_stream, _group, _consumer, _start_id, attempts)
        when attempts >= 100 do
     :ok
   end
 
-  defp do_claim_stale_pending(connection, stream, group, consumer, start_id, attempts) do
-    case Redix.command(connection, [
+  defp do_claim_stale_pending(stream, group, consumer, start_id, attempts) do
+    case OmeglePhoenix.Redis.command([
            "XAUTOCLAIM",
            stream,
            group,
@@ -1251,7 +1124,7 @@ defmodule OmeglePhoenix.Matchmaker do
         if entries == [] or next_start_id == start_id do
           :ok
         else
-          do_claim_stale_pending(connection, stream, group, consumer, next_start_id, attempts + 1)
+          do_claim_stale_pending(stream, group, consumer, next_start_id, attempts + 1)
         end
 
       {:ok, [next_start_id, entries, _deleted_ids]}
@@ -1259,7 +1132,7 @@ defmodule OmeglePhoenix.Matchmaker do
         if entries == [] or next_start_id == start_id do
           :ok
         else
-          do_claim_stale_pending(connection, stream, group, consumer, next_start_id, attempts + 1)
+          do_claim_stale_pending(stream, group, consumer, next_start_id, attempts + 1)
         end
 
       {:error, _} ->
@@ -1270,11 +1143,11 @@ defmodule OmeglePhoenix.Matchmaker do
     end
   end
 
-  defp cleanup_stale_consumers(connection, stream, group, current_consumer) do
+  defp cleanup_stale_consumers(stream, group, current_consumer) do
     active_consumers = active_consumer_names(current_consumer)
     idle_cutoff_ms = OmeglePhoenix.Config.get_stream_stale_consumer_idle_ms()
 
-    case Redix.command(connection, ["XINFO", "CONSUMERS", stream, group]) do
+    case OmeglePhoenix.Redis.command(["XINFO", "CONSUMERS", stream, group]) do
       {:ok, consumers} when is_list(consumers) ->
         Enum.each(consumers, fn consumer_info ->
           info = xinfo_to_map(consumer_info)
@@ -1283,7 +1156,7 @@ defmodule OmeglePhoenix.Matchmaker do
 
           if is_binary(name) and name != current_consumer and idle_ms >= idle_cutoff_ms and
                not MapSet.member?(active_consumers, name) do
-            _ = Redix.command(connection, ["XGROUP", "DELCONSUMER", stream, group, name])
+            _ = OmeglePhoenix.Redis.command(["XGROUP", "DELCONSUMER", stream, group, name])
           end
         end)
 
@@ -1348,8 +1221,7 @@ defmodule OmeglePhoenix.Matchmaker do
       stream_id
     ]
 
-    case Redix.command(
-           state.stream_conn,
+    case OmeglePhoenix.Redis.command(
            command,
            timeout: OmeglePhoenix.Config.get_match_event_stream_block_ms() + 2_000
          ) do
@@ -1372,7 +1244,7 @@ defmodule OmeglePhoenix.Matchmaker do
   defp ack_stream_entries(state, entries) do
     ids = Enum.map(entries, fn [entry_id, _fields] -> entry_id end)
 
-    case Redix.command(state.stream_conn, ["XACK", state.stream, state.group | ids]) do
+    case OmeglePhoenix.Redis.command(["XACK", state.stream, state.group | ids]) do
       {:ok, _} -> :ok
       {:error, reason} -> {:error, reason}
     end

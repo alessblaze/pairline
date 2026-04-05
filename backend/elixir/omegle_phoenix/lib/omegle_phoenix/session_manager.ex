@@ -1,11 +1,11 @@
 defmodule OmeglePhoenix.SessionManager do
   use GenServer
 
-  @active_sessions_key "sessions:active"
   @session_fields [
     :id,
     :token,
     :ip,
+    :redis_shard,
     :status,
     :partner_id,
     :last_partner_id,
@@ -23,11 +23,17 @@ defmodule OmeglePhoenix.SessionManager do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
+  def get_session_route(session_id) when is_binary(session_id) do
+    OmeglePhoenix.RedisKeys.resolve_session_route(session_id)
+  end
+
   def get_session(session_id) when is_binary(session_id) do
-    case OmeglePhoenix.Redis.command(["GET", session_key(session_id)]) do
-      {:ok, nil} -> {:error, :not_found}
-      {:ok, payload} -> decode_session(payload)
-      _ -> {:error, :not_found}
+    with {:ok, route} <- get_session_route(session_id) do
+      case OmeglePhoenix.Redis.command(["GET", session_key(session_id, route)]) do
+        {:ok, nil} -> {:error, :not_found}
+        {:ok, payload} -> decode_session(payload)
+        _ -> {:error, :not_found}
+      end
     end
   end
 
@@ -44,28 +50,32 @@ defmodule OmeglePhoenix.SessionManager do
         {:ok, %{}}
 
       ids ->
-        keys = Enum.map(ids, &session_key/1)
+        with {:ok, routes} <- load_session_routes(ids) do
+          keys = Enum.map(ids, &session_key(&1, Map.fetch!(routes, &1)))
 
-        case OmeglePhoenix.Redis.command(["MGET" | keys]) do
-          {:ok, payloads} when is_list(payloads) ->
-            sessions =
-              ids
-              |> Enum.zip(payloads)
-              |> Enum.reduce(%{}, fn
-                {_id, nil}, acc ->
-                  acc
+          case OmeglePhoenix.Redis.mget(keys) do
+            {:ok, payloads} when is_list(payloads) ->
+              sessions =
+                ids
+                |> Enum.zip(payloads)
+                |> Enum.reduce(%{}, fn
+                  {_id, nil}, acc ->
+                    acc
 
-                {id, payload}, acc ->
-                  case decode_session(payload) do
-                    {:ok, session} -> Map.put(acc, id, session)
-                    _ -> acc
-                  end
-              end)
+                  {id, payload}, acc ->
+                    case decode_session(payload) do
+                      {:ok, session} -> Map.put(acc, id, session)
+                      _ -> acc
+                    end
+                end)
 
-            {:ok, sessions}
+              {:ok, sessions}
 
-          _ ->
-            {:ok, %{}}
+            _ ->
+              {:ok, %{}}
+          end
+        else
+          _ -> {:ok, %{}}
         end
     end
   end
@@ -81,35 +91,39 @@ defmodule OmeglePhoenix.SessionManager do
         {:ok, %{}}
 
       ids ->
-        keys = Enum.map(ids, &queue_meta_key/1)
+        with {:ok, routes} <- load_session_routes(ids) do
+          keys = Enum.map(ids, &queue_meta_key(&1, Map.fetch!(routes, &1)))
 
-        case OmeglePhoenix.Redis.command(["MGET" | keys]) do
-          {:ok, payloads} when is_list(payloads) ->
-            sessions =
-              ids
-              |> Enum.zip(payloads)
-              |> Enum.reduce(%{}, fn
-                {_id, nil}, acc ->
-                  acc
+          case OmeglePhoenix.Redis.mget(keys) do
+            {:ok, payloads} when is_list(payloads) ->
+              sessions =
+                ids
+                |> Enum.zip(payloads)
+                |> Enum.reduce(%{}, fn
+                  {_id, nil}, acc ->
+                    acc
 
-                {id, payload}, acc ->
-                  case decode_queue_meta(payload) do
-                    {:ok, meta} -> Map.put(acc, id, meta)
-                    _ -> acc
-                  end
-              end)
+                  {id, payload}, acc ->
+                    case decode_queue_meta(payload) do
+                      {:ok, meta} -> Map.put(acc, id, meta)
+                      _ -> acc
+                    end
+                end)
 
-            {:ok, sessions}
+              {:ok, sessions}
 
-          _ ->
-            {:ok, %{}}
+            _ ->
+              {:ok, %{}}
+          end
+        else
+          _ -> {:ok, %{}}
         end
     end
   end
 
   def get_all_sessions do
     sessions =
-      case OmeglePhoenix.Redis.command(["SMEMBERS", @active_sessions_key]) do
+      case OmeglePhoenix.Redis.command(["SMEMBERS", OmeglePhoenix.RedisKeys.active_sessions_key()]) do
         {:ok, session_ids} when is_list(session_ids) ->
           {:ok, batched_sessions} = get_sessions(session_ids)
           batched_sessions
@@ -138,7 +152,7 @@ defmodule OmeglePhoenix.SessionManager do
   def get_sessions_by_ip(_ip), do: {:ok, []}
 
   def count_active_sessions do
-    case OmeglePhoenix.Redis.command(["SCARD", @active_sessions_key]) do
+    case OmeglePhoenix.Redis.command(["SCARD", OmeglePhoenix.RedisKeys.active_sessions_key()]) do
       {:ok, count} when is_integer(count) -> count
       _ -> 0
     end
@@ -147,17 +161,25 @@ defmodule OmeglePhoenix.SessionManager do
   def create_session(session_id, ip, preferences) do
     session_token = generate_session_token()
     now = System.system_time(:second)
+    normalized_preferences = normalize_preferences(preferences)
+    redis_shard =
+      OmeglePhoenix.RedisKeys.initial_shard(
+        Map.get(normalized_preferences, "mode", "text"),
+        normalized_preferences,
+        session_id
+      )
 
     session = %{
       id: session_id,
       token: session_token,
       ip: ip,
+      redis_shard: redis_shard,
       status: :waiting,
       partner_id: nil,
       last_partner_id: nil,
       signaling_ready: false,
       webrtc_started: false,
-      preferences: normalize_preferences(preferences),
+      preferences: normalized_preferences,
       created_at: now,
       last_activity: now,
       ban_status: false,
@@ -292,61 +314,96 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   def pair_sessions(session1, session2) do
-    common_interests = get_common_interests(session1.preferences, session2.preferences)
+    if session1.redis_shard != session2.redis_shard do
+      {:error, :cross_shard_pairing_unsupported}
+    else
+      common_interests = get_common_interests(session1.preferences, session2.preferences)
 
-    updated_session1 =
-      touch_last_activity(%{
-        session1
-        | status: :matched,
-          partner_id: session2.id,
-          last_partner_id: session2.id,
-          signaling_ready: false,
-          webrtc_started: false
-      })
+      updated_session1 =
+        touch_last_activity(%{
+          session1
+          | status: :matched,
+            partner_id: session2.id,
+            last_partner_id: session2.id,
+            signaling_ready: false,
+            webrtc_started: false
+        })
 
-    updated_session2 =
-      touch_last_activity(%{
-        session2
-        | status: :matched,
-          partner_id: session1.id,
-          last_partner_id: session1.id,
-          signaling_ready: false,
-          webrtc_started: false
-      })
+      updated_session2 =
+        touch_last_activity(%{
+          session2
+          | status: :matched,
+            partner_id: session1.id,
+            last_partner_id: session1.id,
+            signaling_ready: false,
+            webrtc_started: false
+        })
 
-    case OmeglePhoenix.RedisState.pair_sessions(
-           updated_session1,
-           updated_session2,
-           ttl_seconds(),
-           report_grace_seconds()
-         ) do
-      {:ok, _} -> {:ok, updated_session1, updated_session2, common_interests}
-      {:error, reason} -> {:error, reason}
+      case OmeglePhoenix.RedisState.pair_sessions(
+             updated_session1,
+             updated_session2,
+             ttl_seconds(),
+             report_grace_seconds()
+           ) do
+        {:ok, _} -> {:ok, updated_session1, updated_session2, common_interests}
+        {:error, reason} -> {:error, reason}
+      end
     end
   end
 
   def reset_pair(session1, session2) do
-    updated_session1 =
-      touch_last_activity(%{
-        session1
-        | partner_id: nil,
-          status: :waiting,
-          signaling_ready: false,
-          webrtc_started: false
-      })
+    if session1.redis_shard != session2.redis_shard do
+      {:error, :cross_shard_pairing_unsupported}
+    else
+      updated_session1 =
+        touch_last_activity(%{
+          session1
+          | partner_id: nil,
+            status: :waiting,
+            signaling_ready: false,
+            webrtc_started: false
+        })
 
-    updated_session2 =
-      touch_last_activity(%{
-        session2
-        | partner_id: nil,
-          status: :waiting,
-          signaling_ready: false,
-          webrtc_started: false
-      })
+      updated_session2 =
+        touch_last_activity(%{
+          session2
+          | partner_id: nil,
+            status: :waiting,
+            signaling_ready: false,
+            webrtc_started: false
+        })
 
-    case OmeglePhoenix.RedisState.reset_pair(updated_session1, updated_session2, ttl_seconds()) do
-      {:ok, _} -> {:ok, updated_session1, updated_session2}
-      {:error, reason} -> {:error, reason}
+      case OmeglePhoenix.RedisState.reset_pair(updated_session1, updated_session2, ttl_seconds()) do
+        {:ok, _} -> {:ok, updated_session1, updated_session2}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  def move_session_shard(session_id, new_shard) when is_binary(session_id) and is_integer(new_shard) do
+    with {:ok, session} <- get_session(session_id) do
+      current_mode = OmeglePhoenix.RedisKeys.mode(session.preferences)
+      normalized_shard = rem(max(new_shard, 0), OmeglePhoenix.Config.get_match_shard_count())
+
+      if session.redis_shard == normalized_shard do
+        {:ok, session}
+      else
+        old_route = OmeglePhoenix.RedisKeys.route_for_session(session)
+
+        updated_session =
+          session
+          |> Map.put(:redis_shard, normalized_shard)
+          |> touch_last_activity()
+
+        case persist_session(updated_session) do
+          :ok ->
+            _ = migrate_owner_record(session_id, old_route, current_mode, normalized_shard)
+            {:ok, updated_session}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+      end
     end
   end
 
@@ -389,6 +446,7 @@ defmodule OmeglePhoenix.SessionManager do
 
   defp normalize_field(:status, value), do: normalize_status(value)
   defp normalize_field(:preferences, value), do: normalize_preferences(value)
+  defp normalize_field(:redis_shard, value) when is_integer(value), do: value
   defp normalize_field(:signaling_ready, value), do: truthy?(value)
   defp normalize_field(:webrtc_started, value), do: truthy?(value)
   defp normalize_field(:ban_status, value), do: truthy?(value)
@@ -447,6 +505,27 @@ defmodule OmeglePhoenix.SessionManager do
     end
   end
 
+  defp migrate_owner_record(session_id, old_route, new_mode, new_shard) do
+    old_owner_key = OmeglePhoenix.RedisKeys.session_owner_key(session_id, old_route)
+    new_owner_key = OmeglePhoenix.RedisKeys.session_owner_key(session_id, %{mode: new_mode, shard: new_shard})
+
+    case OmeglePhoenix.Redis.command(["GET", old_owner_key]) do
+      {:ok, owner_value} when is_binary(owner_value) ->
+        _ =
+          OmeglePhoenix.Redis.command([
+            "SETEX",
+            new_owner_key,
+            Integer.to_string(OmeglePhoenix.Config.get_router_owner_ttl_seconds()),
+            owner_value
+          ])
+
+        :ok
+
+      _ ->
+        :ok
+    end
+  end
+
   defp report_grace_seconds do
     OmeglePhoenix.Config.get_report_grace_seconds()
   end
@@ -484,6 +563,7 @@ defmodule OmeglePhoenix.SessionManager do
   defp deserialize_queue_meta(raw) when is_map(raw) do
     meta = %{
       id: Map.get(raw, "id"),
+      redis_shard: parse_redis_shard(Map.get(raw, "redis_shard")),
       status: normalize_status(Map.get(raw, "status")),
       partner_id: Map.get(raw, "partner_id"),
       last_partner_id: Map.get(raw, "last_partner_id"),
@@ -500,6 +580,7 @@ defmodule OmeglePhoenix.SessionManager do
   defp deserialize_queue_meta(_raw), do: {:error, :invalid}
 
   defp deserialize_field(:status, nil), do: :waiting
+  defp deserialize_field(:redis_shard, value), do: parse_redis_shard(value)
   defp deserialize_field(:status, value), do: normalize_status(value)
   defp deserialize_field(:signaling_ready, value), do: truthy?(value)
   defp deserialize_field(:webrtc_started, value), do: truthy?(value)
@@ -532,6 +613,17 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   defp normalize_preferences(_), do: %{"mode" => "text", "interests" => ""}
+
+  defp parse_redis_shard(value) when is_integer(value) and value >= 0, do: value
+
+  defp parse_redis_shard(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {shard, ""} when shard >= 0 -> shard
+      _ -> 0
+    end
+  end
+
+  defp parse_redis_shard(_value), do: 0
 
   defp normalize_status(value) when is_atom(value) and value in @allowed_statuses, do: value
 
@@ -596,7 +688,33 @@ defmodule OmeglePhoenix.SessionManager do
     OmeglePhoenix.Config.get_session_ttl()
   end
 
-  defp session_key(session_id), do: "session:data:#{session_id}"
-  defp queue_meta_key(session_id), do: "session:#{session_id}:queue_meta"
+  defp load_session_routes(session_ids) do
+    locator_keys = Enum.map(session_ids, &OmeglePhoenix.RedisKeys.session_locator_key/1)
+
+    case OmeglePhoenix.Redis.mget(locator_keys) do
+      {:ok, locators} when is_list(locators) ->
+        routes =
+          session_ids
+          |> Enum.zip(locators)
+          |> Enum.reduce(%{}, fn
+            {_id, nil}, acc ->
+              acc
+
+            {id, locator}, acc ->
+              case OmeglePhoenix.RedisKeys.decode_locator(id, locator) do
+                {:ok, route} -> Map.put(acc, id, route)
+                _ -> acc
+              end
+          end)
+
+        {:ok, routes}
+
+      other ->
+        other
+    end
+  end
+
+  defp session_key(session_id, route), do: OmeglePhoenix.RedisKeys.session_key(session_id, route)
+  defp queue_meta_key(session_id, route), do: OmeglePhoenix.RedisKeys.queue_meta_key(session_id, route)
   defp ip_sessions_key(ip), do: "ip:#{ip}"
 end

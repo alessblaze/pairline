@@ -30,6 +30,7 @@ defmodule OmeglePhoenix.MixProject do
       {:plug_cowboy, "~> 2.6"},
       {:jason, "~> 1.4"},
       {:redix, "~> 1.5"},
+      {:redis_cluster, "~> 0.8"},
       {:castore, "~> 1.0"},
       {:finch, "~> 0.17"},
       {:uuid, "~> 1.1"},

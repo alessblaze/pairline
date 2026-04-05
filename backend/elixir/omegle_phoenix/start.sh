@@ -21,12 +21,31 @@ if [ -n "$NODE_NAME" ]; then
     fi
 
     NODE_DISTRIBUTION="${NODE_DISTRIBUTION:-short}"
+    NORMALIZED_NODE_NAME="$NODE_NAME"
+
+    case "$NODE_DISTRIBUTION" in
+        long)
+            if [[ "$NORMALIZED_NODE_NAME" != *@* ]]; then
+                echo "NODE_NAME must include @host when NODE_DISTRIBUTION=long" >&2
+                exit 1
+            fi
+            ;;
+        short)
+            if [[ "$NORMALIZED_NODE_NAME" == *@* ]]; then
+                NORMALIZED_NODE_NAME="${NORMALIZED_NODE_NAME%@*}"
+            fi
+            ;;
+        *)
+            echo "NODE_DISTRIBUTION must be 'short' or 'long'" >&2
+            exit 1
+            ;;
+    esac
 
     if [ "$NODE_DISTRIBUTION" = "long" ]; then
-        exec elixir --name "$NODE_NAME" --cookie "$NODE_COOKIE" -S mix phx.server
+        exec elixir --name "$NORMALIZED_NODE_NAME" --cookie "$NODE_COOKIE" -S mix phx.server
     fi
 
-    exec elixir --sname "$NODE_NAME" --cookie "$NODE_COOKIE" -S mix phx.server
+    exec elixir --sname "$NORMALIZED_NODE_NAME" --cookie "$NODE_COOKIE" -S mix phx.server
 fi
 
 exec mix phx.server

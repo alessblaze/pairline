@@ -1,13 +1,17 @@
 import Config
 
+port = String.to_integer(System.get_env("PORT") || "8080")
+endpoint_host = System.get_env("PHX_HOST") || "localhost"
+
 config :omegle_phoenix, OmeglePhoenixWeb.Endpoint,
+  url: [host: endpoint_host, port: port],
   http: [
     ip:
       if(System.get_env("ENABLE_IPV6") == "true",
         do: {0, 0, 0, 0, 0, 0, 0, 0},
         else: {0, 0, 0, 0}
       ),
-    port: String.to_integer(System.get_env("PORT") || "8080")
+    port: port
   ],
   check_origin:
     String.split(
