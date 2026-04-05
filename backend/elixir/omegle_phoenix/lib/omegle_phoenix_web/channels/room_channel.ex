@@ -597,9 +597,18 @@ defmodule OmeglePhoenixWeb.RoomChannel do
     {:noreply, socket}
   end
 
-  def handle_info({:router_disconnect, reason}, socket) do
+  def handle_info({:router_disconnect, reason, nil}, socket) do
     push(socket, "disconnected", %{reason: reason})
     {:noreply, clear_match_assigns(socket)}
+  end
+
+  def handle_info({:router_disconnect, reason, match_generation}, socket) do
+    if socket.assigns[:match_generation] == match_generation do
+      push(socket, "disconnected", %{reason: reason})
+      {:noreply, clear_match_assigns(socket)}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_info(:router_timeout, socket) do
@@ -673,7 +682,12 @@ defmodule OmeglePhoenixWeb.RoomChannel do
          {:ok, partner_session} <- OmeglePhoenix.SessionManager.get_session(partner_id),
          {:ok, _updated_session, _updated_partner} <-
            OmeglePhoenix.SessionManager.reset_pair(session, partner_session) do
-      OmeglePhoenix.Router.notify_disconnect(partner_id, disconnect_reason)
+      OmeglePhoenix.Router.notify_disconnect(
+        partner_id,
+        disconnect_reason,
+        partner_session.match_generation
+      )
+
       :ok
     else
       error ->

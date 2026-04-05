@@ -1,5 +1,6 @@
 defmodule OmeglePhoenix.RedisState do
   @moduledoc false
+  require Logger
 
   @persist_script """
   redis.call('SETEX', KEYS[1], ARGV[1], ARGV[5])
@@ -245,29 +246,45 @@ defmodule OmeglePhoenix.RedisState do
 
   def delete_session(session_id, ip, report_grace_seconds, opts \\ []) do
     report_grace_ttl = normalize_ttl!(report_grace_seconds)
+    {route_result, resolve_route_us} = timed_us(fn -> resolve_delete_route(session_id, opts) end)
 
-    with {:ok, route} <- resolve_route(session_id),
-         {:ok, _} <-
-           exec(
-             [
-               "EVAL",
-               @delete_script,
-               "7",
-               session_key(session_id, route),
-               session_ip_key(session_id, route),
-               session_token_key(session_id, route),
-               session_owner_key(session_id, route),
-               match_key(session_id, route),
-               recent_match_key(session_id, route),
-               queue_meta_key(session_id, route),
-               session_id,
-               report_grace_ttl
-             ],
-             opts
-           ),
-         :ok <- cleanup_locators(session_id),
-         :ok <- cleanup_indexes(session_id, ip, report_grace_ttl) do
-      {:ok, 1}
+    with {:ok, route} <- route_result do
+      delete_command = [
+        "EVAL",
+        @delete_script,
+        "7",
+        session_key(session_id, route),
+        session_ip_key(session_id, route),
+        session_token_key(session_id, route),
+        session_owner_key(session_id, route),
+        match_key(session_id, route),
+        recent_match_key(session_id, route),
+        queue_meta_key(session_id, route),
+        session_id,
+        report_grace_ttl
+      ]
+
+      {delete_result, delete_us} = timed_us(fn -> exec(delete_command, opts) end)
+
+      with {:ok, _} <- delete_result do
+        {locator_result, locator_us} = timed_us(fn -> cleanup_locators(session_id) end)
+
+        with :ok <- locator_result do
+          {index_result, index_us} = timed_us(fn -> cleanup_indexes(session_id, ip, report_grace_ttl) end)
+
+          with :ok <- index_result do
+            maybe_log_slow_delete_session(
+              session_id,
+              resolve_route_us,
+              delete_us,
+              locator_us,
+              index_us
+            )
+
+            {:ok, 1}
+          end
+        end
+      end
     end
   end
 
@@ -510,6 +527,12 @@ defmodule OmeglePhoenix.RedisState do
 
   defp normalize_ttl!(ttl), do: raise(ArgumentError, "invalid Redis TTL: #{inspect(ttl)}")
 
+  defp timed_us(fun) when is_function(fun, 0) do
+    started_at = System.monotonic_time()
+    result = fun.()
+    {result, System.convert_time_unit(System.monotonic_time() - started_at, :native, :microsecond)}
+  end
+
   defp encode_session(session), do: session |> serialize_session() |> Jason.encode!()
   defp encode_queue_meta(session), do: session |> build_queue_meta() |> Jason.encode!()
 
@@ -592,6 +615,29 @@ defmodule OmeglePhoenix.RedisState do
 
   defp session_route(session), do: OmeglePhoenix.RedisKeys.route_for_session(session)
   defp resolve_route(session_id), do: OmeglePhoenix.RedisKeys.resolve_session_route(session_id)
+
+  defp resolve_delete_route(session_id, opts) do
+    case Keyword.get(opts, :route) do
+      %{mode: mode, shard: shard} = route when is_binary(mode) and is_integer(shard) ->
+        {:ok, route}
+
+      _ ->
+        resolve_route(session_id)
+    end
+  end
+
+  defp maybe_log_slow_delete_session(session_id, resolve_route_us, delete_us, locator_us, index_us) do
+    total_us = resolve_route_us + delete_us + locator_us + index_us
+
+    if total_us >= 500_000 do
+      Logger.warning(
+        "Slow RedisState.delete_session for #{session_id}: total=#{format_duration_us(total_us)} resolve_route=#{format_duration_us(resolve_route_us)} delete_script=#{format_duration_us(delete_us)} cleanup_locators=#{format_duration_us(locator_us)} cleanup_indexes=#{format_duration_us(index_us)}"
+      )
+    end
+  end
+
+  defp format_duration_us(us) when us >= 1_000, do: "#{Float.round(us / 1_000, 1)}ms"
+  defp format_duration_us(us), do: "#{us}us"
 
   defp persist_locators(session_id, route, ip, ttl_seconds) do
     ttl = normalize_ttl!(ttl_seconds)

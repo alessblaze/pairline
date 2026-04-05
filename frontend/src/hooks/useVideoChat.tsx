@@ -742,15 +742,20 @@ export function useVideoChat(wsUrl: string) {
         negotiationStartedRef.current = false;
         peerIdRef.current = peerIdMatch || null;
 
+        if (peerTypingTimeoutRef.current) {
+          clearTimeout(peerTypingTimeoutRef.current);
+          peerTypingTimeoutRef.current = null;
+        }
+
         if (common.length > 0) {
-          setMessages(prev => [...prev, {
+          setMessages([{
             id: crypto.randomUUID(),
             text: `You both like: ${common.join(', ')}`,
             sender: 'system',
             timestamp: Date.now()
           }]);
         } else {
-          setMessages(prev => [...prev, {
+          setMessages([{
             id: crypto.randomUUID(),
             text: `You are talking to a random stranger.`,
             sender: 'system',

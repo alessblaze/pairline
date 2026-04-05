@@ -243,10 +243,13 @@ defmodule OmeglePhoenix.SessionManager do
   def delete_session(session_id) do
     case get_session(session_id) do
       {:ok, session} ->
+        route = OmeglePhoenix.RedisKeys.route_for_session(session)
+
         case OmeglePhoenix.RedisState.delete_session(
                session_id,
                session.ip,
-               report_grace_seconds()
+               report_grace_seconds(),
+               route: route
              ) do
           {:ok, _} -> :ok
           {:error, reason} -> {:error, reason}
@@ -507,6 +510,12 @@ defmodule OmeglePhoenix.SessionManager do
   defp disconnect_known_partner(nil, _origin_session_id), do: :ok
 
   defp disconnect_known_partner(partner_id, origin_session_id) do
+    partner_match_generation =
+      case get_session(partner_id) do
+        {:ok, partner_session} -> partner_session.match_generation
+        _ -> nil
+      end
+
     # Atomic: only resets the partner if they still point at origin_session_id.
     # Prevents disrupting a new match the partner may have formed during the gap.
     case OmeglePhoenix.RedisState.atomic_disconnect_partner(
@@ -515,7 +524,12 @@ defmodule OmeglePhoenix.SessionManager do
            ttl_seconds()
          ) do
       {:ok, "ok"} ->
-        OmeglePhoenix.Router.notify_disconnect(partner_id, "partner disconnected")
+        OmeglePhoenix.Router.notify_disconnect(
+          partner_id,
+          "partner disconnected",
+          partner_match_generation
+        )
+
         :ok
 
       {:ok, _} ->

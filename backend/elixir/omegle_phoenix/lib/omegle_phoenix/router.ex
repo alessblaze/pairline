@@ -98,9 +98,9 @@ defmodule OmeglePhoenix.Router do
     end
   end
 
-  def notify_disconnect(session_id, reason) do
+  def notify_disconnect(session_id, reason, match_generation \\ nil) do
     Logger.info("Notifying disconnect for session: #{session_id}, reason: #{reason}")
-    route(session_id, {:router_disconnect, reason})
+    route(session_id, {:router_disconnect, reason, match_generation})
   end
 
   def notify_timeout(session_id) do
@@ -194,7 +194,7 @@ defmodule OmeglePhoenix.Router do
 
       case owner_hint_record(opts, current_node) do
         {:ok, owner} ->
-          dispatch_remote(session_id, owner, message)
+          dispatch_remote_with_hint_fallback(session_id, owner, message, opts, current_node)
 
         :no_hint ->
           route_via_owner_record(session_id, message, opts, current_node)
@@ -264,6 +264,32 @@ defmodule OmeglePhoenix.Router do
 
         compare_and_delete_owner(session_id, owner)
         dispatch_local_if_owned(session_id, message)
+    end
+  end
+
+  defp dispatch_remote_with_hint_fallback(session_id, %{node: owner_node}, message, opts, current_node) do
+    owner_node_atom = String.to_atom(owner_node)
+
+    cond do
+      owner_node_atom == Node.self() ->
+        dispatch_local_if_owned(session_id, message) ||
+          route_via_owner_record(session_id, message, Keyword.delete(opts, :owner_hint), current_node)
+
+      owner_node_atom in Node.list() ->
+        Phoenix.PubSub.broadcast(
+          OmeglePhoenix.PubSub,
+          node_channel(owner_node),
+          {:router_remote, session_id, message}
+        )
+
+        :ok
+
+      true ->
+        Logger.warning(
+          "Router owner hint #{owner_node} is not connected for #{session_id}; falling back to Redis owner lookup"
+        )
+
+        route_via_owner_record(session_id, message, Keyword.delete(opts, :owner_hint), current_node)
     end
   end
 
