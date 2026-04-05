@@ -1,6 +1,6 @@
 defmodule OmeglePhoenix.Router do
   @moduledoc """
-  Cluster-aware session event routing backed by Redis owner-node coordination.
+  Cluster-aware session event routing backed by Redis owner coordination.
   """
 
   use GenServer
@@ -8,6 +8,8 @@ defmodule OmeglePhoenix.Router do
 
   @reconnect_message :connect_router_channel
   @owner_table :omegle_phoenix_router_owners
+  @owner_key_prefix "session"
+  @owner_value_separator "|"
   @compare_delete_script """
   if redis.call('GET', KEYS[1]) == ARGV[1] then
     return redis.call('DEL', KEYS[1])
@@ -23,9 +25,10 @@ defmodule OmeglePhoenix.Router do
     if pid != self() do
       {:error, :must_register_from_owner_process}
     else
+      token = owner_token()
       :ok = Phoenix.PubSub.subscribe(OmeglePhoenix.PubSub, topic(session_id))
-      track_local_owner(session_id, pid)
-      refresh_owner(session_id, pid)
+      track_local_owner(session_id, pid, token)
+      persist_owner(session_id, build_local_owner_record(token))
     end
   end
 
@@ -33,21 +36,30 @@ defmodule OmeglePhoenix.Router do
     if pid != self() do
       {:error, :must_refresh_from_owner_process}
     else
-      OmeglePhoenix.Redis.command([
-        "SETEX",
-        "session:#{session_id}:owner_node",
-        Integer.to_string(OmeglePhoenix.Config.get_router_owner_ttl_seconds()),
-        Atom.to_string(Node.self())
-      ])
+      case local_owner(session_id, pid) do
+        {^pid, token} ->
+          persist_owner(session_id, build_local_owner_record(token))
 
-      :ok
+        _ ->
+          {:error, :not_owner}
+      end
     end
   end
 
   def unregister(session_id) when is_binary(session_id) do
+    pid = self()
+    local_owner = local_owner(session_id, pid)
     Phoenix.PubSub.unsubscribe(OmeglePhoenix.PubSub, topic(session_id))
-    untrack_local_owner(session_id)
-    compare_and_delete_owner_node(session_id, Atom.to_string(Node.self()))
+    untrack_local_owner(session_id, pid)
+
+    case local_owner do
+      {_pid, token} ->
+        compare_and_delete_owner(session_id, build_local_owner_record(token))
+
+      _ ->
+        :ok
+    end
+
     :ok
   end
 
@@ -120,9 +132,9 @@ defmodule OmeglePhoenix.Router do
     case Map.pop(state.owner_refs, ref) do
       {{session_id, ^pid}, owner_refs} ->
         case Map.get(state.owners, session_id) do
-          {^pid, ^ref} ->
+          {^pid, ^ref, token} ->
             :ets.delete(@owner_table, session_id)
-            compare_and_delete_owner_node(session_id, Atom.to_string(Node.self()))
+            compare_and_delete_owner(session_id, build_local_owner_record(token))
 
             {:noreply,
              %{state | owners: Map.delete(state.owners, session_id), owner_refs: owner_refs}}
@@ -141,7 +153,7 @@ defmodule OmeglePhoenix.Router do
   end
 
   @impl true
-  def handle_cast({:track_owner, session_id, pid}, state) do
+  def handle_cast({:track_owner, session_id, pid, token}, state) do
     {state, old_ref} = drop_owner(state, session_id)
 
     if old_ref != nil do
@@ -149,18 +161,18 @@ defmodule OmeglePhoenix.Router do
     end
 
     ref = Process.monitor(pid)
-    :ets.insert(@owner_table, {session_id, pid})
+    :ets.insert(@owner_table, {session_id, pid, token})
 
     {:noreply,
      %{
        state
-       | owners: Map.put(state.owners, session_id, {pid, ref}),
+       | owners: Map.put(state.owners, session_id, {pid, ref, token}),
          owner_refs: Map.put(state.owner_refs, ref, {session_id, pid})
      }}
   end
 
-  def handle_cast({:untrack_owner, session_id}, state) do
-    {state, ref} = drop_owner(state, session_id)
+  def handle_cast({:untrack_owner, session_id, pid}, state) do
+    {state, ref} = drop_owner(state, session_id, pid)
 
     if ref != nil do
       Process.demonitor(ref, [:flush])
@@ -178,14 +190,14 @@ defmodule OmeglePhoenix.Router do
   defp route(session_id, message) do
     current_node = Atom.to_string(Node.self())
 
-    case owner_node(session_id) do
+    case owner_record(session_id) do
       {:ok, nil} ->
         dispatch_local_if_owned(session_id, message)
 
-      {:ok, owner} when owner == current_node ->
+      {:ok, %{node: owner_node} = owner} when owner_node == current_node ->
         if not dispatch_local_if_owned(session_id, message) do
           Logger.warning("Router cleared stale local owner for #{session_id}")
-          compare_and_delete_owner_node(session_id, current_node)
+          compare_and_delete_owner(session_id, owner)
         end
 
       {:ok, owner} ->
@@ -197,14 +209,16 @@ defmodule OmeglePhoenix.Router do
     end
   end
 
-  defp owner_node(session_id) do
-    case OmeglePhoenix.Redis.command(["GET", "session:#{session_id}:owner_node"]) do
-      {:ok, owner} when is_binary(owner) ->
-        if valid_owner_node?(owner) do
-          {:ok, owner}
-        else
-          _ = OmeglePhoenix.Redis.command(["DEL", "session:#{session_id}:owner_node"])
-          {:error, :invalid_owner}
+  defp owner_record(session_id) do
+    case OmeglePhoenix.Redis.command(["GET", owner_key(session_id)]) do
+      {:ok, encoded_owner} when is_binary(encoded_owner) ->
+        case decode_owner_record(encoded_owner) do
+          {:ok, owner} ->
+            {:ok, owner}
+
+          :error ->
+            _ = OmeglePhoenix.Redis.command(["DEL", owner_key(session_id)])
+            {:error, :invalid_owner}
         end
 
       other ->
@@ -224,26 +238,26 @@ defmodule OmeglePhoenix.Router do
     )
   end
 
-  defp dispatch_remote(session_id, owner, message) do
+  defp dispatch_remote(session_id, %{node: owner_node} = owner, message) do
     payload =
       session_id
       |> serialize_remote_message(message)
       |> Jason.encode!()
 
-    case OmeglePhoenix.Redis.command(["PUBLISH", node_channel(owner), payload]) do
+    case OmeglePhoenix.Redis.command(["PUBLISH", node_channel(owner_node), payload]) do
       {:ok, subscribers} when is_integer(subscribers) and subscribers > 0 ->
         :ok
 
       {:ok, 0} ->
         Logger.warning(
-          "Router remote delivery found no subscribers for #{owner}; clearing stale owner for #{session_id}"
+          "Router remote delivery found no subscribers for #{owner_node}; clearing stale owner for #{session_id}"
         )
 
-        compare_and_delete_owner_node(session_id, owner)
+        compare_and_delete_owner(session_id, owner)
         dispatch_local_if_owned(session_id, message)
 
       {:error, reason} ->
-        Logger.error("Router remote delivery failed for #{owner}: #{inspect(reason)}")
+        Logger.error("Router remote delivery failed for #{owner_node}: #{inspect(reason)}")
         dispatch_local_if_owned(session_id, message)
     end
   end
@@ -350,19 +364,22 @@ defmodule OmeglePhoenix.Router do
     end
   end
 
-  defp track_local_owner(session_id, pid) do
+  defp track_local_owner(session_id, pid, token) do
     _ = ensure_owner_table()
-    :ets.insert(@owner_table, {session_id, pid})
-    GenServer.cast(__MODULE__, {:track_owner, session_id, pid})
+    :ets.insert(@owner_table, {session_id, pid, token})
+    GenServer.cast(__MODULE__, {:track_owner, session_id, pid, token})
     :ok
   end
 
-  defp untrack_local_owner(session_id) do
+  defp untrack_local_owner(session_id, pid) do
     if :ets.whereis(@owner_table) != :undefined do
-      :ets.delete(@owner_table, session_id)
+      case :ets.lookup(@owner_table, session_id) do
+        [{^session_id, ^pid, _token}] -> :ets.delete(@owner_table, session_id)
+        _ -> :ok
+      end
     end
 
-    GenServer.cast(__MODULE__, {:untrack_owner, session_id})
+    GenServer.cast(__MODULE__, {:untrack_owner, session_id, pid})
     :ok
   end
 
@@ -371,7 +388,18 @@ defmodule OmeglePhoenix.Router do
       nil
     else
       case :ets.lookup(@owner_table, session_id) do
-        [{^session_id, pid}] when is_pid(pid) -> pid
+        [{^session_id, pid, _token}] when is_pid(pid) -> pid
+        _ -> nil
+      end
+    end
+  end
+
+  defp local_owner(session_id, pid) do
+    if :ets.whereis(@owner_table) == :undefined do
+      nil
+    else
+      case :ets.lookup(@owner_table, session_id) do
+        [{^session_id, ^pid, token}] when is_binary(token) -> {pid, token}
         _ -> nil
       end
     end
@@ -386,9 +414,23 @@ defmodule OmeglePhoenix.Router do
 
   defp drop_owner(state, session_id) do
     case Map.pop(state.owners, session_id) do
-      {{_pid, ref}, owners} ->
+      {{_pid, ref, _token}, owners} ->
         :ets.delete(@owner_table, session_id)
         {%{state | owners: owners, owner_refs: Map.delete(state.owner_refs, ref)}, ref}
+
+      {nil, owners} ->
+        {%{state | owners: owners}, nil}
+    end
+  end
+
+  defp drop_owner(state, session_id, pid) do
+    case Map.pop(state.owners, session_id) do
+      {{^pid, ref, _token}, owners} ->
+        :ets.delete(@owner_table, session_id)
+        {%{state | owners: owners, owner_refs: Map.delete(state.owner_refs, ref)}, ref}
+
+      {{_other_pid, _ref, _token} = owner_entry, owners} ->
+        {%{state | owners: Map.put(owners, session_id, owner_entry)}, nil}
 
       {nil, owners} ->
         {%{state | owners: owners}, nil}
@@ -398,20 +440,52 @@ defmodule OmeglePhoenix.Router do
   defp node_channel(owner_node), do: "router:node:" <> owner_node
   defp topic(session_id), do: "session:" <> session_id
 
-  defp compare_and_delete_owner_node(session_id, expected_owner) do
+  defp compare_and_delete_owner(session_id, expected_owner) do
     _ =
       OmeglePhoenix.Redis.command([
         "EVAL",
         @compare_delete_script,
         "1",
-        "session:#{session_id}:owner_node",
-        expected_owner
+        owner_key(session_id),
+        encode_owner_record(expected_owner)
       ])
 
     :ok
   end
 
-  defp valid_owner_node?(owner) do
-    owner != "" and not String.starts_with?(owner, "{") and not String.starts_with?(owner, "[")
+  defp persist_owner(session_id, owner) do
+    OmeglePhoenix.Redis.command([
+      "SETEX",
+      owner_key(session_id),
+      Integer.to_string(OmeglePhoenix.Config.get_router_owner_ttl_seconds()),
+      encode_owner_record(owner)
+    ])
+
+    :ok
+  end
+
+  defp build_local_owner_record(token) when is_binary(token) do
+    %{node: Atom.to_string(Node.self()), token: token}
+  end
+
+  defp owner_key(session_id), do: "#{@owner_key_prefix}:#{session_id}:owner"
+
+  defp owner_token do
+    Integer.to_string(System.unique_integer([:positive, :monotonic]))
+  end
+
+  defp encode_owner_record(%{node: node, token: token})
+       when is_binary(node) and is_binary(token) do
+    node <> @owner_value_separator <> token
+  end
+
+  defp decode_owner_record(encoded_owner) when is_binary(encoded_owner) do
+    case String.split(encoded_owner, @owner_value_separator, parts: 2) do
+      [node, token] when byte_size(node) > 0 and byte_size(token) > 0 ->
+        {:ok, %{node: node, token: token}}
+
+      _ ->
+        :error
+    end
   end
 end

@@ -574,7 +574,7 @@ defmodule OmeglePhoenix.RedisState do
   defp session_ip_key(session_id), do: "session:#{session_id}:ip"
   defp session_token_key(session_id), do: "session:#{session_id}:token"
   defp queue_meta_key(session_id), do: "#{@queue_meta_key_prefix}:#{session_id}:queue_meta"
-  defp session_owner_key(session_id), do: "session:#{session_id}:owner_node"
+  defp session_owner_key(session_id), do: "session:#{session_id}:owner"
   defp ip_sessions_key(ip), do: "ip:#{ip}"
   defp match_key(session_id), do: "match:#{session_id}"
   defp recent_match_key(session_id), do: "recent_match:#{session_id}"
