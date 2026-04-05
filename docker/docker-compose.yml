@@ -95,7 +95,7 @@ services:
     depends_on:
       - redis
     environment:
-      PORT: "8081"
+      PORT: "8080"
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       REDIS_PASSWORD: pairline-dev-redis-password
