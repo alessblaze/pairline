@@ -60,7 +60,9 @@ Minimum values to review:
   - `TRUSTED_PROXY_CIDRS`
   - `ADMIN_STREAM`
   - `MATCH_EVENT_STREAM`
+  - `MATCH_FRONTIER_SIZE`
   - `MATCH_SHARD_COUNT`
+  - `MATCH_RELAXED_WAIT_MS`
   - `MATCH_OVERFLOW_WAIT_MS`
 - `backend/golang/.env`
   - `POSTGRES_*`
@@ -75,8 +77,8 @@ Minimum values to review:
 
 Notes:
 
-- Phoenix matchmaking now uses bucketed shard queues. `MATCH_SHARD_COUNT` controls random-queue partitioning, and `MATCH_OVERFLOW_WAIT_MS` controls when long-waiting sessions can look across shards.
-- Phoenix shard coordination now uses a Redis Stream. `MATCH_EVENT_STREAM` controls the stream name, and `MATCH_SWEEP_INTERVAL_MS` controls the slower fallback sweep interval.
+- Phoenix matchmaking now uses exact-interest queues, relaxed interest tiers, and frontier-limited queue scans. `MATCH_FRONTIER_SIZE` controls how much of each queue head is searched per pass, `MATCH_SHARD_COUNT` controls relaxed/random shard fanout, `MATCH_RELAXED_WAIT_MS` controls when users can relax out of exact-interest buckets, and `MATCH_OVERFLOW_WAIT_MS` controls when they can fall back to broad random matching.
+- Phoenix shard coordination now uses a Redis Stream. `MATCH_EVENT_STREAM` controls the stream name, while `MATCH_SWEEP_INTERVAL_MS` and `MATCH_SWEEP_STALE_AFTER_MS` tune the slower stale-queue safety sweep.
 - Phoenix admin moderation fanout now uses a Redis Stream by default for durable cross-node coordination. `ADMIN_STREAM` controls the stream name.
 - The Go service now does startup ban reconciliation by default. Set `BAN_SYNC_INTERVAL_SECONDS` to a positive value only if you want periodic full resyncs.
 

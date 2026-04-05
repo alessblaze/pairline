@@ -28,12 +28,15 @@ Copy `.env.example` to `.env` and review:
 - `ADMIN_STREAM_BATCH_SIZE`
 - `MATCH_TIMEOUT`
 - `MATCH_BATCH_SIZE`
+- `MATCH_FRONTIER_SIZE`
 - `MATCH_SWEEP_INTERVAL_MS`
+- `MATCH_SWEEP_STALE_AFTER_MS`
 - `MATCH_EVENT_STREAM`
 - `MATCH_EVENT_STREAM_BLOCK_MS`
 - `MATCH_EVENT_STREAM_BATCH_SIZE`
 - `MATCH_EVENT_STREAM_MAXLEN`
 - `MATCH_SHARD_COUNT`
+- `MATCH_RELAXED_WAIT_MS`
 - `MATCH_OVERFLOW_WAIT_MS`
 - `REAPER_INTERVAL_MS`
 - `REAPER_BATCH_SIZE`
@@ -41,7 +44,7 @@ Copy `.env.example` to `.env` and review:
 - `NODE_COOKIE`
 - `CLUSTER_NODES`
 
-`MATCH_SHARD_COUNT` controls the random-queue shard fanout, and `MATCH_OVERFLOW_WAIT_MS` controls when long-waiting sessions are allowed to overflow into a partner shard. `MATCH_EVENT_STREAM` is the Redis Stream used for cross-node shard coordination, while `MATCH_SWEEP_INTERVAL_MS` is the slower fallback sweep for expiry and quiet queues.
+`MATCH_FRONTIER_SIZE` caps how deep the matcher searches within a queue before it defers to the next stream-triggered pass. `MATCH_SHARD_COUNT` controls the relaxed-tier and random-queue shard fanout, `MATCH_RELAXED_WAIT_MS` controls when interest users can relax from exact buckets into the relaxed tier, and `MATCH_OVERFLOW_WAIT_MS` controls when they are allowed into broad random fallback. `MATCH_EVENT_STREAM` is the Redis Stream used for cross-node shard coordination, while `MATCH_SWEEP_INTERVAL_MS` and `MATCH_SWEEP_STALE_AFTER_MS` keep the fallback sweep focused on quiet queues instead of rescanning hot queues constantly.
 Admin moderation fanout now uses Redis Streams for durable cross-node delivery, with `ADMIN_STREAM` as the stream name and the block/batch knobs controlling consumer polling behavior.
 
 ## Useful commands

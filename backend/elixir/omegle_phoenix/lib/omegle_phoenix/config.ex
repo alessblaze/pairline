@@ -90,8 +90,22 @@ defmodule OmeglePhoenix.Config do
     get("MATCH_BATCH_SIZE", "200") |> String.to_integer()
   end
 
+  def get_match_frontier_size do
+    get("MATCH_FRONTIER_SIZE", "16")
+    |> String.to_integer()
+    |> max(1)
+  end
+
   def get_match_sweep_interval_ms do
-    get("MATCH_SWEEP_INTERVAL_MS", "1000") |> String.to_integer()
+    get("MATCH_SWEEP_INTERVAL_MS", "15000")
+    |> String.to_integer()
+    |> max(0)
+  end
+
+  def get_match_sweep_stale_after_ms do
+    get("MATCH_SWEEP_STALE_AFTER_MS", "30000")
+    |> String.to_integer()
+    |> max(1_000)
   end
 
   def get_match_event_stream do
@@ -118,6 +132,12 @@ defmodule OmeglePhoenix.Config do
 
   def get_match_overflow_wait_ms do
     get("MATCH_OVERFLOW_WAIT_MS", "15000")
+    |> String.to_integer()
+    |> max(0)
+  end
+
+  def get_match_relaxed_wait_ms do
+    get("MATCH_RELAXED_WAIT_MS", "5000")
     |> String.to_integer()
     |> max(0)
   end

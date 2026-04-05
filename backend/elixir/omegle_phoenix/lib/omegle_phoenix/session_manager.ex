@@ -70,6 +70,43 @@ defmodule OmeglePhoenix.SessionManager do
     end
   end
 
+  def get_queue_ready_sessions(session_ids) when is_list(session_ids) do
+    ordered_ids =
+      session_ids
+      |> Enum.filter(&is_binary/1)
+      |> Enum.uniq()
+
+    case ordered_ids do
+      [] ->
+        {:ok, %{}}
+
+      ids ->
+        keys = Enum.map(ids, &queue_meta_key/1)
+
+        case OmeglePhoenix.Redis.command(["MGET" | keys]) do
+          {:ok, payloads} when is_list(payloads) ->
+            sessions =
+              ids
+              |> Enum.zip(payloads)
+              |> Enum.reduce(%{}, fn
+                {_id, nil}, acc ->
+                  acc
+
+                {id, payload}, acc ->
+                  case decode_queue_meta(payload) do
+                    {:ok, meta} -> Map.put(acc, id, meta)
+                    _ -> acc
+                  end
+              end)
+
+            {:ok, sessions}
+
+          _ ->
+            {:ok, %{}}
+        end
+    end
+  end
+
   def get_all_sessions do
     sessions =
       case OmeglePhoenix.Redis.command(["SMEMBERS", @active_sessions_key]) do
@@ -415,6 +452,15 @@ defmodule OmeglePhoenix.SessionManager do
     end
   end
 
+  defp decode_queue_meta(payload) do
+    with {:ok, raw} <- Jason.decode(payload),
+         {:ok, meta} <- deserialize_queue_meta(raw) do
+      {:ok, meta}
+    else
+      _ -> {:error, :not_found}
+    end
+  end
+
   defp deserialize_session(raw) when is_map(raw) do
     session =
       Enum.reduce(@session_fields, %{}, fn field, acc ->
@@ -427,6 +473,24 @@ defmodule OmeglePhoenix.SessionManager do
 
   defp deserialize_session(_raw), do: {:error, :invalid}
 
+  defp deserialize_queue_meta(raw) when is_map(raw) do
+    meta = %{
+      id: Map.get(raw, "id"),
+      status: normalize_status(Map.get(raw, "status")),
+      partner_id: Map.get(raw, "partner_id"),
+      last_partner_id: Map.get(raw, "last_partner_id"),
+      mode: normalize_mode(Map.get(raw, "mode"), "text"),
+      interest_buckets:
+        raw
+        |> Map.get("interest_buckets", [])
+        |> normalize_interest_buckets()
+    }
+
+    {:ok, meta}
+  end
+
+  defp deserialize_queue_meta(_raw), do: {:error, :invalid}
+
   defp deserialize_field(:status, nil), do: :waiting
   defp deserialize_field(:status, value), do: normalize_status(value)
   defp deserialize_field(:signaling_ready, value), do: truthy?(value)
@@ -434,6 +498,17 @@ defmodule OmeglePhoenix.SessionManager do
   defp deserialize_field(:ban_status, value), do: truthy?(value)
   defp deserialize_field(:preferences, value), do: normalize_preferences(value)
   defp deserialize_field(_field, value), do: value
+
+  defp normalize_interest_buckets(values) when is_list(values) do
+    values
+    |> Enum.filter(&is_binary/1)
+    |> Enum.map(&String.slice(&1, 0, 32))
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
+    |> Enum.take(3)
+  end
+
+  defp normalize_interest_buckets(_values), do: []
 
   defp normalize_preferences(preferences) when is_map(preferences) do
     %{
@@ -514,5 +589,6 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   defp session_key(session_id), do: "session:data:#{session_id}"
+  defp queue_meta_key(session_id), do: "session:#{session_id}:queue_meta"
   defp ip_sessions_key(ip), do: "ip:#{ip}"
 end

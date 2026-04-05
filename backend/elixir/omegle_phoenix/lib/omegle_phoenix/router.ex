@@ -129,7 +129,18 @@ defmodule OmeglePhoenix.Router do
   end
 
   defp owner_node(session_id) do
-    OmeglePhoenix.Redis.command(["GET", "session:#{session_id}:owner_node"])
+    case OmeglePhoenix.Redis.command(["GET", "session:#{session_id}:owner_node"]) do
+      {:ok, owner} when is_binary(owner) ->
+        if valid_owner_node?(owner) do
+          {:ok, owner}
+        else
+          _ = OmeglePhoenix.Redis.command(["DEL", "session:#{session_id}:owner_node"])
+          {:error, :invalid_owner}
+        end
+
+      other ->
+        other
+    end
   end
 
   defp dispatch_local(session_id, message) do
@@ -256,4 +267,8 @@ defmodule OmeglePhoenix.Router do
 
   defp node_channel(owner_node), do: "router:node:" <> owner_node
   defp topic(session_id), do: "session:" <> session_id
+
+  defp valid_owner_node?(owner) do
+    owner != "" and not String.starts_with?(owner, "{") and not String.starts_with?(owner, "[")
+  end
 end
