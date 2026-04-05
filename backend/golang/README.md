@@ -43,8 +43,10 @@ Copy `.env.example` to `.env` and review:
 - `ROOT_ADMIN_PASSWORD`
 - `CORS_ORIGIN`
 - `TRUSTED_PROXY_CIDRS`
+- `BAN_SYNC_INTERVAL_SECONDS`
 
 `JWT_SECRET` is only required for the admin or combined binaries.
+`BAN_SYNC_INTERVAL_SECONDS` defaults to disabled behavior when unset or `0`, which means startup reconciliation plus event-driven Redis updates only.
 
 ## Useful commands
 

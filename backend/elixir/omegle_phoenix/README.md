@@ -24,9 +24,17 @@ Copy `.env.example` to `.env` and review:
 - `CORS_ORIGINS`
 - `TRUSTED_PROXY_CIDRS`
 - `ADMIN_CHANNEL`
+- `MATCH_TIMEOUT`
+- `MATCH_BATCH_SIZE`
+- `MATCH_SHARD_COUNT`
+- `MATCH_OVERFLOW_WAIT_MS`
+- `REAPER_INTERVAL_MS`
+- `REAPER_BATCH_SIZE`
 - `NODE_NAME`
 - `NODE_COOKIE`
 - `CLUSTER_NODES`
+
+`MATCH_SHARD_COUNT` controls the random-queue shard fanout, and `MATCH_OVERFLOW_WAIT_MS` controls when long-waiting sessions are allowed to overflow into a partner shard.
 
 ## Useful commands
 

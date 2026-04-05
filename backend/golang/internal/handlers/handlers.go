@@ -137,21 +137,15 @@ func GetReportsHandlerGin(c *gin.Context) {
 		return
 	}
 
-	var metricPending int64
-	var metricApproved int64
-	var metricRejected int64
-
-	db.GetDB().WithContext(ctx).Model(&storage.Report{}).Where("status = ?", "pending").Count(&metricPending)
-	db.GetDB().WithContext(ctx).Model(&storage.Report{}).Where("status = ?", "approved").Count(&metricApproved)
-	db.GetDB().WithContext(ctx).Model(&storage.Report{}).Where("status = ?", "rejected").Count(&metricRejected)
+	metrics, err := loadReportMetrics(ctx, db.GetDB())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch report metrics"})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"reports": reports,
-		"metrics": map[string]int64{
-			"pending":  metricPending,
-			"approved": metricApproved,
-			"rejected": metricRejected,
-		},
+		"metrics": metrics,
 	})
 }
 
@@ -507,19 +501,15 @@ func GetBansHandlerGin(c *gin.Context) {
 		return
 	}
 
-	var activeCount int64
-	var inactiveCount int64
-
-	db.GetDB().WithContext(ctx).Model(&storage.Ban{}).Where("is_active = ?", true).Count(&activeCount)
-	db.GetDB().WithContext(ctx).Model(&storage.Ban{}).Where("is_active = ?", false).Count(&inactiveCount)
+	metrics, err := loadBanMetrics(ctx, db.GetDB())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch ban metrics"})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"bans": bans,
-		"metrics": map[string]int64{
-			"active":   activeCount,
-			"inactive": inactiveCount,
-			"total":    activeCount + inactiveCount,
-		},
+		"bans":    bans,
+		"metrics": metrics,
 	})
 }
 
@@ -1088,4 +1078,66 @@ func redisBanTTL(ban storage.Ban) time.Duration {
 	}
 
 	return ttl
+}
+
+type reportMetricRow struct {
+	Status string
+	Count  int64
+}
+
+func loadReportMetrics(ctx context.Context, db *gorm.DB) (map[string]int64, error) {
+	rows := make([]reportMetricRow, 0, 3)
+	if err := db.WithContext(ctx).
+		Model(&storage.Report{}).
+		Select("status, COUNT(*) AS count").
+		Where("status IN ?", []string{"pending", "approved", "rejected"}).
+		Group("status").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	metrics := map[string]int64{
+		"pending":  0,
+		"approved": 0,
+		"rejected": 0,
+	}
+
+	for _, row := range rows {
+		metrics[row.Status] = row.Count
+	}
+
+	return metrics, nil
+}
+
+type banMetricRow struct {
+	IsActive bool
+	Count    int64
+}
+
+func loadBanMetrics(ctx context.Context, db *gorm.DB) (map[string]int64, error) {
+	rows := make([]banMetricRow, 0, 2)
+	if err := db.WithContext(ctx).
+		Model(&storage.Ban{}).
+		Select("is_active, COUNT(*) AS count").
+		Group("is_active").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	metrics := map[string]int64{
+		"active":   0,
+		"inactive": 0,
+		"total":    0,
+	}
+
+	for _, row := range rows {
+		if row.IsActive {
+			metrics["active"] = row.Count
+		} else {
+			metrics["inactive"] = row.Count
+		}
+		metrics["total"] += row.Count
+	}
+
+	return metrics, nil
 }

@@ -149,7 +149,12 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   def refresh_session(session_id) do
-    update_session(session_id, %{})
+    case OmeglePhoenix.RedisState.touch_session(session_id, ttl_seconds()) do
+      {:ok, "ok"} -> {:ok, session_id}
+      {:ok, "not_found"} -> {:error, :not_found}
+      {:error, reason} -> {:error, reason}
+      _ -> {:error, :not_found}
+    end
   end
 
   def delete_session(session_id) do

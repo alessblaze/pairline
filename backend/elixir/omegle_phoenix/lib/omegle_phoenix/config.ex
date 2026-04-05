@@ -81,4 +81,16 @@ defmodule OmeglePhoenix.Config do
   def get_match_batch_size do
     get("MATCH_BATCH_SIZE", "200") |> String.to_integer()
   end
+
+  def get_match_shard_count do
+    get("MATCH_SHARD_COUNT", "8")
+    |> String.to_integer()
+    |> max(1)
+  end
+
+  def get_match_overflow_wait_ms do
+    get("MATCH_OVERFLOW_WAIT_MS", "15000")
+    |> String.to_integer()
+    |> max(0)
+  end
 end

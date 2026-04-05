@@ -58,6 +58,8 @@ Minimum values to review:
   - `SHARED_SECRET`
   - `CORS_ORIGINS`
   - `TRUSTED_PROXY_CIDRS`
+  - `MATCH_SHARD_COUNT`
+  - `MATCH_OVERFLOW_WAIT_MS`
 - `backend/golang/.env`
   - `POSTGRES_*`
   - `JWT_SECRET`
@@ -65,8 +67,14 @@ Minimum values to review:
   - `ROOT_ADMIN_PASSWORD`
   - `CORS_ORIGIN`
   - `TRUSTED_PROXY_CIDRS`
+  - `BAN_SYNC_INTERVAL_SECONDS`
 
 `SHARED_SECRET` should match across the backend services.
+
+Notes:
+
+- Phoenix matchmaking now uses bucketed shard queues. `MATCH_SHARD_COUNT` controls random-queue partitioning, and `MATCH_OVERFLOW_WAIT_MS` controls when long-waiting sessions can look across shards.
+- The Go service now does startup ban reconciliation by default. Set `BAN_SYNC_INTERVAL_SECONDS` to a positive value only if you want periodic full resyncs.
 
 ## 3. Install dependencies
 

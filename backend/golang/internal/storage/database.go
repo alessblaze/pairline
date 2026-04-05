@@ -48,12 +48,12 @@ type Report struct {
 	ReporterSessionID  string     `gorm:"index" json:"reporter_session_id"`
 	ReportedSessionID  string     `gorm:"index" json:"reported_session_id"`
 	ReporterIP         string     `json:"reporter_ip"`
-	ReportedIP         string     `json:"reported_ip"`
+	ReportedIP         string     `gorm:"index" json:"reported_ip"`
 	Reason             string     `json:"reason"`
 	Description        string     `json:"description"`
 	ChatLog            string     `gorm:"type:jsonb;default:'[]'" json:"chat_log"`
-	Status             string     `gorm:"default:'pending'" json:"status"`
-	CreatedAt          time.Time  `gorm:"autoCreateTime" json:"created_at"`
+	Status             string     `gorm:"default:'pending';index:idx_reports_status_created_at,priority:1" json:"status"`
+	CreatedAt          time.Time  `gorm:"autoCreateTime;index:idx_reports_status_created_at,priority:2" json:"created_at"`
 	ReviewedByUsername string     `json:"reviewed_by_username"`
 	ReviewedAt         *time.Time `json:"reviewed_at"`
 }
@@ -64,9 +64,9 @@ type Ban struct {
 	IPAddress          string     `gorm:"index" json:"ip_address"`
 	Reason             string     `json:"reason"`
 	BannedByUsername   string     `json:"banned_by_username"`
-	CreatedAt          time.Time  `gorm:"autoCreateTime" json:"created_at"`
+	CreatedAt          time.Time  `gorm:"autoCreateTime;index:idx_bans_active_created_at,priority:2" json:"created_at"`
 	ExpiresAt          *time.Time `json:"expires_at"`
-	IsActive           bool       `gorm:"default:true" json:"is_active"`
+	IsActive           bool       `gorm:"default:true;index:idx_bans_active_created_at,priority:1" json:"is_active"`
 	UnbannedAt         *time.Time `json:"unbanned_at"`
 	UnbannedByUsername string     `json:"unbanned_by_username"`
 }

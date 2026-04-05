@@ -171,6 +171,31 @@ defmodule OmeglePhoenix.RedisState do
   return "ok"
   """
 
+  # Refreshes session TTL and last_activity without a full read-modify-write
+  # round-trip through the BEAM. Also refreshes related hot keys.
+  @touch_session_script """
+  local data = redis.call('GET', KEYS[1])
+  if not data then
+    return "not_found"
+  end
+  local session = cjson.decode(data)
+  session["last_activity"] = tonumber(ARGV[2])
+  redis.call('SETEX', KEYS[1], ARGV[1], cjson.encode(session))
+  if redis.call('EXISTS', KEYS[2]) == 1 then
+    redis.call('EXPIRE', KEYS[2], ARGV[1])
+  end
+  if redis.call('EXISTS', KEYS[3]) == 1 then
+    redis.call('EXPIRE', KEYS[3], ARGV[1])
+  end
+  if redis.call('EXISTS', KEYS[4]) == 1 then
+    redis.call('EXPIRE', KEYS[4], ARGV[1])
+  end
+  if redis.call('EXISTS', KEYS[5]) == 1 then
+    redis.call('EXPIRE', KEYS[5], ARGV[1])
+  end
+  return "ok"
+  """
+
   def persist_session(session, ttl_seconds, opts \\ []) do
     ttl = normalize_ttl!(ttl_seconds)
     hashed_token = hashed_token(session.token)
@@ -336,6 +361,26 @@ defmodule OmeglePhoenix.RedisState do
       ttl,
       now,
       expected_peer_id
+    ]
+
+    exec(command, opts)
+  end
+
+  def touch_session(session_id, ttl_seconds, opts \\ []) do
+    ttl = normalize_ttl!(ttl_seconds)
+    now = Integer.to_string(System.system_time(:second))
+
+    command = [
+      "EVAL",
+      @touch_session_script,
+      "5",
+      session_key(session_id),
+      session_ip_key(session_id),
+      session_token_key(session_id),
+      session_owner_key(session_id),
+      match_key(session_id),
+      ttl,
+      now
     ]
 
     exec(command, opts)

@@ -165,12 +165,12 @@ func (s *Server) startBanSyncLoop() {
 func banSyncIntervalSeconds() int {
 	raw := os.Getenv("BAN_SYNC_INTERVAL_SECONDS")
 	if raw == "" {
-		return 60
+		return 0
 	}
 
 	value, err := strconv.Atoi(raw)
 	if err != nil {
-		return 60
+		return 0
 	}
 
 	return value
