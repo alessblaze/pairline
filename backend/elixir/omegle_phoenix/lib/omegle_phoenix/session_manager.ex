@@ -28,9 +28,12 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   def get_session(session_id) when is_binary(session_id) do
-    with {:ok, route} <- get_session_route(session_id) do
+    with {:ok, route} <- OmeglePhoenix.RedisKeys.resolve_session_route(session_id, verify_exists: false) do
       case OmeglePhoenix.Redis.command(["GET", session_key(session_id, route)]) do
-        {:ok, nil} -> {:error, :not_found}
+        {:ok, nil} ->
+          _ = OmeglePhoenix.Redis.command(["DEL", OmeglePhoenix.RedisKeys.session_locator_key(session_id)])
+          {:error, :not_found}
+
         {:ok, payload} -> decode_session(payload)
         _ -> {:error, :not_found}
       end

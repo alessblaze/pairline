@@ -204,26 +204,16 @@ defmodule OmeglePhoenixWeb.RoomChannel do
             end
 
           if allowed do
-            case with_current_partner_local(session_id, partner_id, fn ->
-                   OmeglePhoenix.Router.send_message(partner_id, %{
-                     type: "typing",
-                     from: session_id,
-                     data: %{typing: is_typing}
-                   })
+            OmeglePhoenix.Router.send_message(partner_id, %{
+              type: "typing",
+              from: session_id,
+              data: %{typing: is_typing}
+            })
 
-                   :telemetry.execute([:omegle_phoenix, :room, :typing_sent], %{count: 1}, %{
-                     session_id: session_id,
-                     typing: is_typing
-                   })
-
-                   {:ok, :sent}
-                 end) do
-              {:ok, :sent} ->
-                :ok
-
-              {:error, _payload} ->
-                :ok
-            end
+            :telemetry.execute([:omegle_phoenix, :room, :typing_sent], %{count: 1}, %{
+              session_id: session_id,
+              typing: is_typing
+            })
           end
 
           {:noreply, socket}

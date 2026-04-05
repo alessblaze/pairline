@@ -385,7 +385,7 @@ defmodule OmeglePhoenix.Router do
   end
 
   defp owner_key(session_id) do
-    with {:ok, route} <- OmeglePhoenix.SessionManager.get_session_route(session_id) do
+    with {:ok, route} <- OmeglePhoenix.RedisKeys.resolve_session_route(session_id, verify_exists: false) do
       {:ok, OmeglePhoenix.RedisKeys.session_owner_key(session_id, route)}
     end
   end

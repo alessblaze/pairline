@@ -18,11 +18,13 @@ defmodule OmeglePhoenix.RedisKeys do
     %{mode: mode, shard: initial_shard(mode, preferences, session_id), session_id: session_id}
   end
 
-  def resolve_session_route(session_id) when is_binary(session_id) do
+  def resolve_session_route(session_id, opts \\ []) when is_binary(session_id) do
+    verify_exists? = Keyword.get(opts, :verify_exists, true)
+
     case OmeglePhoenix.Redis.command(["GET", session_locator_key(session_id)]) do
       {:ok, locator} when is_binary(locator) ->
         with {:ok, route} <- decode_locator(session_id, locator),
-             :ok <- ensure_session_exists(session_id, route) do
+             :ok <- maybe_verify_session_exists(session_id, route, verify_exists?) do
           {:ok, route}
         else
           {:error, :not_found} = error ->
@@ -176,6 +178,9 @@ defmodule OmeglePhoenix.RedisKeys do
 
   def tag(%{mode: mode, shard: shard}), do: tag(mode, shard)
   def tag(mode, shard), do: "{#{normalize_mode(mode)}:#{normalize_shard(shard, normalize_mode(mode))}}"
+
+  defp maybe_verify_session_exists(_session_id, _route, false), do: :ok
+  defp maybe_verify_session_exists(session_id, route, true), do: ensure_session_exists(session_id, route)
 
   defp ensure_session_exists(session_id, route) do
     case OmeglePhoenix.Redis.command(["EXISTS", session_key(session_id, route)]) do
