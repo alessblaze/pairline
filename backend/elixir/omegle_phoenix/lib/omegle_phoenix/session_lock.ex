@@ -33,15 +33,15 @@ defmodule OmeglePhoenix.SessionLock do
     lock_token = "#{Node.self()}:#{System.unique_integer([:positive, :monotonic])}"
 
     case acquire_all(ordered_ids, lock_token, []) do
-      :ok ->
+      {:ok, acquired} ->
         started_at = System.monotonic_time()
-        renewer = start_lock_renewer(ordered_ids, lock_token)
+        renewer = start_lock_renewer(acquired, lock_token)
 
         try do
           fun.()
         after
           stop_renewer(renewer)
-          release_all(Enum.reverse(ordered_ids), lock_token)
+          release_all(Enum.reverse(acquired), lock_token)
 
           :telemetry.execute(
             [:omegle_phoenix, :session_lock, :acquired],
@@ -61,40 +61,47 @@ defmodule OmeglePhoenix.SessionLock do
     end
   end
 
-  defp acquire_all([], _token, _acquired), do: :ok
+  defp acquire_all([], _token, acquired), do: {:ok, acquired}
 
   defp acquire_all([session_id | rest], token, acquired) do
-    case OmeglePhoenix.Redis.command([
-           "SET",
-           lock_key(session_id),
-           token,
-           "PX",
-           Integer.to_string(@lock_ttl_ms),
-           "NX"
-         ]) do
-      {:ok, "OK"} ->
-        acquire_all(rest, token, [session_id | acquired])
+    case lock_key(session_id) do
+      {:ok, key} ->
+        case OmeglePhoenix.Redis.command([
+               "SET",
+               key,
+               token,
+               "PX",
+               Integer.to_string(@lock_ttl_ms),
+               "NX"
+             ]) do
+          {:ok, "OK"} ->
+            acquire_all(rest, token, acquired ++ [{session_id, key}])
 
-      _ ->
+          _ ->
+            release_all(acquired, token)
+            {:error, :locked}
+        end
+
+      {:error, _reason} ->
         release_all(acquired, token)
         {:error, :locked}
     end
   end
 
-  defp release_all(session_ids, token) do
-    Enum.each(session_ids, &release_lock(&1, token))
+  defp release_all(acquired, token) do
+    Enum.each(acquired, fn {_session_id, key} -> release_lock_by_key(key, token) end)
   end
 
-  defp start_lock_renewer(session_ids, token) do
+  defp start_lock_renewer(acquired, token) do
     parent = self()
 
     spawn(fn ->
       parent_ref = Process.monitor(parent)
-      renew_loop(session_ids, token, parent_ref)
+      renew_loop(acquired, token, parent_ref)
     end)
   end
 
-  defp renew_loop(session_ids, token, parent_ref) do
+  defp renew_loop(acquired, token, parent_ref) do
     receive do
       :stop ->
         :ok
@@ -103,8 +110,8 @@ defmodule OmeglePhoenix.SessionLock do
         :ok
     after
       max(div(@lock_ttl_ms, 2), 250) ->
-        Enum.each(session_ids, &renew_lock(&1, token))
-        renew_loop(session_ids, token, parent_ref)
+        Enum.each(acquired, fn {_session_id, key} -> renew_lock_by_key(key, token) end)
+        renew_loop(acquired, token, parent_ref)
     end
   end
 
@@ -113,13 +120,13 @@ defmodule OmeglePhoenix.SessionLock do
     :ok
   end
 
-  defp renew_lock(session_id, token) do
+  defp renew_lock_by_key(key, token) do
     _ =
       OmeglePhoenix.Redis.command([
         "EVAL",
         @renew_script,
         "1",
-        lock_key(session_id),
+        key,
         token,
         Integer.to_string(@lock_ttl_ms)
       ])
@@ -127,13 +134,13 @@ defmodule OmeglePhoenix.SessionLock do
     :ok
   end
 
-  defp release_lock(session_id, token) do
+  defp release_lock_by_key(key, token) do
     _ =
       OmeglePhoenix.Redis.command([
         "EVAL",
         @unlock_script,
         "1",
-        lock_key(session_id),
+        key,
         token
       ])
 
@@ -142,8 +149,8 @@ defmodule OmeglePhoenix.SessionLock do
 
   defp lock_key(session_id) do
     case OmeglePhoenix.SessionManager.get_session_route(session_id) do
-      {:ok, route} -> OmeglePhoenix.RedisKeys.session_lock_key(session_id, route)
-      _ -> "session:lock:" <> session_id
+      {:ok, route} -> {:ok, OmeglePhoenix.RedisKeys.session_lock_key(session_id, route)}
+      _ -> {:error, :no_route}
     end
   end
 end

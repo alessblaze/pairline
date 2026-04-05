@@ -692,8 +692,7 @@ defmodule OmeglePhoenix.RedisState do
     commands = [
       ["SREM", OmeglePhoenix.RedisKeys.active_sessions_key(), session_id],
       ["DEL", OmeglePhoenix.RedisKeys.session_locator_key(session_id)],
-      ["DEL", OmeglePhoenix.RedisKeys.session_ip_locator_key(session_id)],
-      ["DEL", "session:lock:" <> session_id]
+      ["DEL", OmeglePhoenix.RedisKeys.session_ip_locator_key(session_id)]
     ] ++ ip_commands
 
     case OmeglePhoenix.Redis.pipeline(commands) do
