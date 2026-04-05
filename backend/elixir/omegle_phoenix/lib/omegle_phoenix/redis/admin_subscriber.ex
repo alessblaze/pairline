@@ -126,18 +126,45 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
   end
 
   defp claim_stale_pending(connection, stream, group, consumer) do
+    do_claim_stale_pending(connection, stream, group, consumer, "0-0", 0)
+  end
+
+  defp do_claim_stale_pending(_connection, _stream, _group, _consumer, _start_id, attempts)
+       when attempts >= 100 do
+    :ok
+  end
+
+  defp do_claim_stale_pending(connection, stream, group, consumer, start_id, attempts) do
     case Redix.command(connection, [
            "XAUTOCLAIM",
            stream,
            group,
            consumer,
            "30000",
-           "0-0",
+           start_id,
            "COUNT",
            "100"
          ]) do
-      {:ok, _} -> :ok
-      {:error, _} -> :ok
+      {:ok, [next_start_id, entries]} when is_binary(next_start_id) and is_list(entries) ->
+        if entries == [] or next_start_id == start_id do
+          :ok
+        else
+          do_claim_stale_pending(connection, stream, group, consumer, next_start_id, attempts + 1)
+        end
+
+      {:ok, [next_start_id, entries, _deleted_ids]}
+      when is_binary(next_start_id) and is_list(entries) ->
+        if entries == [] or next_start_id == start_id do
+          :ok
+        else
+          do_claim_stale_pending(connection, stream, group, consumer, next_start_id, attempts + 1)
+        end
+
+      {:error, _} ->
+        :ok
+
+      _ ->
+        :ok
     end
   end
 

@@ -9,6 +9,7 @@ defmodule OmeglePhoenix.Matchmaker do
   @stream_reconnect_message :connect_match_stream
   @stream_consume_message :consume_match_stream
   @sweep_message :sweep_match_queues
+  @local_match_batch_message :run_local_match_batch
   @delayed_match_event_message :delayed_match_event
   @prune_queue_script """
   if redis.call('ZCARD', KEYS[1]) == 0 then
@@ -46,6 +47,7 @@ defmodule OmeglePhoenix.Matchmaker do
 
     case OmeglePhoenix.Redis.pipeline(commands) do
       {:ok, _result} ->
+        schedule_local_match_attempts(queue_keys)
         emit_match_event(queue_keys, "join", session_id)
         schedule_fallback_checks(queue_keys, normalized_preferences, session_id)
 
@@ -146,7 +148,9 @@ defmodule OmeglePhoenix.Matchmaker do
       consumer: match_stream_consumer_name(),
       sweep_interval_ms: OmeglePhoenix.Config.get_match_sweep_interval_ms(),
       sweep_stale_after_ms: OmeglePhoenix.Config.get_match_sweep_stale_after_ms(),
-      recent_queue_events: %{}
+      recent_queue_events: %{},
+      pending_local_match_keys: MapSet.new(),
+      local_match_batch_ref: nil
     }
 
     send(self(), @stream_reconnect_message)
@@ -240,6 +244,35 @@ defmodule OmeglePhoenix.Matchmaker do
      }}
   end
 
+  def handle_info(@local_match_batch_message, %{local_match_batch_ref: ref} = state)
+      when not is_nil(ref) do
+    {:noreply, state}
+  end
+
+  def handle_info(@local_match_batch_message, state) do
+    case MapSet.to_list(state.pending_local_match_keys) do
+      [] ->
+        {:noreply, state}
+
+      queue_keys ->
+        {_pid, ref} = spawn_monitor(fn -> run_local_match_batch(queue_keys) end)
+
+        {:noreply, %{state | pending_local_match_keys: MapSet.new(), local_match_batch_ref: ref}}
+    end
+  end
+
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %{local_match_batch_ref: ref} = state) do
+    if reason != :normal do
+      Logger.warning("Immediate matchmaking batch exited unexpectedly: #{inspect(reason)}")
+    end
+
+    if MapSet.size(state.pending_local_match_keys) > 0 do
+      send(self(), @local_match_batch_message)
+    end
+
+    {:noreply, %{state | local_match_batch_ref: nil}}
+  end
+
   def handle_info({@delayed_match_event_message, queue_keys, session_id, phase}, state) do
     emit_match_event(queue_keys, phase, session_id)
     {:noreply, state}
@@ -253,6 +286,20 @@ defmodule OmeglePhoenix.Matchmaker do
   def terminate(_reason, state) do
     stop_stream_connection(Map.get(state, :stream_conn))
     :ok
+  end
+
+  @impl true
+  def handle_cast({:schedule_local_match_attempts, queue_keys}, state) do
+    pending_local_match_keys =
+      Enum.reduce(queue_keys, state.pending_local_match_keys, fn queue_key, acc ->
+        MapSet.put(acc, queue_key)
+      end)
+
+    if is_nil(state.local_match_batch_ref) and MapSet.size(pending_local_match_keys) > 0 do
+      send(self(), @local_match_batch_message)
+    end
+
+    {:noreply, %{state | pending_local_match_keys: pending_local_match_keys}}
   end
 
   defp do_matching(queue_key) do
@@ -1021,6 +1068,46 @@ defmodule OmeglePhoenix.Matchmaker do
     :ok
   end
 
+  defp schedule_local_match_attempts([]), do: :ok
+
+  defp schedule_local_match_attempts(queue_keys) do
+    case Process.whereis(__MODULE__) do
+      nil ->
+        :ok
+
+      _pid ->
+        GenServer.cast(__MODULE__, {:schedule_local_match_attempts, Enum.uniq(queue_keys)})
+    end
+
+    :ok
+  end
+
+  defp run_local_match_batch(queue_keys) do
+    max_concurrency =
+      queue_keys
+      |> length()
+      |> min(System.schedulers_online())
+      |> max(1)
+
+    queue_keys
+    |> Task.async_stream(&run_local_match_attempt/1,
+      max_concurrency: max_concurrency,
+      timeout: 15_000,
+      on_timeout: :kill_task,
+      ordered: false
+    )
+    |> Stream.run()
+  end
+
+  defp run_local_match_attempt(queue_key) do
+    try do
+      do_matching(queue_key)
+    rescue
+      error ->
+        Logger.error("Immediate matchmaking attempt failed for #{queue_key}: #{inspect(error)}")
+    end
+  end
+
   defp start_stream_connection do
     opts = [
       host: OmeglePhoenix.Config.get_redis_host(),
@@ -1060,18 +1147,45 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   defp claim_stale_pending(connection, stream, group, consumer) do
+    do_claim_stale_pending(connection, stream, group, consumer, "0-0", 0)
+  end
+
+  defp do_claim_stale_pending(_connection, _stream, _group, _consumer, _start_id, attempts)
+       when attempts >= 100 do
+    :ok
+  end
+
+  defp do_claim_stale_pending(connection, stream, group, consumer, start_id, attempts) do
     case Redix.command(connection, [
            "XAUTOCLAIM",
            stream,
            group,
            consumer,
            "30000",
-           "0-0",
+           start_id,
            "COUNT",
            "100"
          ]) do
-      {:ok, _} -> :ok
-      {:error, _} -> :ok
+      {:ok, [next_start_id, entries]} when is_binary(next_start_id) and is_list(entries) ->
+        if entries == [] or next_start_id == start_id do
+          :ok
+        else
+          do_claim_stale_pending(connection, stream, group, consumer, next_start_id, attempts + 1)
+        end
+
+      {:ok, [next_start_id, entries, _deleted_ids]}
+      when is_binary(next_start_id) and is_list(entries) ->
+        if entries == [] or next_start_id == start_id do
+          :ok
+        else
+          do_claim_stale_pending(connection, stream, group, consumer, next_start_id, attempts + 1)
+        end
+
+      {:error, _} ->
+        :ok
+
+      _ ->
+        :ok
     end
   end
 
