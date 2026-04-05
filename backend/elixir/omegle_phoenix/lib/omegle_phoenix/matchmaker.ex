@@ -35,15 +35,17 @@ defmodule OmeglePhoenix.Matchmaker do
   def join_queue(session_id, preferences) do
     timestamp = System.system_time(:millisecond)
     normalized_preferences = normalize_preferences(preferences)
+    generation = fallback_generation(normalized_preferences)
 
     with {:ok, route} <- OmeglePhoenix.SessionManager.get_session_route(session_id) do
       queue_keys = initial_queue_keys_for_session(session_id, normalized_preferences, route)
 
       case enqueue_queue_keys(session_id, route, queue_keys, timestamp) do
         {:ok, _result} ->
+          sync_fallback_generation(session_id, generation)
           schedule_local_match_attempts(queue_keys)
           emit_match_event(queue_keys, "join", session_id)
-          schedule_fallback_checks(queue_keys, normalized_preferences, session_id)
+          schedule_fallback_checks(queue_keys, normalized_preferences, session_id, generation)
 
           :telemetry.execute([:omegle_phoenix, :matchmaking, :queued], %{count: 1}, %{
             session_id: session_id,
@@ -60,6 +62,8 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   def leave_queue(session_id) do
+    clear_fallback_generation(session_id)
+
     with {:ok, route} <- OmeglePhoenix.SessionManager.get_session_route(session_id) do
       membership_key = session_queue_key(session_id, route)
       registry_key = queue_registry_key(route)
@@ -151,6 +155,7 @@ defmodule OmeglePhoenix.Matchmaker do
       sweep_interval_ms: OmeglePhoenix.Config.get_match_sweep_interval_ms(),
       sweep_stale_after_ms: OmeglePhoenix.Config.get_match_sweep_stale_after_ms(),
       recent_queue_events: %{},
+      fallback_generations: %{},
       pending_local_match_keys: MapSet.new(),
       local_match_batch_ref: nil
     }
@@ -263,9 +268,12 @@ defmodule OmeglePhoenix.Matchmaker do
     {:noreply, %{state | local_match_batch_ref: nil}}
   end
 
-  def handle_info({@delayed_match_event_message, queue_keys, session_id, phase}, state) do
+  def handle_info({@delayed_match_event_message, queue_keys, session_id, phase, generation}, state) do
     _ = queue_keys
-    schedule_fallback_phase(session_id, phase)
+
+    if Map.get(state.fallback_generations, session_id) == generation do
+      schedule_fallback_phase(session_id, phase)
+    end
 
     {:noreply, state}
   end
@@ -291,6 +299,15 @@ defmodule OmeglePhoenix.Matchmaker do
     end
 
     {:noreply, %{state | pending_local_match_keys: pending_local_match_keys}}
+  end
+
+  def handle_cast({:track_fallback_generation, session_id, generation}, state) do
+    {:noreply,
+     %{state | fallback_generations: Map.put(state.fallback_generations, session_id, generation)}}
+  end
+
+  def handle_cast({:clear_fallback_generation, session_id}, state) do
+    {:noreply, %{state | fallback_generations: Map.delete(state.fallback_generations, session_id)}}
   end
 
   defp do_matching(queue_key) do
@@ -483,9 +500,34 @@ defmodule OmeglePhoenix.Matchmaker do
           {:error, :user_banned}
         else
           case OmeglePhoenix.SessionManager.pair_sessions(session1, session2) do
-            {:ok, _updated_session1, _updated_session2, common_interests} ->
-              OmeglePhoenix.Router.notify_match(session_id1, session_id2, common_interests)
-              OmeglePhoenix.Router.notify_match(session_id2, session_id1, common_interests)
+            {:ok, updated_session1, updated_session2, common_interests} ->
+              updated_route1 = %{
+                mode: OmeglePhoenix.RedisKeys.mode(updated_session1.preferences),
+                shard: updated_session1.redis_shard
+              }
+
+              updated_route2 = %{
+                mode: OmeglePhoenix.RedisKeys.mode(updated_session2.preferences),
+                shard: updated_session2.redis_shard
+              }
+
+              match_generation = updated_session1.match_generation || updated_session2.match_generation
+
+              OmeglePhoenix.Router.notify_match(
+                session_id1,
+                session_id2,
+                common_interests,
+                match_generation,
+                updated_route2
+              )
+
+              OmeglePhoenix.Router.notify_match(
+                session_id2,
+                session_id1,
+                common_interests,
+                match_generation,
+                updated_route1
+              )
 
               :telemetry.execute(
                 [:omegle_phoenix, :matchmaking, :matched],
@@ -756,37 +798,67 @@ defmodule OmeglePhoenix.Matchmaker do
     end
   end
 
-  defp schedule_fallback_checks(queue_keys, preferences, session_id) do
+  defp schedule_fallback_checks(queue_keys, preferences, session_id, generation) do
     if interest_buckets(preferences) != [] do
       schedule_delayed_match_event(
         queue_keys,
         session_id,
         "relaxed_wait_elapsed",
-        OmeglePhoenix.Config.get_match_relaxed_wait_ms()
+        OmeglePhoenix.Config.get_match_relaxed_wait_ms(),
+        generation
       )
 
       schedule_delayed_match_event(
         queue_keys,
         session_id,
         "overflow_wait_elapsed",
-        OmeglePhoenix.Config.get_match_overflow_wait_ms()
+        OmeglePhoenix.Config.get_match_overflow_wait_ms(),
+        generation
       )
     end
 
     :ok
   end
 
-  defp schedule_delayed_match_event(_queue_keys, _session_id, _phase, delay_ms)
+  defp schedule_delayed_match_event(_queue_keys, _session_id, _phase, delay_ms, _generation)
        when not is_integer(delay_ms) or delay_ms <= 0 do
     :ok
   end
 
-  defp schedule_delayed_match_event(queue_keys, session_id, phase, delay_ms) do
+  defp schedule_delayed_match_event(queue_keys, session_id, phase, delay_ms, generation) do
     Process.send_after(
       __MODULE__,
-      {@delayed_match_event_message, queue_keys, session_id, phase},
+      {@delayed_match_event_message, queue_keys, session_id, phase, generation},
       delay_ms
     )
+
+    :ok
+  end
+
+  defp fallback_generation(preferences) do
+    if interest_buckets(preferences) == [] do
+      nil
+    else
+      System.unique_integer([:positive, :monotonic])
+    end
+  end
+
+  defp sync_fallback_generation(session_id, nil), do: clear_fallback_generation(session_id)
+
+  defp sync_fallback_generation(session_id, generation) do
+    case Process.whereis(__MODULE__) do
+      nil -> :ok
+      _pid -> GenServer.cast(__MODULE__, {:track_fallback_generation, session_id, generation})
+    end
+
+    :ok
+  end
+
+  defp clear_fallback_generation(session_id) do
+    case Process.whereis(__MODULE__) do
+      nil -> :ok
+      _pid -> GenServer.cast(__MODULE__, {:clear_fallback_generation, session_id})
+    end
 
     :ok
   end

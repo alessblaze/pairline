@@ -5,7 +5,7 @@ defmodule OmeglePhoenixWeb.RoomChannel do
   @max_messages_per_window 30
   @rate_window_ms 5_000
   @session_refresh_ms 60_000
-  @owner_refresh_ms 10_000
+  @owner_refresh_ms 20_000
 
   @impl true
   def join("room:" <> mode, _payload, socket) when mode in ["lobby", "text", "video"] do
@@ -17,6 +17,8 @@ defmodule OmeglePhoenixWeb.RoomChannel do
        mode: mode,
        last_typing_at: nil,
        partner_id: nil,
+       match_generation: nil,
+       partner_route: nil,
        msg_count: 0,
        window_start: System.system_time(:millisecond)
      )}
@@ -119,7 +121,7 @@ defmodule OmeglePhoenixWeb.RoomChannel do
            end
          end) do
       {:ok, payload} ->
-        {:reply, {:ok, payload}, assign(socket, :partner_id, nil)}
+        {:reply, {:ok, payload}, clear_match_assigns(socket)}
 
       {:error, payload} ->
         {:reply, {:error, payload}, socket}
@@ -129,6 +131,8 @@ defmodule OmeglePhoenixWeb.RoomChannel do
   def handle_in("message", %{"data" => data}, socket) when is_map(data) do
     session_id = socket.assigns[:session_id]
     partner_id = socket.assigns[:partner_id]
+    match_generation = socket.assigns[:match_generation]
+    partner_route = socket.assigns[:partner_route]
 
     if is_nil(session_id) do
       {:reply, {:error, %{reason: "No active session"}}, socket}
@@ -146,32 +150,26 @@ defmodule OmeglePhoenixWeb.RoomChannel do
           content = Map.get(data, "content")
 
           if is_binary(content) and byte_size(content) <= 2_000 do
-            case with_current_partner_local(session_id, partner_id, fn ->
-                   OmeglePhoenix.Router.send_message(partner_id, %{
-                     type: "message",
-                     from: session_id,
-                     data: %{content: content}
-                   })
+            if is_binary(match_generation) and is_map(partner_route) do
+              OmeglePhoenix.Router.send_message(
+                partner_id,
+                %{
+                  type: "message",
+                  from: session_id,
+                  match_generation: match_generation,
+                  data: %{content: content}
+                },
+                route_hint: partner_route
+              )
 
-                   :telemetry.execute([:omegle_phoenix, :room, :message_sent], %{count: 1}, %{
-                     session_id: session_id
-                   })
+              :telemetry.execute([:omegle_phoenix, :room, :message_sent], %{count: 1}, %{
+                session_id: session_id
+              })
 
-                   {:ok, :sent}
-                 end) do
-              {:ok, :sent} ->
-                {:noreply, socket}
-
-              {:error, %{reason: "Partner changed"}} ->
-                Logger.debug("Swallowed in-flight message from #{session_id}: partner changed")
-                {:reply, {:ok, %{status: "ignored"}}, assign(socket, :partner_id, nil)}
-
-              {:error, %{type: "ignored", reason: _}} ->
-                Logger.debug("Swallowed in-flight message from #{session_id}: post-disconnect")
-                {:reply, {:ok, %{status: "ignored"}}, assign(socket, :partner_id, nil)}
-
-              {:error, payload} ->
-                {:reply, {:error, payload}, socket}
+              {:noreply, socket}
+            else
+              Logger.debug("Swallowed in-flight message from #{session_id}: match state unavailable")
+              {:reply, {:ok, %{status: "ignored"}}, clear_match_assigns(socket)}
             end
           else
             {:reply, {:error, %{reason: "Invalid message content"}}, socket}
@@ -188,6 +186,8 @@ defmodule OmeglePhoenixWeb.RoomChannel do
   def handle_in("typing", %{"data" => data}, socket) when is_map(data) do
     session_id = socket.assigns[:session_id]
     partner_id = socket.assigns[:partner_id]
+    match_generation = socket.assigns[:match_generation]
+    partner_route = socket.assigns[:partner_route]
 
     if is_nil(session_id) or is_nil(partner_id) do
       {:noreply, socket}
@@ -204,16 +204,23 @@ defmodule OmeglePhoenixWeb.RoomChannel do
             end
 
           if allowed do
-            OmeglePhoenix.Router.send_message(partner_id, %{
-              type: "typing",
-              from: session_id,
-              data: %{typing: is_typing}
-            })
+            if is_binary(match_generation) and is_map(partner_route) do
+              OmeglePhoenix.Router.send_message(
+                partner_id,
+                %{
+                  type: "typing",
+                  from: session_id,
+                  match_generation: match_generation,
+                  data: %{typing: is_typing}
+                },
+                route_hint: partner_route
+              )
 
-            :telemetry.execute([:omegle_phoenix, :room, :typing_sent], %{count: 1}, %{
-              session_id: session_id,
-              typing: is_typing
-            })
+              :telemetry.execute([:omegle_phoenix, :room, :typing_sent], %{count: 1}, %{
+                session_id: session_id,
+                typing: is_typing
+              })
+            end
           end
 
           {:noreply, socket}
@@ -339,7 +346,7 @@ defmodule OmeglePhoenixWeb.RoomChannel do
            end
          end) do
       {:ok, payload} ->
-        {:reply, {:ok, payload}, assign(socket, :partner_id, nil)}
+        {:reply, {:ok, payload}, clear_match_assigns(socket)}
 
       {:error, payload} ->
         {:reply, {:error, payload}, socket}
@@ -504,19 +511,36 @@ defmodule OmeglePhoenixWeb.RoomChannel do
     {:noreply, socket}
   end
 
-  def handle_info({:router_match, partner_session_id, common_interests}, socket) do
+  def handle_info(
+        {:router_match, partner_session_id, common_interests, match_generation, partner_route},
+        socket
+      ) do
     push(socket, "match", %{peer_id: partner_session_id, common_interests: common_interests})
-    {:noreply, assign(socket, :partner_id, partner_session_id)}
+
+    {:noreply,
+     socket
+     |> assign(:partner_id, partner_session_id)
+     |> assign(:match_generation, match_generation)
+     |> assign(:partner_route, normalize_partner_route(partner_route))}
   end
 
-  def handle_info({:router_message, %{type: type, from: from} = payload}, socket) do
-    # Guard: only deliver messages from the current partner. After a rapid
-    # skip/rematch, in-flight messages from the old partner must be dropped
-    # to prevent cross-match leakage.
-    if from == socket.assigns[:partner_id] do
+  def handle_info({:router_match, partner_session_id, common_interests}, socket) do
+    push(socket, "match", %{peer_id: partner_session_id, common_interests: common_interests})
+    {:noreply, clear_match_assigns(socket) |> assign(:partner_id, partner_session_id)}
+  end
+
+  def handle_info(
+        {:router_message, %{type: type, from: from, match_generation: generation} = payload},
+        socket
+      ) do
+    if current_match_message?(socket, from, generation) do
       push(socket, type, Map.delete(payload, :type))
     end
 
+    {:noreply, socket}
+  end
+
+  def handle_info({:router_message, %{type: _type, from: _from}}, socket) do
     {:noreply, socket}
   end
 
@@ -527,11 +551,19 @@ defmodule OmeglePhoenixWeb.RoomChannel do
     {:noreply, socket}
   end
 
-  def handle_info({:router_message, %{"type" => type, "from" => from} = payload}, socket) do
-    if from == socket.assigns[:partner_id] do
+  def handle_info(
+        {:router_message,
+         %{"type" => type, "from" => from, "match_generation" => generation} = payload},
+        socket
+      ) do
+    if current_match_message?(socket, from, generation) do
       push(socket, type, Map.delete(payload, "type"))
     end
 
+    {:noreply, socket}
+  end
+
+  def handle_info({:router_message, %{"type" => _type, "from" => _from}}, socket) do
     {:noreply, socket}
   end
 
@@ -542,17 +574,17 @@ defmodule OmeglePhoenixWeb.RoomChannel do
 
   def handle_info({:router_disconnect, reason}, socket) do
     push(socket, "disconnected", %{reason: reason})
-    {:noreply, assign(socket, :partner_id, nil)}
+    {:noreply, clear_match_assigns(socket)}
   end
 
   def handle_info(:router_timeout, socket) do
     push(socket, "timeout", %{})
-    {:noreply, assign(socket, :partner_id, nil)}
+    {:noreply, clear_match_assigns(socket)}
   end
 
   def handle_info({:router_banned, reason}, socket) do
     push(socket, "banned", %{reason: reason})
-    {:noreply, assign(socket, :partner_id, nil)}
+    {:noreply, clear_match_assigns(socket)}
   end
 
   def handle_info(_message, socket) do
@@ -674,32 +706,6 @@ defmodule OmeglePhoenixWeb.RoomChannel do
     end
   end
 
-  defp with_current_partner_local(session_id, expected_partner_id, fun) do
-    case OmeglePhoenix.SessionManager.get_session(session_id) do
-      {:ok, session} ->
-        cond do
-          is_nil(session.partner_id) or session.status != :matched ->
-            {:error, %{type: "ignored", reason: "Partner changed"}}
-
-          session.partner_id != expected_partner_id ->
-            {:error, %{reason: "Partner changed"}}
-
-          true ->
-            case OmeglePhoenix.SessionManager.get_session(expected_partner_id) do
-              {:ok, partner_session}
-              when partner_session.partner_id == session_id and partner_session.status == :matched ->
-                fun.()
-
-              _ ->
-                {:error, %{reason: "Partner changed"}}
-            end
-        end
-
-      _ ->
-        {:error, %{reason: "Session not found"}}
-    end
-  end
-
   defp create_and_queue_session(socket, client_ip, preferences, connected_type) do
     session_id = UUID.uuid4()
 
@@ -711,10 +717,10 @@ defmodule OmeglePhoenixWeb.RoomChannel do
               :ok ->
                 {:reply,
                  {:ok,
-                  %{type: connected_type, session_id: session_id, session_token: session.token}},
+                 %{type: connected_type, session_id: session_id, session_token: session.token}},
                  socket
                  |> assign(:session_id, session_id)
-                 |> assign(:partner_id, nil)}
+                 |> clear_match_assigns()}
 
               {:error, _reason} ->
                 OmeglePhoenix.Router.unregister(session_id)
@@ -735,8 +741,37 @@ defmodule OmeglePhoenixWeb.RoomChannel do
   defp clear_session_assigns(socket) do
     socket
     |> assign(:session_id, nil)
-    |> assign(:partner_id, nil)
+    |> clear_match_assigns()
   end
+
+  defp clear_match_assigns(socket) do
+    socket
+    |> assign(:partner_id, nil)
+    |> assign(:match_generation, nil)
+    |> assign(:partner_route, nil)
+  end
+
+  defp current_match_message?(socket, from, generation) do
+    from == socket.assigns[:partner_id] and generation == socket.assigns[:match_generation]
+  end
+
+  defp normalize_partner_route(%{mode: mode, shard: shard})
+       when is_binary(mode) and is_integer(shard),
+       do: %{mode: mode, shard: shard}
+
+  defp normalize_partner_route(%{"mode" => mode, "shard" => shard})
+       when is_binary(mode) and is_integer(shard),
+       do: %{mode: mode, shard: shard}
+
+  defp normalize_partner_route(%{"mode" => mode, "shard" => shard})
+       when is_binary(mode) and is_binary(shard) do
+    case Integer.parse(shard) do
+      {parsed_shard, ""} -> %{mode: mode, shard: parsed_shard}
+      _ -> nil
+    end
+  end
+
+  defp normalize_partner_route(_route), do: nil
 
   defp check_rate_limit(socket) do
     now = System.system_time(:millisecond)

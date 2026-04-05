@@ -6,6 +6,7 @@ defmodule OmeglePhoenix.SessionManager do
     :token,
     :ip,
     :redis_shard,
+    :match_generation,
     :status,
     :partner_id,
     :last_partner_id,
@@ -31,7 +32,12 @@ defmodule OmeglePhoenix.SessionManager do
     with {:ok, route} <- OmeglePhoenix.RedisKeys.resolve_session_route(session_id, verify_exists: false) do
       case OmeglePhoenix.Redis.command(["GET", session_key(session_id, route)]) do
         {:ok, nil} ->
-          _ = OmeglePhoenix.Redis.command(["DEL", OmeglePhoenix.RedisKeys.session_locator_key(session_id)])
+          _ =
+            OmeglePhoenix.Redis.pipeline([
+              ["DEL", OmeglePhoenix.RedisKeys.session_locator_key(session_id)],
+              ["DEL", OmeglePhoenix.RedisKeys.session_ip_locator_key(session_id)]
+            ])
+
           {:error, :not_found}
 
         {:ok, payload} -> decode_session(payload)
@@ -191,6 +197,7 @@ defmodule OmeglePhoenix.SessionManager do
       token: session_token,
       ip: ip,
       redis_shard: redis_shard,
+      match_generation: nil,
       status: :waiting,
       partner_id: nil,
       last_partner_id: nil,
@@ -335,11 +342,13 @@ defmodule OmeglePhoenix.SessionManager do
       {:error, :cross_shard_pairing_unsupported}
     else
       common_interests = get_common_interests(session1.preferences, session2.preferences)
+      match_generation = generate_match_generation()
 
       updated_session1 =
         touch_last_activity(%{
           session1
-          | status: :matched,
+          | match_generation: match_generation,
+            status: :matched,
             partner_id: session2.id,
             last_partner_id: session2.id,
             signaling_ready: false,
@@ -349,7 +358,8 @@ defmodule OmeglePhoenix.SessionManager do
       updated_session2 =
         touch_last_activity(%{
           session2
-          | status: :matched,
+          | match_generation: match_generation,
+            status: :matched,
             partner_id: session1.id,
             last_partner_id: session1.id,
             signaling_ready: false,
@@ -375,7 +385,8 @@ defmodule OmeglePhoenix.SessionManager do
       updated_session1 =
         touch_last_activity(%{
           session1
-          | partner_id: nil,
+          | match_generation: nil,
+            partner_id: nil,
             status: :waiting,
             signaling_ready: false,
             webrtc_started: false
@@ -384,7 +395,8 @@ defmodule OmeglePhoenix.SessionManager do
       updated_session2 =
         touch_last_activity(%{
           session2
-          | partner_id: nil,
+          | match_generation: nil,
+            partner_id: nil,
             status: :waiting,
             signaling_ready: false,
             webrtc_started: false
@@ -699,6 +711,11 @@ defmodule OmeglePhoenix.SessionManager do
   defp generate_session_token do
     :crypto.strong_rand_bytes(32)
     |> Base.url_encode64(padding: false)
+  end
+
+  defp generate_match_generation do
+    System.unique_integer([:positive, :monotonic])
+    |> Integer.to_string()
   end
 
   defp ttl_seconds do

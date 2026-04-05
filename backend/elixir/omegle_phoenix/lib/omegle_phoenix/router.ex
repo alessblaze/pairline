@@ -70,12 +70,12 @@ defmodule OmeglePhoenix.Router do
     :ok
   end
 
-  def send_message(session_id, message) do
-    route(session_id, {:router_message, message})
+  def send_message(session_id, message, opts \\ []) do
+    route(session_id, {:router_message, message}, opts)
   end
 
-  def notify_match(session_id, partner_session_id, common_interests \\ []) do
-    route(session_id, {:router_match, partner_session_id, common_interests})
+  def notify_match(session_id, partner_session_id, common_interests \\ [], match_generation \\ nil, route_hint \\ nil) do
+    route(session_id, {:router_match, partner_session_id, common_interests, match_generation, route_hint})
   end
 
   def notify_disconnect(session_id, reason) do
@@ -168,17 +168,20 @@ defmodule OmeglePhoenix.Router do
   @impl true
   def terminate(_reason, _state), do: :ok
 
-  defp route(session_id, message) do
+  defp route(session_id, message, opts \\ []) do
     current_node = Atom.to_string(Node.self())
 
-    case owner_record(session_id) do
+    case owner_record(session_id, opts) do
       {:ok, nil} ->
-        dispatch_local_if_owned(session_id, message)
+        if not dispatch_local_if_owned(session_id, message) do
+          maybe_cleanup_stale_session(session_id)
+        end
 
       {:ok, %{node: owner_node} = owner} when owner_node == current_node ->
         if not dispatch_local_if_owned(session_id, message) do
           Logger.warning("Router cleared stale local owner for #{session_id}")
           compare_and_delete_owner(session_id, owner)
+          maybe_cleanup_stale_session(session_id)
         end
 
       {:ok, owner} ->
@@ -186,12 +189,15 @@ defmodule OmeglePhoenix.Router do
 
       {:error, reason} ->
         Logger.warning("Router owner lookup failed for #{session_id}: #{inspect(reason)}")
-        dispatch_local_if_owned(session_id, message)
+
+        if not dispatch_local_if_owned(session_id, message) do
+          maybe_cleanup_stale_session(session_id)
+        end
     end
   end
 
-  defp owner_record(session_id) do
-    with {:ok, owner_key} <- owner_key(session_id) do
+  defp owner_record(session_id, opts) do
+    with {:ok, owner_key} <- owner_key(session_id, opts) do
       case OmeglePhoenix.Redis.command(["GET", owner_key]) do
         {:ok, encoded_owner} when is_binary(encoded_owner) ->
           case decode_owner_record(encoded_owner) do
@@ -217,7 +223,7 @@ defmodule OmeglePhoenix.Router do
       pid ->
         if Process.alive?(pid) do
           Logger.debug(
-            "Router dispatching directly to owner for session: #{session_id}, message: #{inspect(message)}"
+            "Router dispatching directly to owner for session: #{session_id}, message: #{inspect(summarize_message(message))}"
           )
 
           send(pid, message)
@@ -341,7 +347,7 @@ defmodule OmeglePhoenix.Router do
 
   defp compare_and_delete_owner_value(session_id, expected_owner_value)
        when is_binary(expected_owner_value) do
-    with {:ok, owner_key} <- owner_key(session_id) do
+    with {:ok, owner_key} <- owner_key(session_id, []) do
       _ =
         OmeglePhoenix.Redis.command([
           "EVAL",
@@ -356,7 +362,7 @@ defmodule OmeglePhoenix.Router do
   end
 
   defp persist_owner(session_id, owner) do
-    with {:ok, owner_key} <- owner_key(session_id) do
+    with {:ok, owner_key} <- owner_key(session_id, []) do
       case OmeglePhoenix.Redis.command([
              "SETEX",
              owner_key,
@@ -384,11 +390,56 @@ defmodule OmeglePhoenix.Router do
     %{node: Atom.to_string(Node.self()), token: token}
   end
 
-  defp owner_key(session_id) do
-    with {:ok, route} <- OmeglePhoenix.RedisKeys.resolve_session_route(session_id, verify_exists: false) do
+  defp owner_key(session_id, opts) do
+    route_hint = Keyword.get(opts, :route_hint)
+
+    with {:ok, route} <- route_for_owner_key(session_id, route_hint) do
       {:ok, OmeglePhoenix.RedisKeys.session_owner_key(session_id, route)}
     end
   end
+
+  defp route_for_owner_key(_session_id, %{mode: mode, shard: shard}) do
+    {:ok, %{mode: mode, shard: shard}}
+  end
+
+  defp route_for_owner_key(session_id, _route_hint) do
+    OmeglePhoenix.RedisKeys.resolve_session_route(session_id, verify_exists: false)
+  end
+
+  defp maybe_cleanup_stale_session(session_id) do
+    case OmeglePhoenix.SessionManager.get_session(session_id) do
+      {:error, :not_found} -> :ok
+      _ -> :ok
+    end
+  end
+
+  defp summarize_message({:router_message, %{type: type, from: from} = message}) do
+    %{
+      type: type,
+      from: from,
+      match_generation: Map.get(message, :match_generation),
+      data_keys: message |> Map.get(:data, %{}) |> Map.keys()
+    }
+  end
+
+  defp summarize_message({:router_message, %{"type" => type, "from" => from} = message}) do
+    %{
+      type: type,
+      from: from,
+      match_generation: Map.get(message, "match_generation"),
+      data_keys: message |> Map.get("data", %{}) |> Map.keys()
+    }
+  end
+
+  defp summarize_message({:router_message, %{type: type} = message}) do
+    %{type: type, keys: Map.keys(message)}
+  end
+
+  defp summarize_message({:router_message, %{"type" => type} = message}) do
+    %{type: type, keys: Map.keys(message)}
+  end
+
+  defp summarize_message(other), do: other
 
   defp owner_token do
     Integer.to_string(System.unique_integer([:positive, :monotonic]))
