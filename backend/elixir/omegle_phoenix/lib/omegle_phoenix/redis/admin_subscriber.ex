@@ -42,20 +42,16 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
   end
 
   def handle_info(:consume_stream, state) do
-    state =
-      case consume_stream_entries(state) do
-        :ok ->
-          state
+    case consume_stream_entries(state) do
+      :ok ->
+        send(self(), :consume_stream)
+        {:noreply, state}
 
-        {:error, reason} ->
-          Logger.warning("Redis admin stream consumer disconnected: #{inspect(reason)}")
-          Process.send_after(self(), :connect, 1_000)
-          state
-      end
-
-    send(self(), :consume_stream)
-
-    {:noreply, state}
+      {:error, reason} ->
+        Logger.warning("Redis admin stream consumer disconnected: #{inspect(reason)}")
+        Process.send_after(self(), :connect, 1_000)
+        {:noreply, state}
+    end
   end
 
   def handle_info(_message, state) do

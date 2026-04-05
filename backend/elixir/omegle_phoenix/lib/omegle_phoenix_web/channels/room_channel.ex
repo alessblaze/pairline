@@ -363,7 +363,7 @@ defmodule OmeglePhoenixWeb.RoomChannel do
 
     case close_session(session_id, "partner disconnected") do
       :ok ->
-        {:reply, {:ok, %{type: "disconnected"}}, clear_session_assigns(socket)}
+        {:reply, {:ok, %{}}, clear_session_assigns(socket)}
 
       {:error, :not_found} ->
         {:reply, {:error, %{reason: "Session not found"}}, socket}

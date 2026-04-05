@@ -175,9 +175,14 @@ defmodule OmeglePhoenix.SessionManager do
   def get_sessions_by_ip(_ip), do: {:ok, []}
 
   def count_active_sessions do
-    case OmeglePhoenix.Redis.command(["SCARD", OmeglePhoenix.RedisKeys.active_sessions_key()]) do
-      {:ok, count} when is_integer(count) -> count
-      _ -> 0
+    case OmeglePhoenix.Redis.command(["SMEMBERS", OmeglePhoenix.RedisKeys.active_sessions_key()]) do
+      {:ok, session_ids} when is_list(session_ids) ->
+        {:ok, batched_sessions} = get_sessions(session_ids)
+        _ = prune_stale_session_ids(OmeglePhoenix.RedisKeys.active_sessions_key(), session_ids, batched_sessions)
+        map_size(batched_sessions)
+
+      _ ->
+        0
     end
   end
 
