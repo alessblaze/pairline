@@ -146,7 +146,7 @@ defmodule OmeglePhoenixWeb.RoomChannel do
           content = Map.get(data, "content")
 
           if is_binary(content) and byte_size(content) <= 2_000 do
-            case with_current_partner_readonly(session_id, partner_id, fn ->
+            case with_current_partner_local(session_id, partner_id, fn ->
                    OmeglePhoenix.Router.send_message(partner_id, %{
                      type: "message",
                      from: session_id,
@@ -163,7 +163,6 @@ defmodule OmeglePhoenixWeb.RoomChannel do
                 {:noreply, socket}
 
               {:error, %{reason: "Partner changed"}} ->
-                # In-flight race, visually do nothing instead of rendering an error.
                 Logger.debug("Swallowed in-flight message from #{session_id}: partner changed")
                 {:reply, {:ok, %{status: "ignored"}}, assign(socket, :partner_id, nil)}
 
@@ -205,7 +204,7 @@ defmodule OmeglePhoenixWeb.RoomChannel do
             end
 
           if allowed do
-            case with_current_partner_readonly(session_id, partner_id, fn ->
+            case with_current_partner_local(session_id, partner_id, fn ->
                    OmeglePhoenix.Router.send_message(partner_id, %{
                      type: "typing",
                      from: session_id,
@@ -257,16 +256,8 @@ defmodule OmeglePhoenixWeb.RoomChannel do
                    when partner_session.signaling_ready == true and
                           updated_session.webrtc_started != true and
                           partner_session.webrtc_started != true ->
-                     OmeglePhoenix.Router.send_message(session_id, %{
-                       type: "webrtc_start",
-                       peer_id: updated_session.partner_id
-                     })
-
-                     OmeglePhoenix.Router.send_message(updated_session.partner_id, %{
-                       type: "webrtc_start",
-                       peer_id: session_id
-                     })
-
+                     # Combine signaling_ready + webrtc_started into a single
+                     # update per session to halve the Redis round-trips.
                      _ =
                        OmeglePhoenix.SessionManager.update_session(session_id, %{
                          webrtc_started: true
@@ -276,6 +267,16 @@ defmodule OmeglePhoenixWeb.RoomChannel do
                        OmeglePhoenix.SessionManager.update_session(updated_session.partner_id, %{
                          webrtc_started: true
                        })
+
+                     OmeglePhoenix.Router.send_message(session_id, %{
+                       type: "webrtc_start",
+                       peer_id: updated_session.partner_id
+                     })
+
+                     OmeglePhoenix.Router.send_message(updated_session.partner_id, %{
+                       type: "webrtc_start",
+                       peer_id: session_id
+                     })
 
                      :telemetry.execute(
                        [:omegle_phoenix, :room, :webrtc_started],
@@ -518,8 +519,29 @@ defmodule OmeglePhoenixWeb.RoomChannel do
     {:noreply, assign(socket, :partner_id, partner_session_id)}
   end
 
+  def handle_info({:router_message, %{type: type, from: from} = payload}, socket) do
+    # Guard: only deliver messages from the current partner. After a rapid
+    # skip/rematch, in-flight messages from the old partner must be dropped
+    # to prevent cross-match leakage.
+    if from == socket.assigns[:partner_id] do
+      push(socket, type, Map.delete(payload, :type))
+    end
+
+    {:noreply, socket}
+  end
+
   def handle_info({:router_message, %{type: type} = payload}, socket) do
+    # Messages without a :from field (system messages like webrtc_start)
+    # are always delivered.
     push(socket, type, Map.delete(payload, :type))
+    {:noreply, socket}
+  end
+
+  def handle_info({:router_message, %{"type" => type, "from" => from} = payload}, socket) do
+    if from == socket.assigns[:partner_id] do
+      push(socket, type, Map.delete(payload, "type"))
+    end
+
     {:noreply, socket}
   end
 
@@ -649,7 +671,7 @@ defmodule OmeglePhoenixWeb.RoomChannel do
              true ->
                fun.(session)
          end
-       end) do
+      end) do
       {:error, :locked} ->
         Process.sleep(50)
         with_session_partner_lock(session_id, fun, attempts_left - 1)
@@ -662,7 +684,7 @@ defmodule OmeglePhoenixWeb.RoomChannel do
     end
   end
 
-  defp with_current_partner_readonly(session_id, expected_partner_id, fun) do
+  defp with_current_partner_local(session_id, expected_partner_id, fun) do
     case OmeglePhoenix.SessionManager.get_session(session_id) do
       {:ok, session} ->
         cond do
@@ -673,14 +695,7 @@ defmodule OmeglePhoenixWeb.RoomChannel do
             {:error, %{reason: "Partner changed"}}
 
           true ->
-            case OmeglePhoenix.SessionManager.get_session(expected_partner_id) do
-              {:ok, partner_session}
-              when partner_session.partner_id == session_id and partner_session.status == :matched ->
-                fun.()
-
-              _ ->
-                {:error, %{reason: "Partner changed"}}
-            end
+            fun.()
         end
 
       _ ->

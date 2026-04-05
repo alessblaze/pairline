@@ -1238,9 +1238,19 @@ defmodule OmeglePhoenix.Matchmaker do
         {queue_keys ++ keys_acc, acc_state}
       end)
 
-    with :ok <- ack_stream_entries(state, entries) do
-      now_ms = System.system_time(:millisecond)
+    now_ms = System.system_time(:millisecond)
 
+    # Schedule matching BEFORE ACK so that if the node crashes between
+    # these steps, the unACKed entries remain in the pending list and
+    # get reprocessed on restart. Duplicate matching is safe because
+    # pair_sessions checks session status before pairing.
+    unique_keys = Enum.uniq(processed_queue_keys)
+
+    if unique_keys != [] do
+      schedule_local_match_attempts(unique_keys)
+    end
+
+    with :ok <- ack_stream_entries(state, entries) do
       {:ok,
        %{
          state
@@ -1303,31 +1313,19 @@ defmodule OmeglePhoenix.Matchmaker do
         _pair, acc -> acc
       end)
 
-    queue_keys =
-      case Map.get(data, "queue_keys") do
-        nil ->
-          []
+    case Map.get(data, "queue_keys") do
+      nil ->
+        []
 
-        raw ->
-          case Jason.decode(raw) do
-            {:ok, keys} when is_list(keys) -> Enum.filter(keys, &is_binary/1)
-            _ -> []
-          end
-      end
+      raw ->
+        case Jason.decode(raw) do
+          {:ok, keys} when is_list(keys) ->
+            keys |> Enum.filter(&is_binary/1) |> Enum.uniq()
 
-    queue_keys =
-      queue_keys
-      |> Enum.uniq()
-
-    Enum.each(queue_keys, fn queue_key ->
-      try do
-        do_matching(queue_key)
-      rescue
-        e -> Logger.error("Stream-triggered matching error for #{queue_key}: #{inspect(e)}")
-      end
-    end)
-
-    queue_keys
+          _ ->
+            []
+        end
+    end
   end
 
   defp take_frontier(candidates, matched) do
