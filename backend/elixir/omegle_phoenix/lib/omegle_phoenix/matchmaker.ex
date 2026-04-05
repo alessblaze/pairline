@@ -6,6 +6,9 @@ defmodule OmeglePhoenix.Matchmaker do
   @queue_registry_key "matchmaking:queues"
   @session_queue_prefix "matchmaking:session_queues"
   @lock_key_prefix "matchmaking:leader"
+  @stream_reconnect_message :connect_match_stream
+  @stream_consume_message :consume_match_stream
+  @sweep_message :sweep_match_queues
   @prune_queue_script """
   if redis.call('ZCARD', KEYS[1]) == 0 then
     redis.call('SREM', KEYS[2], KEYS[1])
@@ -41,6 +44,8 @@ defmodule OmeglePhoenix.Matchmaker do
 
     case OmeglePhoenix.Redis.pipeline(commands) do
       {:ok, _result} ->
+        emit_match_event(queue_keys, "join", session_id)
+
         :telemetry.execute([:omegle_phoenix, :matchmaking, :queued], %{count: 1}, %{
           session_id: session_id
         })
@@ -133,12 +138,73 @@ defmodule OmeglePhoenix.Matchmaker do
 
   @impl true
   def init(_opts) do
-    send(self(), :check_matches)
-    {:ok, %{}}
+    state = %{
+      stream_conn: nil,
+      stream: OmeglePhoenix.Config.get_match_event_stream(),
+      group: match_stream_group_name(),
+      consumer: match_stream_consumer_name(),
+      sweep_interval_ms: OmeglePhoenix.Config.get_match_sweep_interval_ms()
+    }
+
+    send(self(), @stream_reconnect_message)
+    send(self(), @sweep_message)
+    {:ok, state}
   end
 
   @impl true
-  def handle_info(:check_matches, state) do
+  def handle_info(@stream_reconnect_message, state) do
+    stop_stream_connection(state.stream_conn)
+
+    case start_stream_connection() do
+      {:ok, connection} ->
+        case ensure_stream_group(connection, state.stream, state.group) do
+          :ok ->
+            claim_stale_pending(connection, state.stream, state.group, state.consumer)
+            send(self(), @stream_consume_message)
+            {:noreply, %{state | stream_conn: connection}}
+
+          {:error, reason} ->
+            Logger.error(
+              "Failed to initialize matchmaking stream #{state.stream} / #{state.group}: #{inspect(reason)}"
+            )
+
+            stop_stream_connection(connection)
+            Process.send_after(self(), @stream_reconnect_message, 1_000)
+            {:noreply, %{state | stream_conn: nil}}
+        end
+
+      {:error, reason} ->
+        Logger.error("Failed to connect matchmaking stream consumer: #{inspect(reason)}")
+        Process.send_after(self(), @stream_reconnect_message, 1_000)
+        {:noreply, %{state | stream_conn: nil}}
+    end
+  end
+
+  def handle_info(@stream_consume_message, %{stream_conn: nil} = state) do
+    {:noreply, state}
+  end
+
+  def handle_info(@stream_consume_message, state) do
+    state =
+      case consume_stream_entries(state) do
+        :ok ->
+          state
+
+        {:error, reason} ->
+          Logger.warning("Matchmaking stream consumer disconnected: #{inspect(reason)}")
+          stop_stream_connection(state.stream_conn)
+          Process.send_after(self(), @stream_reconnect_message, 1_000)
+          %{state | stream_conn: nil}
+      end
+
+    if state.stream_conn != nil do
+      send(self(), @stream_consume_message)
+    end
+
+    {:noreply, state}
+  end
+
+  def handle_info(@sweep_message, state) do
     queue_keys()
     |> Task.async_stream(&do_matching/1,
       max_concurrency: System.schedulers_online(),
@@ -148,7 +214,7 @@ defmodule OmeglePhoenix.Matchmaker do
     )
     |> Stream.run()
 
-    Process.send_after(self(), :check_matches, 100)
+    Process.send_after(self(), @sweep_message, state.sweep_interval_ms)
     {:noreply, state}
   end
 
@@ -157,7 +223,8 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   @impl true
-  def terminate(_reason, _state) do
+  def terminate(_reason, state) do
+    stop_stream_connection(Map.get(state, :stream_conn))
     :ok
   end
 
@@ -443,7 +510,12 @@ defmodule OmeglePhoenix.Matchmaker do
       |> interest_buckets()
       |> Enum.map(fn bucket -> bucket_queue_key(mode, bucket) end)
 
-    random_keys = random_queue_keys(mode, session_id)
+    random_keys =
+      if bucket_keys == [] do
+        [shared_random_queue_key(mode)]
+      else
+        random_queue_keys(mode, session_id)
+      end
 
     (bucket_keys ++ random_keys)
     |> Enum.uniq()
@@ -531,8 +603,18 @@ defmodule OmeglePhoenix.Matchmaker do
   defp match_across_pools([{sid1, session1, wait1} | rest], remote_candidates, matched_remote) do
     case find_compatible_partner(sid1, session1, wait1, remote_candidates, matched_remote) do
       {sid2, _session2, _remaining} ->
-        pair_users(sid1, sid2, :overflow)
-        match_across_pools(rest, remote_candidates, MapSet.put(matched_remote, sid2))
+        case pair_users(sid1, sid2, :overflow) do
+          :ok ->
+            match_across_pools(rest, remote_candidates, MapSet.put(matched_remote, sid2))
+
+          _ ->
+            # Pairing failed (locked/unavailable); mark sid2 and retry sid1
+            match_across_pools(
+              [{sid1, session1, wait1} | rest],
+              remote_candidates,
+              MapSet.put(matched_remote, sid2)
+            )
+        end
 
       nil ->
         match_across_pools(rest, remote_candidates, matched_remote)
@@ -599,6 +681,12 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   defp random_queue_key(_mode, shard), do: "#{@mode_queue_prefix}:text:random:shard:#{shard}"
+
+  defp shared_random_queue_key(mode) when mode in ["lobby", "text", "video"] do
+    "#{@mode_queue_prefix}:#{mode}:random:shared"
+  end
+
+  defp shared_random_queue_key(_mode), do: "#{@mode_queue_prefix}:text:random:shared"
 
   defp parse_random_queue_key(queue_key) do
     prefix = "#{@mode_queue_prefix}:"
@@ -748,5 +836,193 @@ defmodule OmeglePhoenix.Matchmaker do
   defp stop_renewer(pid) when is_pid(pid) do
     send(pid, :stop)
     :ok
+  end
+
+  defp emit_match_event([], _event, _session_id), do: :ok
+
+  defp emit_match_event(queue_keys, event, session_id) do
+    payload = Jason.encode!(Enum.uniq(queue_keys))
+
+    _ =
+      OmeglePhoenix.Redis.command([
+        "XADD",
+        OmeglePhoenix.Config.get_match_event_stream(),
+        "MAXLEN",
+        "~",
+        Integer.to_string(OmeglePhoenix.Config.get_match_event_stream_maxlen()),
+        "*",
+        "event",
+        event,
+        "session_id",
+        session_id,
+        "queue_keys",
+        payload
+      ])
+
+    :ok
+  end
+
+  defp start_stream_connection do
+    opts = [
+      host: OmeglePhoenix.Config.get_redis_host(),
+      port: OmeglePhoenix.Config.get_redis_port()
+    ]
+
+    opts =
+      case OmeglePhoenix.Config.get_redis_password() do
+        nil -> opts
+        password -> Keyword.put(opts, :password, password)
+      end
+
+    Redix.start_link(opts)
+  end
+
+  defp stop_stream_connection(nil), do: :ok
+
+  defp stop_stream_connection(connection) do
+    try do
+      Redix.stop(connection)
+    rescue
+      _ -> :ok
+    end
+  end
+
+  defp ensure_stream_group(connection, stream, group) do
+    case Redix.command(connection, ["XGROUP", "CREATE", stream, group, "$", "MKSTREAM"]) do
+      {:ok, "OK"} ->
+        :ok
+
+      {:error, %Redix.Error{message: <<"BUSYGROUP", _::binary>>}} ->
+        :ok
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp claim_stale_pending(connection, stream, group, consumer) do
+    case Redix.command(connection, [
+           "XAUTOCLAIM",
+           stream,
+           group,
+           consumer,
+           "30000",
+           "0-0",
+           "COUNT",
+           "100"
+         ]) do
+      {:ok, _} -> :ok
+      {:error, _} -> :ok
+    end
+  end
+
+  defp consume_stream_entries(state) do
+    with :ok <- consume_pending_entries(state),
+         {:ok, entries} <- read_stream(state, ">") do
+      Enum.each(entries, &handle_stream_entry/1)
+      _ = ack_stream_entries(state, entries)
+      :ok
+    end
+  end
+
+  defp consume_pending_entries(state) do
+    case read_stream(state, "0") do
+      {:ok, []} ->
+        :ok
+
+      {:ok, entries} ->
+        Enum.each(entries, &handle_stream_entry/1)
+        ack_stream_entries(state, entries)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp read_stream(state, stream_id) do
+    command = [
+      "XREADGROUP",
+      "GROUP",
+      state.group,
+      state.consumer,
+      "COUNT",
+      Integer.to_string(OmeglePhoenix.Config.get_match_event_stream_batch_size()),
+      "BLOCK",
+      Integer.to_string(OmeglePhoenix.Config.get_match_event_stream_block_ms()),
+      "STREAMS",
+      state.stream,
+      stream_id
+    ]
+
+    case Redix.command(
+           state.stream_conn,
+           command,
+           timeout: OmeglePhoenix.Config.get_match_event_stream_block_ms() + 2_000
+         ) do
+      {:ok, nil} ->
+        {:ok, []}
+
+      {:ok, [[_stream, entries]]} when is_list(entries) ->
+        {:ok, entries}
+
+      {:ok, _other} ->
+        {:ok, []}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp ack_stream_entries(_state, []), do: :ok
+
+  defp ack_stream_entries(state, entries) do
+    ids = Enum.map(entries, fn [entry_id, _fields] -> entry_id end)
+
+    case Redix.command(state.stream_conn, ["XACK", state.stream, state.group | ids]) do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp handle_stream_entry([_entry_id, fields]) when is_list(fields) do
+    data =
+      fields
+      |> Enum.chunk_every(2)
+      |> Enum.reduce(%{}, fn
+        [key, value], acc -> Map.put(acc, key, value)
+        _pair, acc -> acc
+      end)
+
+    queue_keys =
+      case Map.get(data, "queue_keys") do
+        nil ->
+          []
+
+        raw ->
+          case Jason.decode(raw) do
+            {:ok, keys} when is_list(keys) -> Enum.filter(keys, &is_binary/1)
+            _ -> []
+          end
+      end
+
+    queue_keys
+    |> Enum.uniq()
+    |> Enum.each(fn queue_key ->
+      Task.start(fn ->
+        try do
+          do_matching(queue_key)
+        rescue
+          e -> Logger.error("Stream-triggered matching error for #{queue_key}: #{inspect(e)}")
+        end
+      end)
+    end)
+  end
+
+  defp match_stream_group_name do
+    "matchmaking:workers"
+  end
+
+  defp match_stream_consumer_name do
+    Node.self() |> Atom.to_string() |> String.replace(~r/[^a-zA-Z0-9:_-]/u, "_")
   end
 end

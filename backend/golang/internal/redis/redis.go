@@ -10,9 +10,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const (
-	BanActionChannel = "admin:action"
-)
+const AdminActionStream = "admin:action:stream"
 
 type Client struct {
 	client *redis.Client
@@ -100,11 +98,7 @@ func (r *Client) PublishDisconnectAction(ctx context.Context, sessionID string) 
 		"timestamp":  time.Now().UnixMilli(),
 	}
 
-	payload, err := json.Marshal(data)
-	if err != nil {
-		return err
-	}
-	return r.client.Publish(ctx, BanActionChannel, payload).Err()
+	return r.publishJSON(ctx, data)
 }
 
 func (r *Client) publishJSON(ctx context.Context, data map[string]interface{}) error {
@@ -113,7 +107,17 @@ func (r *Client) publishJSON(ctx context.Context, data map[string]interface{}) e
 		return err
 	}
 
-	return r.client.Publish(ctx, BanActionChannel, payload).Err()
+	pipe := r.client.TxPipeline()
+	pipe.XAdd(ctx, &redis.XAddArgs{
+		Stream: AdminActionStream,
+		MaxLen: 10_000,
+		Approx: true,
+		Values: map[string]interface{}{
+			"payload": string(payload),
+		},
+	})
+	_, err = pipe.Exec(ctx)
+	return err
 }
 
 func (r *Client) Close() error {

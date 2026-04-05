@@ -23,9 +23,16 @@ Copy `.env.example` to `.env` and review:
 - `SECRET_KEY_BASE`
 - `CORS_ORIGINS`
 - `TRUSTED_PROXY_CIDRS`
-- `ADMIN_CHANNEL`
+- `ADMIN_STREAM`
+- `ADMIN_STREAM_BLOCK_MS`
+- `ADMIN_STREAM_BATCH_SIZE`
 - `MATCH_TIMEOUT`
 - `MATCH_BATCH_SIZE`
+- `MATCH_SWEEP_INTERVAL_MS`
+- `MATCH_EVENT_STREAM`
+- `MATCH_EVENT_STREAM_BLOCK_MS`
+- `MATCH_EVENT_STREAM_BATCH_SIZE`
+- `MATCH_EVENT_STREAM_MAXLEN`
 - `MATCH_SHARD_COUNT`
 - `MATCH_OVERFLOW_WAIT_MS`
 - `REAPER_INTERVAL_MS`
@@ -34,7 +41,8 @@ Copy `.env.example` to `.env` and review:
 - `NODE_COOKIE`
 - `CLUSTER_NODES`
 
-`MATCH_SHARD_COUNT` controls the random-queue shard fanout, and `MATCH_OVERFLOW_WAIT_MS` controls when long-waiting sessions are allowed to overflow into a partner shard.
+`MATCH_SHARD_COUNT` controls the random-queue shard fanout, and `MATCH_OVERFLOW_WAIT_MS` controls when long-waiting sessions are allowed to overflow into a partner shard. `MATCH_EVENT_STREAM` is the Redis Stream used for cross-node shard coordination, while `MATCH_SWEEP_INTERVAL_MS` is the slower fallback sweep for expiry and quiet queues.
+Admin moderation fanout now uses Redis Streams for durable cross-node delivery, with `ADMIN_STREAM` as the stream name and the block/batch knobs controlling consumer polling behavior.
 
 ## Useful commands
 
@@ -50,7 +58,7 @@ mix test
 - Redis-backed shared session lifecycle
 - Redis-backed matchmaking queue
 - cluster-aware room signaling and peer routing
-- admin pub/sub consumption for emergency moderation actions
+- admin stream consumption for emergency moderation actions
 
 ## Multi-node Phoenix clustering
 

@@ -44,8 +44,16 @@ defmodule OmeglePhoenix.Config do
     get("SESSION_TTL", "3600") |> String.to_integer()
   end
 
-  def get_admin_channel do
-    get("ADMIN_CHANNEL", "admin:action")
+  def get_admin_stream do
+    get("ADMIN_STREAM", "admin:action:stream")
+  end
+
+  def get_admin_stream_block_ms do
+    get("ADMIN_STREAM_BLOCK_MS", "1000") |> String.to_integer()
+  end
+
+  def get_admin_stream_batch_size do
+    get("ADMIN_STREAM_BATCH_SIZE", "50") |> String.to_integer()
   end
 
   def get_redis_pool_size do
@@ -80,6 +88,26 @@ defmodule OmeglePhoenix.Config do
 
   def get_match_batch_size do
     get("MATCH_BATCH_SIZE", "200") |> String.to_integer()
+  end
+
+  def get_match_sweep_interval_ms do
+    get("MATCH_SWEEP_INTERVAL_MS", "1000") |> String.to_integer()
+  end
+
+  def get_match_event_stream do
+    get("MATCH_EVENT_STREAM", "matchmaking:events")
+  end
+
+  def get_match_event_stream_block_ms do
+    get("MATCH_EVENT_STREAM_BLOCK_MS", "1000") |> String.to_integer()
+  end
+
+  def get_match_event_stream_batch_size do
+    get("MATCH_EVENT_STREAM_BATCH_SIZE", "100") |> String.to_integer()
+  end
+
+  def get_match_event_stream_maxlen do
+    get("MATCH_EVENT_STREAM_MAXLEN", "20000") |> String.to_integer()
   end
 
   def get_match_shard_count do

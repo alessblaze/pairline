@@ -4,6 +4,7 @@ defmodule OmeglePhoenix.Reaper do
   """
 
   use GenServer
+  require Logger
 
   @leader_key "reaper:leader"
   @leader_ttl_ms 5_000
@@ -34,14 +35,11 @@ defmodule OmeglePhoenix.Reaper do
 
   @impl true
   def handle_info(:reap, state) do
-    state =
-      if leader?() do
-        state
-        |> reap_orphaned_sessions()
-        |> reap_stale_queue_entries()
-      else
-        state
-      end
+    state = with_reaper_leader(state, fn state ->
+      state
+      |> reap_orphaned_sessions()
+      |> reap_stale_queue_entries()
+    end)
 
     Process.send_after(self(), :reap, state.interval_ms)
     {:noreply, state}
@@ -50,6 +48,56 @@ defmodule OmeglePhoenix.Reaper do
   def handle_info(_message, state) do
     {:noreply, state}
   end
+
+  defp with_reaper_leader(state, fun) do
+    if leader?() do
+      renewer = start_leader_renewer()
+      try do
+        fun.(state)
+      rescue
+        e ->
+          Logger.error("Reaper error: #{inspect(e)}")
+          state
+      after
+        stop_renewer(renewer)
+      end
+    else
+      state
+    end
+  end
+
+  defp start_leader_renewer do
+    parent = self()
+    node_name = Atom.to_string(Node.self())
+
+    spawn(fn ->
+      parent_ref = Process.monitor(parent)
+      leader_renew_loop(node_name, parent_ref)
+    end)
+  end
+
+  defp leader_renew_loop(node_name, parent_ref) do
+    receive do
+      :stop -> :ok
+      {:DOWN, ^parent_ref, :process, _pid, _reason} -> :ok
+    after
+      max(div(@leader_ttl_ms, 2), 250) ->
+        _ =
+          OmeglePhoenix.Redis.command([
+            "EVAL",
+            @renew_lock_script,
+            "1",
+            @leader_key,
+            node_name,
+            Integer.to_string(@leader_ttl_ms)
+          ])
+
+        leader_renew_loop(node_name, parent_ref)
+    end
+  end
+
+  defp stop_renewer(nil), do: :ok
+  defp stop_renewer(pid) when is_pid(pid), do: send(pid, :stop)
 
   defp reap_orphaned_sessions(state) do
     case OmeglePhoenix.Redis.command([
