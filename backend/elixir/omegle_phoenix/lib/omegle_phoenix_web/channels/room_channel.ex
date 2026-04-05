@@ -607,7 +607,12 @@ defmodule OmeglePhoenixWeb.RoomChannel do
       OmeglePhoenix.Router.notify_disconnect(partner_id, disconnect_reason)
       :ok
     else
-      _ -> :ok
+      error ->
+        Logger.warning(
+          "Failed to reset match for #{session_id} / #{partner_id}: #{inspect(error)}"
+        )
+
+        :ok
     end
   end
 

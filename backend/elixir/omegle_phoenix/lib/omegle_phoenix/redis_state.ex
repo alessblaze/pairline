@@ -85,10 +85,10 @@ defmodule OmeglePhoenix.RedisState do
   redis.call('SETEX', KEYS[3], ARGV[1], ARGV[4])
   redis.call('SETEX', KEYS[4], ARGV[1], ARGV[6])
 
-  redis.call('SETEX', KEYS[6], ARGV[1], ARGV[11])
-  redis.call('SETEX', KEYS[7], ARGV[1], ARGV[9])
-  redis.call('SETEX', KEYS[8], ARGV[1], ARGV[10])
-  redis.call('SETEX', KEYS[9], ARGV[1], ARGV[12])
+  redis.call('SETEX', KEYS[6], ARGV[1], ARGV[10])
+  redis.call('SETEX', KEYS[7], ARGV[1], ARGV[8])
+  redis.call('SETEX', KEYS[8], ARGV[1], ARGV[9])
+  redis.call('SETEX', KEYS[9], ARGV[1], ARGV[11])
 
   if redis.call('EXISTS', KEYS[5]) == 1 then
     redis.call('EXPIRE', KEYS[5], ARGV[1])
@@ -98,9 +98,9 @@ defmodule OmeglePhoenix.RedisState do
     redis.call('EXPIRE', KEYS[10], ARGV[1])
   end
 
-  redis.call('SADD', KEYS[11], ARGV[2], ARGV[8])
+  redis.call('SADD', KEYS[11], ARGV[2], ARGV[7])
   redis.call('SADD', KEYS[12], ARGV[2])
-  redis.call('SADD', KEYS[13], ARGV[8])
+  redis.call('SADD', KEYS[13], ARGV[7])
 
   redis.call('DEL', KEYS[14], KEYS[15])
   return 1
