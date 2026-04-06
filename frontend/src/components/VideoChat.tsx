@@ -122,6 +122,7 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
   const turnstileToken = location.state?.turnstileToken as string | undefined;
   const {
     connected, reportPeerId, sessionId, sessionToken, status, messages, peerTyping,
+    isVideoConnecting,
     localVideoRef, remoteVideoRef,
     startSearch, stopSearch, skip, disconnect,
     sendMessage, sendTyping: rawSendTyping, cameraError
@@ -397,6 +398,13 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
                   ))}
                 </div>
               )}
+            </div>
+          ) : status === 'connected' && isVideoConnecting ? (
+            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center px-4 bg-black/55 backdrop-blur-[2px] animate-in fade-in duration-300">
+              <div className="relative mb-5">
+                <div className="w-14 h-14 sm:w-16 sm:h-16 border-4 border-white/20 border-t-white rounded-full animate-spin"></div>
+              </div>
+              <p className="text-lg sm:text-xl font-semibold text-white text-center">Connecting video...</p>
             </div>
           ) : status !== 'connected' && (
             <div className="absolute inset-0 flex flex-col items-center justify-center px-4 z-10 bg-gray-100/95 dark:bg-black/80">

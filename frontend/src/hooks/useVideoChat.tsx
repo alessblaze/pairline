@@ -40,6 +40,7 @@ export function useVideoChat(wsUrl: string) {
   const peerTypingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showReconnectMessage, setShowReconnectMessage] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [isVideoConnecting, setIsVideoConnecting] = useState(false);
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -442,6 +443,11 @@ export function useVideoChat(wsUrl: string) {
         iceConnectionState: pc.iceConnectionState,
         signalingState: pc.signalingState
       });
+      if (pc.connectionState === 'connected') {
+        setIsVideoConnecting(false);
+      } else if (pc.connectionState === 'connecting') {
+        setIsVideoConnecting(true);
+      }
     };
 
     pc.onsignalingstatechange = () => {
@@ -490,9 +496,9 @@ export function useVideoChat(wsUrl: string) {
           tracks: stream.getTracks().map(track => ({ kind: track.kind, id: track.id, readyState: track.readyState }))
         }))
       });
-      if (remoteVideoRef.current) {
-        const videoElement = remoteVideoRef.current;
-        let streamToAssign: MediaStream;
+        if (remoteVideoRef.current) {
+          const videoElement = remoteVideoRef.current;
+          let streamToAssign: MediaStream;
 
         if (event.streams && event.streams[0]) {
           streamToAssign = event.streams[0];
@@ -512,6 +518,7 @@ export function useVideoChat(wsUrl: string) {
           console.warn('Remote video autoplay was blocked:', err);
         });
       }
+      setIsVideoConnecting(false);
     };
 
     return pc;
@@ -736,6 +743,7 @@ export function useVideoChat(wsUrl: string) {
         setPeerId(peerIdMatch || '');
         setReportPeerId(peerIdMatch || null);
         setStatus('connected');
+        setIsVideoConnecting(true);
         setShowReconnectMessage(false);
         setPeerTyping(false);
         signalingReadySentRef.current = false;
@@ -914,6 +922,7 @@ export function useVideoChat(wsUrl: string) {
           console.log('Peer disconnected');
         }
         setStatus('disconnected');
+        setIsVideoConnecting(false);
         setPeerId(null);
         setPeerTyping(false);
         setMessages(prev => [...prev, {
@@ -935,6 +944,7 @@ export function useVideoChat(wsUrl: string) {
         const videoBanReason = message.data?.reason || (message as any).reason || 'Banned by an administrator';
         console.error('You have been banned:', videoBanReason);
         setStatus('disconnected');
+        setIsVideoConnecting(false);
         setPeerTyping(false);
         setMessages(prev => [...prev, {
           id: crypto.randomUUID(),
@@ -969,6 +979,7 @@ export function useVideoChat(wsUrl: string) {
           console.log('Matchmaking timeout');
         }
         setStatus('disconnected');
+        setIsVideoConnecting(false);
         setPeerId(null);
         setPeerTyping(false);
         setMessages(prev => [...prev, {
@@ -981,6 +992,7 @@ export function useVideoChat(wsUrl: string) {
 
       case 'stopped':
         setStatus('idle');
+        setIsVideoConnecting(false);
         setPeerId(null);
         setSessionId(null);
         setSessionToken(null);
@@ -1018,6 +1030,7 @@ export function useVideoChat(wsUrl: string) {
       setMessages([]);
       setShowReconnectMessage(false);
       setReportPeerId(null);
+      setIsVideoConnecting(false);
       setStatus('searching');
 
       wsClient.send('start', {
@@ -1053,6 +1066,7 @@ export function useVideoChat(wsUrl: string) {
       setReportPeerId(null);
       setMessages([]);
       setPeerTyping(false);
+      setIsVideoConnecting(false);
       setStatus('searching');
 
       // Clean up WebRTC state for the next connection
@@ -1076,6 +1090,7 @@ export function useVideoChat(wsUrl: string) {
   const disconnect = () => {
     wsClient.send('disconnect', {});
     setStatus('disconnected');
+    setIsVideoConnecting(false);
     setPeerId(null);
     setPeerTyping(false);
     setMessages(prev => [...prev, {
@@ -1165,6 +1180,7 @@ export function useVideoChat(wsUrl: string) {
     status,
     messages,
     peerTyping,
+    isVideoConnecting,
     localVideoRef,
     remoteVideoRef,
     startSearch,
