@@ -277,7 +277,6 @@ services:
     environment:
       PORT: "8080"
       PHX_HOST: localhost
-      REDIS_MODE: cluster
       REDIS_HOST: redis-node-1
       REDIS_PORT: "7000"
       REDIS_CLUSTER_NODES: redis-node-1:7000,redis-node-2:7001,redis-node-3:7002
@@ -325,7 +324,6 @@ services:
     environment:
       PORT: "8080"
       PHX_HOST: localhost
-      REDIS_MODE: cluster
       REDIS_HOST: redis-node-1
       REDIS_PORT: "7000"
       REDIS_CLUSTER_NODES: redis-node-1:7000,redis-node-2:7001,redis-node-3:7002
@@ -373,7 +371,6 @@ services:
     environment:
       PORT: "8080"
       PHX_HOST: localhost
-      REDIS_MODE: cluster
       REDIS_HOST: redis-node-1
       REDIS_PORT: "7000"
       REDIS_CLUSTER_NODES: redis-node-1:7000,redis-node-2:7001,redis-node-3:7002
@@ -428,7 +425,6 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: omegle
       POSTGRES_SSLMODE: disable
-      REDIS_MODE: cluster
       REDIS_HOST: redis-node-1
       REDIS_PORT: "7000"
       REDIS_CLUSTER_NODES: redis-node-1:7000,redis-node-2:7001,redis-node-3:7002
@@ -472,7 +468,6 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: omegle
       POSTGRES_SSLMODE: disable
-      REDIS_MODE: cluster
       REDIS_HOST: redis-node-1
       REDIS_PORT: "7000"
       REDIS_CLUSTER_NODES: redis-node-1:7000,redis-node-2:7001,redis-node-3:7002
@@ -516,7 +511,6 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: omegle
       POSTGRES_SSLMODE: disable
-      REDIS_MODE: cluster
       REDIS_HOST: redis-node-1
       REDIS_PORT: "7000"
       REDIS_CLUSTER_NODES: redis-node-1:7000,redis-node-2:7001,redis-node-3:7002

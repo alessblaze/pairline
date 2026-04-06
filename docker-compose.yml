@@ -1,7 +1,7 @@
 services:
   redis-node-1:
     image: valkey/valkey:9-trixie
-    container_name: pairline-redis-node-1
+    container_name: pairline-redis-1
     command:
       - /bin/sh
       - -lc
@@ -26,7 +26,7 @@ services:
 
   redis-node-2:
     image: valkey/valkey:9-trixie
-    container_name: pairline-redis-node-2
+    container_name: pairline-redis-2
     command:
       - /bin/sh
       - -lc
@@ -51,7 +51,7 @@ services:
 
   redis-node-3:
     image: valkey/valkey:9-trixie
-    container_name: pairline-redis-node-3
+    container_name: pairline-redis-3
     command:
       - /bin/sh
       - -lc
@@ -76,7 +76,7 @@ services:
 
   redis-node-4:
     image: valkey/valkey:9-trixie
-    container_name: pairline-redis-node-4
+    container_name: pairline-redis-4
     command:
       - /bin/sh
       - -lc
@@ -101,7 +101,7 @@ services:
 
   redis-node-5:
     image: valkey/valkey:9-trixie
-    container_name: pairline-redis-node-5
+    container_name: pairline-redis-5
     command:
       - /bin/sh
       - -lc
@@ -126,7 +126,7 @@ services:
 
   redis-node-6:
     image: valkey/valkey:9-trixie
-    container_name: pairline-redis-node-6
+    container_name: pairline-redis-6
     command:
       - /bin/sh
       - -lc
@@ -151,7 +151,7 @@ services:
 
   redis-cluster-init:
     image: valkey/valkey:9-trixie
-    container_name: pairline-redis-cluster-init
+    container_name: pairline-redis-init
     depends_on:
       - redis-node-1
       - redis-node-2

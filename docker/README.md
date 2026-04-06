@@ -133,7 +133,7 @@ docker compose -f docker/docker-compose.yml exec phoenix3 curl -s http://localho
 - The services mount the local Elixir app source into the containers.
 - Phoenix containers set `SKIP_DOTENV=1` so a local mounted `.env` does not
   override Docker-provided Redis/cluster settings.
-- The app services run with `REDIS_MODE=cluster` and seed from `redis-node-1:7000`, `redis-node-2:7001`, and `redis-node-3:7002`.
+- The app services are cluster-only and seed from `redis-node-1:7000`, `redis-node-2:7001`, and `redis-node-3:7002`.
 - If you are testing through a public hostname or tunnel, add that origin to the
   Phoenix `CORS_ORIGINS` values in the Compose file so websocket origin checks pass.
 - Each Phoenix node gets its own `_build` and `deps` volume to avoid local build collisions.

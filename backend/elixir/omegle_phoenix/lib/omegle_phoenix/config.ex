@@ -11,17 +11,6 @@ defmodule OmeglePhoenix.Config do
     get("REDIS_HOST", "localhost")
   end
 
-  def get_redis_mode do
-    case get("REDIS_MODE", "standalone") |> String.downcase() do
-      "cluster" -> :cluster
-      _ -> :standalone
-    end
-  end
-
-  def redis_cluster? do
-    get_redis_mode() == :cluster
-  end
-
   def get_redis_cluster_nodes do
     get("REDIS_CLUSTER_NODES", "")
     |> String.split(",", trim: true)

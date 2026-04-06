@@ -2,6 +2,8 @@ defmodule OmeglePhoenix.Matchmaker do
   use GenServer
   require Logger
 
+  alias OmeglePhoenix.Redis.Streams
+
   @lock_key_prefix "matchmaking:leader"
   @stream_reconnect_message :connect_match_stream
   @stream_consume_message :consume_match_stream
@@ -167,7 +169,7 @@ defmodule OmeglePhoenix.Matchmaker do
 
   @impl true
   def handle_info(@stream_reconnect_message, state) do
-    case ensure_stream_group(state.stream, state.group) do
+    case Streams.ensure_group(state.stream, state.group) do
       :ok ->
         claim_stale_pending(state.stream, state.group, state.consumer)
         cleanup_stale_consumers(state.stream, state.group, state.consumer)
@@ -1237,82 +1239,18 @@ defmodule OmeglePhoenix.Matchmaker do
     end
   end
 
-  defp ensure_stream_group(stream, group) do
-    case OmeglePhoenix.Redis.command(["XGROUP", "CREATE", stream, group, "$", "MKSTREAM"]) do
-      {:ok, "OK"} ->
-        :ok
-
-      {:error, %Redix.Error{message: <<"BUSYGROUP", _::binary>>}} ->
-        :ok
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
   defp claim_stale_pending(stream, group, consumer) do
-    do_claim_stale_pending(stream, group, consumer, "0-0", 0)
-  end
-
-  defp do_claim_stale_pending(_stream, _group, _consumer, _start_id, attempts)
-       when attempts >= 100 do
-    :ok
-  end
-
-  defp do_claim_stale_pending(stream, group, consumer, start_id, attempts) do
-    case OmeglePhoenix.Redis.command([
-           "XAUTOCLAIM",
-           stream,
-           group,
-           consumer,
-           "30000",
-           start_id,
-           "COUNT",
-           "100"
-         ]) do
-      {:ok, [next_start_id, entries]} when is_binary(next_start_id) and is_list(entries) ->
-        if entries == [] or next_start_id == start_id do
-          :ok
-        else
-          do_claim_stale_pending(stream, group, consumer, next_start_id, attempts + 1)
-        end
-
-      {:ok, [next_start_id, entries, _deleted_ids]}
-      when is_binary(next_start_id) and is_list(entries) ->
-        if entries == [] or next_start_id == start_id do
-          :ok
-        else
-          do_claim_stale_pending(stream, group, consumer, next_start_id, attempts + 1)
-        end
-
-      {:error, _} ->
-        :ok
-
-      _ ->
-        :ok
-    end
+    Streams.claim_stale_pending(stream, group, consumer)
   end
 
   defp cleanup_stale_consumers(stream, group, current_consumer) do
-    active_consumers = active_consumer_names(current_consumer)
-    idle_cutoff_ms = OmeglePhoenix.Config.get_stream_stale_consumer_idle_ms()
-
-    case OmeglePhoenix.Redis.command(["XINFO", "CONSUMERS", stream, group]) do
-      {:ok, consumers} when is_list(consumers) ->
-        Enum.each(consumers, fn consumer_info ->
-          info = xinfo_to_map(consumer_info)
-          name = Map.get(info, "name")
-          idle_ms = xinfo_integer(info, "idle")
-
-          if is_binary(name) and name != current_consumer and idle_ms >= idle_cutoff_ms and
-               not MapSet.member?(active_consumers, name) do
-            _ = OmeglePhoenix.Redis.command(["XGROUP", "DELCONSUMER", stream, group, name])
-          end
-        end)
-
-      _ ->
-        :ok
-    end
+    Streams.cleanup_stale_consumers(
+      stream,
+      group,
+      current_consumer,
+      active_consumer_names(current_consumer),
+      OmeglePhoenix.Config.get_stream_stale_consumer_idle_ms()
+    )
   end
 
   defp consume_stream_entries(state) do
@@ -1367,47 +1305,18 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   defp read_stream(state, stream_id) do
-    command = [
-      "XREADGROUP",
-      "GROUP",
+    Streams.read_group(
+      state.stream,
       state.group,
       state.consumer,
-      "COUNT",
-      Integer.to_string(OmeglePhoenix.Config.get_match_event_stream_batch_size()),
-      "BLOCK",
-      Integer.to_string(OmeglePhoenix.Config.get_match_event_stream_block_ms()),
-      "STREAMS",
-      state.stream,
+      OmeglePhoenix.Config.get_match_event_stream_batch_size(),
+      OmeglePhoenix.Config.get_match_event_stream_block_ms(),
       stream_id
-    ]
-
-    case OmeglePhoenix.Redis.command(
-           command,
-           timeout: OmeglePhoenix.Config.get_match_event_stream_block_ms() + 2_000
-         ) do
-      {:ok, nil} ->
-        {:ok, []}
-
-      {:ok, [[_stream, entries]]} when is_list(entries) ->
-        {:ok, entries}
-
-      {:ok, _other} ->
-        {:ok, []}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
+    )
   end
 
-  defp ack_stream_entries(_state, []), do: :ok
-
   defp ack_stream_entries(state, entries) do
-    ids = Enum.map(entries, fn [entry_id, _fields] -> entry_id end)
-
-    case OmeglePhoenix.Redis.command(["XACK", state.stream, state.group | ids]) do
-      {:ok, _} -> :ok
-      {:error, reason} -> {:error, reason}
-    end
+    Streams.ack_entries(state.stream, state.group, entries)
   end
 
   defp handle_stream_entry([_entry_id, fields]) when is_list(fields) do
@@ -1502,39 +1411,4 @@ defmodule OmeglePhoenix.Matchmaker do
     node |> Atom.to_string() |> String.replace(~r/[^a-zA-Z0-9:_-]/u, "_")
   end
 
-  defp xinfo_to_map(list) when is_list(list) do
-    cond do
-      Enum.all?(list, &match?([_, _], &1)) ->
-        Map.new(list)
-
-      rem(length(list), 2) == 0 ->
-        list
-        |> Enum.chunk_every(2)
-        |> Enum.reduce(%{}, fn
-          [key, value], acc when is_binary(key) -> Map.put(acc, key, value)
-          _, acc -> acc
-        end)
-
-      true ->
-        %{}
-    end
-  end
-
-  defp xinfo_to_map(_), do: %{}
-
-  defp xinfo_integer(info, key) do
-    case Map.get(info, key) do
-      value when is_integer(value) ->
-        value
-
-      value when is_binary(value) ->
-        case Integer.parse(value) do
-          {parsed, _} -> parsed
-          :error -> 0
-        end
-
-      _ ->
-        0
-    end
-  end
 end

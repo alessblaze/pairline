@@ -20,18 +20,11 @@ type Client struct {
 func NewClient() *Client {
 	addrs := redisAddrsFromEnv()
 	password := os.Getenv("REDIS_PASSWORD")
-	mode := strings.ToLower(strings.TrimSpace(os.Getenv("REDIS_MODE")))
 
 	rdb := redis.NewUniversalClient(&redis.UniversalOptions{
 		Addrs:    addrs,
 		Password: password,
 		DB:       0,
-		MasterName: func() string {
-			if mode == "sentinel" {
-				return os.Getenv("REDIS_MASTER_NAME")
-			}
-			return ""
-		}(),
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
