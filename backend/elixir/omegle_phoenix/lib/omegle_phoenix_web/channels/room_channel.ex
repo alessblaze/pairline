@@ -6,6 +6,8 @@ defmodule OmeglePhoenixWeb.RoomChannel do
   @rate_window_ms 5_000
   @session_refresh_ms 60_000
   @owner_refresh_ms 20_000
+  @webrtc_ready_retry_attempts 4
+  @webrtc_ready_retry_delay_ms 75
 
   @impl true
   def join("room:" <> mode, _payload, socket) when mode in ["lobby", "text", "video"] do
@@ -242,72 +244,20 @@ defmodule OmeglePhoenixWeb.RoomChannel do
 
   def handle_in("webrtc_ready", _payload, socket) do
     session_id = socket.assigns[:session_id]
+    expected_partner_id = socket.assigns[:partner_id]
+    expected_generation = socket.assigns[:match_generation]
 
-    case with_session_partner_lock(session_id, fn session ->
-           cond do
-             is_nil(session) or is_nil(session.partner_id) ->
-               {:error, %{reason: "No partner"}}
-
-             true ->
-               with {:ok, updated_session} <-
-                      OmeglePhoenix.SessionManager.update_session(session_id, %{
-                        signaling_ready: true
-                      }) do
-                 case OmeglePhoenix.SessionManager.get_session(updated_session.partner_id) do
-                   {:ok, partner_session}
-                   when partner_session.signaling_ready == true and
-                          updated_session.webrtc_started != true and
-                          partner_session.webrtc_started != true ->
-                     # Combine signaling_ready + webrtc_started into a single
-                     # update per session to halve the Redis round-trips.
-                     _ =
-                       OmeglePhoenix.SessionManager.update_session(session_id, %{
-                         webrtc_started: true
-                       })
-
-                     _ =
-                       OmeglePhoenix.SessionManager.update_session(updated_session.partner_id, %{
-                         webrtc_started: true
-                       })
-
-                     OmeglePhoenix.Router.send_message(session_id, %{
-                       type: "webrtc_start",
-                       peer_id: updated_session.partner_id
-                     })
-
-                     OmeglePhoenix.Router.send_message(updated_session.partner_id, %{
-                       type: "webrtc_start",
-                       peer_id: session_id
-                     })
-
-                     :telemetry.execute(
-                       [:omegle_phoenix, :room, :webrtc_started],
-                       %{count: 1},
-                       %{session_id: session_id, partner_id: updated_session.partner_id}
-                     )
-
-                     {:ok, %{type: "webrtc_ready"}}
-
-                   _ ->
-                     :telemetry.execute(
-                       [:omegle_phoenix, :room, :webrtc_ready],
-                       %{count: 1},
-                       %{session_id: session_id}
-                     )
-
-                     {:ok, %{type: "webrtc_ready"}}
-                 end
-               else
-                 {:error, :not_found} ->
-                   {:error, %{reason: "Session not found"}}
-
-                 {:error, _reason} ->
-                   {:error, %{reason: "Failed to update session"}}
-               end
-           end
-         end) do
+    case run_webrtc_ready(session_id) do
       {:ok, payload} ->
         {:reply, {:ok, payload}, socket}
+
+      {:error, %{reason: "Session busy, please retry"}} ->
+        Logger.debug(
+          "webrtc_ready lock contention for #{inspect(session_id)} with partner #{inspect(expected_partner_id)} generation #{inspect(expected_generation)}; scheduling async retry"
+        )
+
+        schedule_webrtc_ready_retry(session_id, expected_partner_id, expected_generation, 1)
+        {:reply, {:ok, %{type: "webrtc_ready"}}, socket}
 
       {:error, payload} ->
         {:reply, {:error, payload}, socket}
@@ -517,6 +467,69 @@ defmodule OmeglePhoenixWeb.RoomChannel do
   end
 
   def handle_info(
+        {:retry_webrtc_ready, session_id, expected_partner_id, expected_generation, attempt},
+        socket
+      ) do
+    current_session_id = socket.assigns[:session_id]
+    current_partner_id = socket.assigns[:partner_id]
+    current_generation = socket.assigns[:match_generation]
+
+    cond do
+      current_session_id != session_id ->
+        Logger.debug(
+          "Skipping stale webrtc_ready retry for #{inspect(session_id)} attempt #{attempt}: socket session is now #{inspect(current_session_id)}"
+        )
+
+        {:noreply, socket}
+
+      current_partner_id != expected_partner_id or current_generation != expected_generation ->
+        Logger.debug(
+          "Skipping stale webrtc_ready retry for #{inspect(session_id)} attempt #{attempt}: expected partner #{inspect(expected_partner_id)} generation #{inspect(expected_generation)}, current partner #{inspect(current_partner_id)} generation #{inspect(current_generation)}"
+        )
+
+        {:noreply, socket}
+
+      true ->
+        case run_webrtc_ready(session_id) do
+          {:ok, _payload} ->
+            Logger.debug(
+              "webrtc_ready retry succeeded for #{inspect(session_id)} attempt #{attempt} with partner #{inspect(current_partner_id)} generation #{inspect(current_generation)}"
+            )
+
+            {:noreply, socket}
+
+          {:error, %{reason: "Session busy, please retry"}} ->
+            Logger.debug(
+              "webrtc_ready retry lock contention for #{inspect(session_id)} attempt #{attempt} with partner #{inspect(current_partner_id)} generation #{inspect(current_generation)}"
+            )
+
+            schedule_webrtc_ready_retry(
+              session_id,
+              expected_partner_id,
+              expected_generation,
+              attempt + 1
+            )
+
+            {:noreply, socket}
+
+          {:error, %{reason: "No partner"}} ->
+            Logger.debug(
+              "webrtc_ready retry resolved as no-op for #{inspect(session_id)} attempt #{attempt}: partner already gone"
+            )
+
+            {:noreply, socket}
+
+          {:error, payload} ->
+            Logger.warning(
+              "webrtc_ready retry failed for #{inspect(session_id)} attempt #{attempt}: #{inspect(payload)}"
+            )
+
+            {:noreply, socket}
+        end
+    end
+  end
+
+  def handle_info(
         {:router_match, partner_session_id, common_interests, match_generation, partner_route,
          partner_owner_node},
         socket
@@ -617,6 +630,76 @@ defmodule OmeglePhoenixWeb.RoomChannel do
     end
 
     :ok
+  end
+
+  defp run_webrtc_ready(session_id) do
+    with_session_partner_lock(session_id, fn session ->
+      cond do
+        is_nil(session) or is_nil(session.partner_id) ->
+          {:error, %{reason: "No partner"}}
+
+        true ->
+          with {:ok, updated_session} <-
+                 OmeglePhoenix.SessionManager.update_session(session_id, %{
+                   signaling_ready: true
+                 }) do
+            case OmeglePhoenix.SessionManager.get_session(updated_session.partner_id) do
+              {:ok, partner_session}
+              when partner_session.signaling_ready == true and
+                     updated_session.webrtc_started != true and
+                     partner_session.webrtc_started != true ->
+                # Combine signaling_ready + webrtc_started into a single
+                # update per session to halve the Redis round-trips.
+                _ =
+                  OmeglePhoenix.SessionManager.update_session(session_id, %{
+                    webrtc_started: true
+                  })
+
+                _ =
+                  OmeglePhoenix.SessionManager.update_session(updated_session.partner_id, %{
+                    webrtc_started: true
+                  })
+
+                Logger.debug(
+                  "Starting WebRTC for #{inspect(session_id)} and #{inspect(updated_session.partner_id)}"
+                )
+
+                OmeglePhoenix.Router.send_message(session_id, %{
+                  type: "webrtc_start",
+                  peer_id: updated_session.partner_id
+                })
+
+                OmeglePhoenix.Router.send_message(updated_session.partner_id, %{
+                  type: "webrtc_start",
+                  peer_id: session_id
+                })
+
+                :telemetry.execute(
+                  [:omegle_phoenix, :room, :webrtc_started],
+                  %{count: 1},
+                  %{session_id: session_id, partner_id: updated_session.partner_id}
+                )
+
+                {:ok, %{type: "webrtc_ready"}}
+
+              _ ->
+                :telemetry.execute(
+                  [:omegle_phoenix, :room, :webrtc_ready],
+                  %{count: 1},
+                  %{session_id: session_id}
+                )
+
+                {:ok, %{type: "webrtc_ready"}}
+            end
+          else
+            {:error, :not_found} ->
+              {:error, %{reason: "Session not found"}}
+
+            {:error, _reason} ->
+              {:error, %{reason: "Failed to update session"}}
+          end
+      end
+    end)
   end
 
   defp close_session(nil, _reason), do: {:error, :not_found}
@@ -728,6 +811,24 @@ defmodule OmeglePhoenixWeb.RoomChannel do
       result ->
         result
     end
+  end
+
+  defp schedule_webrtc_ready_retry(_session_id, _partner_id, _generation, attempt)
+       when attempt > @webrtc_ready_retry_attempts,
+       do: :ok
+
+  defp schedule_webrtc_ready_retry(session_id, partner_id, generation, attempt) do
+    delay_ms = @webrtc_ready_retry_delay_ms * attempt
+
+    Logger.debug(
+      "Scheduling webrtc_ready retry for #{inspect(session_id)} attempt #{attempt} in #{delay_ms}ms with partner #{inspect(partner_id)} generation #{inspect(generation)}"
+    )
+
+    Process.send_after(
+      self(),
+      {:retry_webrtc_ready, session_id, partner_id, generation, attempt},
+      delay_ms
+    )
   end
 
   defp create_and_queue_session(socket, client_ip, preferences, connected_type) do
