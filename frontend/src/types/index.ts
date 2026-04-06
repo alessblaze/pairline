@@ -1,3 +1,5 @@
+export type AdminRole = 'moderator' | 'admin' | 'root';
+
 export interface Message {
   type: 'offer' | 'answer' | 'ice' | 'message' | 'match' | 'disconnect' | 'disconnected' | 'error' | 'banned' | 'timeout' | 'stopped' | 'typing' | 'pong' | 'connected' | 'searching' | 'skipped' | 'webrtc_ready' | 'webrtc_start';
   data?: any;
@@ -24,7 +26,8 @@ export interface BanCheck {
 }
 
 export interface LoginResponse {
-  role: string;
+  role: AdminRole;
+  csrf_token?: string;
 }
 
 export interface ChatMessage {

@@ -27,6 +27,8 @@ The legacy combined binary defaults to port `8082`.
   Starts the admin binary only:
   - `GET /health`
   - `POST /api/v1/admin/login`
+  - `POST /api/v1/admin/refresh`
+  - `POST /api/v1/admin/logout`
   - `GET /api/v1/admin/reports`
   - `POST /api/v1/admin/ban`
   - account-management routes
@@ -39,6 +41,7 @@ Copy `.env.example` to `.env` and review:
 - `REDIS_*`
 - `SHARED_SECRET`
 - `JWT_SECRET`
+- `JWT_ACCESS_EXPIRATION_MINUTES`
 - `ROOT_ADMIN_USERNAME`
 - `ROOT_ADMIN_PASSWORD`
 - `CORS_ORIGIN`
@@ -46,6 +49,8 @@ Copy `.env.example` to `.env` and review:
 - `BAN_SYNC_INTERVAL_SECONDS`
 
 `JWT_SECRET` is only required for the admin or combined binaries.
+`JWT_ACCESS_EXPIRATION_MINUTES` defaults to `15` and controls the short-lived access token used for authenticated admin/moderator requests.
+`JWT_EXPIRATION_HOURS` now acts as the refresh-token/session lifetime for admin and moderator accounts.
 `BAN_SYNC_INTERVAL_SECONDS` defaults to disabled behavior when unset or `0`, which means startup reconciliation plus event-driven Redis updates only.
 Go services are Redis Cluster only and require `REDIS_CLUSTER_NODES`.
 
@@ -68,5 +73,16 @@ GOCACHE=/tmp/go-build go test ./...
 - Admin:
   - `GET /health`
   - `POST /api/v1/admin/login`
+  - `POST /api/v1/admin/refresh`
+  - `POST /api/v1/admin/logout`
   - `GET /api/v1/admin/reports`
+  - `PUT /api/v1/admin/reports/:id`
+  - `GET /api/v1/admin/bans`
   - `POST /api/v1/admin/ban`
+  - `DELETE /api/v1/admin/ban/:session_id`
+
+## Admin roles
+
+- `moderator`, `admin`, and `root` can review reports and read the ban registry.
+- `admin` and `root` can create or remove bans.
+- `admin` and `root` can manage admin accounts, with the existing in-handler role restrictions still applied for creating or deleting higher-privilege accounts.

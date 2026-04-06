@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DOMPurify from 'dompurify';
-import type { CreateBanRequest, Report } from '../types';
+import type { AdminRole, CreateBanRequest, LoginResponse, Report } from '../types';
 
 interface Ban {
   id: string;
@@ -69,6 +69,21 @@ function buildAdminHeaders(includeJSON = false) {
   return headers;
 }
 
+function persistAdminSession(role: AdminRole, csrfToken?: string) {
+  localStorage.setItem('admin_auth', 'true');
+  localStorage.setItem('admin_role', role);
+
+  if (csrfToken) {
+    sessionStorage.setItem('admin_csrf', csrfToken);
+  }
+}
+
+function clearAdminSession() {
+  localStorage.removeItem('admin_auth');
+  localStorage.removeItem('admin_role');
+  sessionStorage.removeItem('admin_csrf');
+}
+
 function formatShort(value?: string | null, length = 12) {
   if (!value) return 'N/A';
   return value.length > length ? `${value.slice(0, length)}...` : value;
@@ -107,7 +122,9 @@ function buildExpiryDate(durationValue: string, durationUnit: 'hours' | 'days') 
 
 export function AdminPanel() {
   const navigate = useNavigate();
-  const [token, setToken] = useState<string | null>(localStorage.getItem('admin_auth'));
+  const [isAuthenticated, setIsAuthenticated] = useState(localStorage.getItem('admin_auth') === 'true');
+  const [authReady, setAuthReady] = useState(false);
+  const [role, setRole] = useState<AdminRole | null>((localStorage.getItem('admin_role') as AdminRole | null) || null);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [reports, setReports] = useState<Report[]>([]);
@@ -136,23 +153,105 @@ export function AdminPanel() {
     durationUnit: 'hours',
   });
 
-  useEffect(() => {
-    if (token) {
-      fetchBans();
-    }
-  }, [token, banFilter, banLimit]);
+  const canManageBans = role === 'admin' || role === 'root';
 
   useEffect(() => {
-    if (token) {
+    if (authReady && isAuthenticated) {
+      fetchBans();
+    }
+  }, [authReady, isAuthenticated, banFilter, banLimit]);
+
+  useEffect(() => {
+    if (authReady && isAuthenticated) {
       fetchReports();
     }
-  }, [token, reportStatusFilter, reportLimit]);
+  }, [authReady, isAuthenticated, reportStatusFilter, reportLimit]);
+
+  useEffect(() => {
+    const bootstrapAuth = async () => {
+      const rememberedAuth = localStorage.getItem('admin_auth') === 'true';
+      const csrfToken = sessionStorage.getItem('admin_csrf');
+
+      if (!rememberedAuth || !csrfToken) {
+        setAuthReady(true);
+        return;
+      }
+
+      const refreshed = await refreshSession();
+      if (!refreshed) {
+        clearAdminSession();
+        setIsAuthenticated(false);
+        setRole(null);
+      }
+      setAuthReady(true);
+    };
+
+    void bootstrapAuth();
+  }, []);
 
   const storeCSRFFromResponse = async (response: Response) => {
     const csrfToken = response.headers.get('X-CSRF-Token');
     if (csrfToken) {
       sessionStorage.setItem('admin_csrf', csrfToken);
     }
+  };
+
+  const refreshSession = async () => {
+    const csrfToken = window.sessionStorage.getItem('admin_csrf') || '';
+
+    try {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/refresh`, {
+        method: 'POST',
+        headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {},
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        return false;
+      }
+
+      await storeCSRFFromResponse(response);
+      const data: LoginResponse = await response.json();
+      persistAdminSession(data.role, data.csrf_token);
+      setIsAuthenticated(true);
+      setRole(data.role);
+      return true;
+    } catch (error) {
+      console.error('Failed to refresh admin session:', error);
+      return false;
+    }
+  };
+
+  const adminFetch = async (path: string, init: RequestInit = {}, retryOnUnauthorized = true) => {
+    const response = await fetch(path, {
+      ...init,
+      headers: {
+        ...buildAdminHeaders(Boolean(init.body)),
+        ...(init.headers || {}),
+      },
+      credentials: 'include',
+    });
+
+    if (response.status !== 401 || !retryOnUnauthorized) {
+      return response;
+    }
+
+    const refreshed = await refreshSession();
+    if (!refreshed) {
+      clearAdminSession();
+      setIsAuthenticated(false);
+      setRole(null);
+      return response;
+    }
+
+    return fetch(path, {
+      ...init,
+      headers: {
+        ...buildAdminHeaders(Boolean(init.body)),
+        ...(init.headers || {}),
+      },
+      credentials: 'include',
+    });
   };
 
   const login = async (e: React.FormEvent) => {
@@ -166,12 +265,11 @@ export function AdminPanel() {
       });
 
       if (response.ok) {
-        const data = await response.json();
-        if (data.csrf_token) {
-          sessionStorage.setItem('admin_csrf', data.csrf_token);
-        }
-        setToken('true');
-        localStorage.setItem('admin_auth', 'true');
+        await storeCSRFFromResponse(response);
+        const data: LoginResponse = await response.json();
+        persistAdminSession(data.role, data.csrf_token);
+        setIsAuthenticated(true);
+        setRole(data.role);
         fetchReports();
       } else {
         alert('Invalid credentials');
@@ -182,19 +280,30 @@ export function AdminPanel() {
     }
   };
 
-  const logout = () => {
-    setToken(null);
-    localStorage.removeItem('admin_auth');
-    sessionStorage.removeItem('admin_csrf');
+  const logout = async () => {
+    try {
+      await fetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/logout`, {
+        method: 'POST',
+        headers: buildAdminHeaders(),
+        credentials: 'include',
+      });
+    } catch (error) {
+      console.error('Failed to clear admin session cookies:', error);
+    }
+
+    setIsAuthenticated(false);
+    setRole(null);
+    clearAdminSession();
     setReports([]);
+    setBans([]);
     navigate('/admin-login');
   };
 
   const fetchReports = async () => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/reports?status=${reportStatusFilter}&limit=${reportLimit}`, {
-        credentials: 'include',
-      });
+      const response = await adminFetch(
+        `${import.meta.env.VITE_API_URL}/api/v1/admin/reports?status=${reportStatusFilter}&limit=${reportLimit}`
+      );
 
       if (response.status === 401) return logout();
 
@@ -231,11 +340,9 @@ export function AdminPanel() {
 
   const updateReportStatus = async (reportId: string, newStatus: 'approved' | 'rejected') => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/reports/${reportId}`, {
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/reports/${reportId}`, {
         method: 'PUT',
-        headers: buildAdminHeaders(true),
         body: JSON.stringify({ status: newStatus }),
-        credentials: 'include',
       });
 
       if (response.status === 401) return logout();
@@ -250,12 +357,15 @@ export function AdminPanel() {
   };
 
   const createBan = async (request: CreateBanRequest) => {
+    if (!canManageBans) {
+      alert('Your role cannot create bans');
+      return false;
+    }
+
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/ban`, {
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/ban`, {
         method: 'POST',
-        headers: buildAdminHeaders(true),
         body: JSON.stringify(request),
-        credentials: 'include',
       });
 
       if (response.status === 401) {
@@ -361,9 +471,9 @@ export function AdminPanel() {
 
   const fetchBans = async () => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/bans?status=${banFilter}&limit=${banLimit}`, {
-        credentials: 'include',
-      });
+      const response = await adminFetch(
+        `${import.meta.env.VITE_API_URL}/api/v1/admin/bans?status=${banFilter}&limit=${banLimit}`
+      );
 
       if (response.status === 401) return logout();
 
@@ -384,11 +494,14 @@ export function AdminPanel() {
   };
 
   const unban = async (banId: string) => {
+    if (!canManageBans) {
+      alert('Your role cannot remove bans');
+      return;
+    }
+
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/ban/${banId}`, {
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/ban/${banId}`, {
         method: 'DELETE',
-        headers: buildAdminHeaders(),
-        credentials: 'include',
       });
 
       if (response.status === 401) return logout();
@@ -405,7 +518,20 @@ export function AdminPanel() {
     }
   };
 
-  if (!token) {
+  if (!authReady) {
+    return (
+      <div className="min-h-screen bg-[#050816] text-white">
+        <div className="fixed inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(34,211,238,0.15),_transparent_28%),radial-gradient(circle_at_80%_20%,_rgba(244,114,182,0.14),_transparent_22%),linear-gradient(180deg,_#0a1020_0%,_#050816_55%,_#02040b_100%)]" />
+        <div className="relative flex min-h-screen items-center justify-center px-6">
+          <div className="rounded-[28px] border border-white/10 bg-white/6 px-6 py-4 text-sm text-slate-300 backdrop-blur-xl">
+            Restoring moderation session...
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
     return (
       <div className="min-h-screen overflow-hidden bg-[#050816] text-white">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(34,211,238,0.18),_transparent_26%),radial-gradient(circle_at_80%_20%,_rgba(244,114,182,0.16),_transparent_20%),linear-gradient(180deg,_#0a1020_0%,_#050816_50%,_#02040b_100%)]" />
@@ -498,6 +624,9 @@ export function AdminPanel() {
             </div>
 
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="inline-flex rounded-full border border-white/10 bg-white/6 px-3 py-2 text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">
+                Role: {role || 'unknown'}
+              </div>
               <div className="inline-flex rounded-full border border-white/10 bg-white/6 p-1">
                 <button onClick={() => setCurrentTab('reports')} className={tabButtonClass(currentTab === 'reports')}>
                   Reports
@@ -649,7 +778,7 @@ export function AdminPanel() {
               )}
             </section>
 
-            {currentTab === 'bans' && (
+            {currentTab === 'bans' && canManageBans && (
               <section className={`${surfaceCardClass} p-6`}>
                 <div className="mb-5">
                   <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Manual Ban</p>
@@ -804,19 +933,21 @@ export function AdminPanel() {
                               </button>
                             )}
                             <div className="flex flex-col gap-2 min-w-[140px]">
-                              <button
-                                onClick={() =>
-                                  openBanModal({
-                                    sessionId: report.reported_session_id,
-                                    ip: report.reported_ip,
-                                    target: 'session',
-                                    reason: report.reason,
-                                  })
-                                }
-                                className={`${actionButtonClass} bg-rose-400/15 text-rose-100 hover:bg-rose-400/25`}
-                              >
-                                Ban
-                              </button>
+                              {canManageBans && (
+                                <button
+                                  onClick={() =>
+                                    openBanModal({
+                                      sessionId: report.reported_session_id,
+                                      ip: report.reported_ip,
+                                      target: 'session',
+                                      reason: report.reason,
+                                    })
+                                  }
+                                  className={`${actionButtonClass} bg-rose-400/15 text-rose-100 hover:bg-rose-400/25`}
+                                >
+                                  Ban
+                                </button>
+                              )}
                               {report.status === 'pending' && (
                                 <>
                                   <button
@@ -936,13 +1067,17 @@ export function AdminPanel() {
                         </div>
 
                         <div className="xl:text-right">
-                          {ban.is_active ? (
+                          {ban.is_active && canManageBans ? (
                             <button
                               onClick={() => unban(ban.id)}
                               className={`${actionButtonClass} bg-emerald-400/15 text-emerald-100 hover:bg-emerald-400/25`}
                             >
                               Unban
                             </button>
+                          ) : ban.is_active ? (
+                            <div className="text-sm text-slate-400">
+                              Admin or root access required to unban
+                            </div>
                           ) : (
                             <div className="text-sm text-slate-400">
                               Unbanned by {ban.unbanned_by_username || 'Unknown'}

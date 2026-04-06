@@ -33,8 +33,6 @@ type Server struct {
 	enablePublic bool
 }
 
-const adminCSRFCookieName = "admin_csrf_token"
-
 func NewServer() *Server {
 	return newServer(true, true, "omegle-go-service")
 }
@@ -358,20 +356,25 @@ func (s *Server) setupRoutes() {
 		admin := s.router.Group("/api/v1/admin")
 		{
 			admin.POST("/login", LoginRateLimitMiddleware(10, 15*time.Minute), handlers.LoginHandlerGin)
+			admin.Use(AdminCSRFMiddleware(allowedOrigins))
+			admin.POST("/refresh", handlers.RefreshAdminSessionHandlerGin)
+			admin.POST("/logout", handlers.LogoutAdminSessionHandlerGin)
 
 			adminAuth := admin.Group("")
 			adminAuth.Use(s.JWTAuthMiddleware())
-			adminAuth.Use(AdminCSRFMiddleware(allowedOrigins))
 			{
-				adminAuth.GET("/reports", handlers.GetReportsHandlerGin)
-				adminAuth.PUT("/reports/:id", handlers.UpdateReportHandlerGin)
-				adminAuth.GET("/bans", handlers.GetBansHandlerGin)
-				adminAuth.POST("/ban", handlers.CreateBanHandlerGin(s.redis))
-				adminAuth.DELETE("/ban/:session_id", handlers.DeleteBanHandlerGin(s.redis))
+				moderation := adminAuth.Group("")
+				moderation.Use(s.RoleAuthMiddleware([]string{"moderator", "admin", "root"}))
+				moderation.GET("/reports", handlers.GetReportsHandlerGin)
+				moderation.PUT("/reports/:id", handlers.UpdateReportHandlerGin)
+				moderation.GET("/bans", handlers.GetBansHandlerGin)
 
-				adminAuth.Use(s.RoleAuthMiddleware([]string{"admin", "root"}))
-				adminAuth.POST("/accounts", handlers.CreateAdminHandlerGin)
-				adminAuth.DELETE("/accounts/:username", handlers.DeleteAdminHandlerGin)
+				enforcement := adminAuth.Group("")
+				enforcement.Use(s.RoleAuthMiddleware([]string{"admin", "root"}))
+				enforcement.POST("/ban", handlers.CreateBanHandlerGin(s.redis))
+				enforcement.DELETE("/ban/:session_id", handlers.DeleteBanHandlerGin(s.redis))
+				enforcement.POST("/accounts", handlers.CreateAdminHandlerGin)
+				enforcement.DELETE("/accounts/:username", handlers.DeleteAdminHandlerGin)
 			}
 		}
 	}
@@ -454,7 +457,7 @@ func AdminCSRFMiddleware(allowedOrigins []string) gin.HandlerFunc {
 			return
 		}
 
-		cookieToken, err := c.Cookie(adminCSRFCookieName)
+		cookieToken, err := c.Cookie(middleware.AdminCSRFCookieName)
 		if err != nil || cookieToken == "" {
 			c.JSON(http.StatusForbidden, gin.H{"error": "CSRF validation failed"})
 			c.Abort()
@@ -530,9 +533,16 @@ func (s *Server) JWTAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := c.GetHeader("Authorization")
 		if token == "" {
-			cookie, err := c.Cookie("admin_token")
-			if err == nil {
-				token = cookie
+			cookieNames := []string{
+				middleware.AdminAccessCookieName,
+				middleware.LegacyAdminAccessCookieName,
+			}
+			for _, cookieName := range cookieNames {
+				cookie, err := c.Cookie(cookieName)
+				if err == nil && cookie != "" {
+					token = cookie
+					break
+				}
 			}
 		}
 

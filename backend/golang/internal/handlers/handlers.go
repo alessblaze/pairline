@@ -21,16 +21,14 @@ import (
 	"sync"
 	"time"
 
-	appredis "github.com/anish/omegle/backend/golang/internal/redis"
 	"github.com/anish/omegle/backend/golang/internal/middleware"
+	appredis "github.com/anish/omegle/backend/golang/internal/redis"
 	"github.com/anish/omegle/backend/golang/internal/storage"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
-
-const adminCSRFCookieName = "admin_csrf_token"
 
 func HealthHandlerGin(serviceName string) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -76,28 +74,66 @@ func LoginHandlerGin(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Service misconfigured"})
 		return
 	}
-	jwtExpHours := getEnvAsInt("JWT_EXPIRATION_HOURS", "8")
+	accessTTL := getEnvDurationMinutes("JWT_ACCESS_EXPIRATION_MINUTES", 15)
+	refreshTTL := time.Duration(getEnvAsInt("JWT_EXPIRATION_HOURS", "8")) * time.Hour
 
-	token, err := middleware.GenerateJWT(admin.Username, admin.Role, jwtSecret, jwtExpHours)
+	accessToken, refreshToken, csrfToken, err := issueAdminSession(admin.Username, admin.Role, jwtSecret, accessTTL, refreshTTL)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate session token"})
 		return
 	}
 
-	isSecure := c.Request.TLS != nil || c.Request.Header.Get("X-Forwarded-Proto") == "https"
-	if isSecure {
-		c.SetSameSite(http.SameSiteNoneMode)
-	} else {
-		c.SetSameSite(http.SameSiteLaxMode)
-	}
-	csrfToken := generateOpaqueToken()
-	c.SetCookie("admin_token", token, jwtExpHours*3600, "/", "", isSecure, true)
-	c.SetCookie(adminCSRFCookieName, csrfToken, jwtExpHours*3600, "/", "", isSecure, false)
+	setAdminSessionCookies(c, accessToken, refreshToken, csrfToken, accessTTL, refreshTTL)
+	writeAdminAuthResponse(c, admin.Role, csrfToken)
+}
 
-	c.JSON(http.StatusOK, gin.H{
-		"role":       admin.Role,
-		"csrf_token": csrfToken,
-	})
+func RefreshAdminSessionHandlerGin(c *gin.Context) {
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Service misconfigured"})
+		return
+	}
+
+	refreshCookie, err := c.Cookie(middleware.AdminRefreshCookieName)
+	if err != nil || refreshCookie == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Refresh token required"})
+		return
+	}
+
+	username, _, err := middleware.VerifyJWTWithType(refreshCookie, jwtSecret, middleware.TokenTypeRefresh)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
+		return
+	}
+
+	db := storage.NewDatabase()
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	var admin storage.AdminAccount
+	if err := db.GetDB().WithContext(ctx).
+		Where("username = ? AND is_active = ?", username, true).
+		First(&admin).Error; err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
+		return
+	}
+
+	accessTTL := getEnvDurationMinutes("JWT_ACCESS_EXPIRATION_MINUTES", 15)
+	refreshTTL := time.Duration(getEnvAsInt("JWT_EXPIRATION_HOURS", "8")) * time.Hour
+
+	accessToken, refreshToken, csrfToken, err := issueAdminSession(admin.Username, admin.Role, jwtSecret, accessTTL, refreshTTL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to refresh session"})
+		return
+	}
+
+	setAdminSessionCookies(c, accessToken, refreshToken, csrfToken, accessTTL, refreshTTL)
+	writeAdminAuthResponse(c, admin.Role, csrfToken)
+}
+
+func LogoutAdminSessionHandlerGin(c *gin.Context) {
+	clearAdminSessionCookies(c)
+	c.JSON(http.StatusOK, gin.H{"status": "logged_out"})
 }
 
 func GetReportsHandlerGin(c *gin.Context) {
@@ -905,6 +941,10 @@ func getEnvAsInt(key, defaultValue string) int {
 	return 0
 }
 
+func getEnvDurationMinutes(key string, defaultMinutes int) time.Duration {
+	return time.Duration(getEnvAsInt(key, strconv.Itoa(defaultMinutes))) * time.Minute
+}
+
 func generateOpaqueToken() string {
 	const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
 	alphabetLen := big.NewInt(int64(len(alphabet)))
@@ -918,6 +958,56 @@ func generateOpaqueToken() string {
 	}
 
 	return string(out)
+}
+
+func issueAdminSession(username, role, jwtSecret string, accessTTL, refreshTTL time.Duration) (string, string, string, error) {
+	accessToken, err := middleware.GenerateJWTWithType(username, role, middleware.TokenTypeAccess, jwtSecret, accessTTL)
+	if err != nil {
+		return "", "", "", err
+	}
+
+	refreshToken, err := middleware.GenerateJWTWithType(username, role, middleware.TokenTypeRefresh, jwtSecret, refreshTTL)
+	if err != nil {
+		return "", "", "", err
+	}
+
+	return accessToken, refreshToken, generateOpaqueToken(), nil
+}
+
+func setAdminSessionCookies(c *gin.Context, accessToken, refreshToken, csrfToken string, accessTTL, refreshTTL time.Duration) {
+	isSecure := c.Request.TLS != nil || c.Request.Header.Get("X-Forwarded-Proto") == "https"
+	if isSecure {
+		c.SetSameSite(http.SameSiteNoneMode)
+	} else {
+		c.SetSameSite(http.SameSiteLaxMode)
+	}
+
+	c.SetCookie(middleware.AdminAccessCookieName, accessToken, int(accessTTL.Seconds()), "/", "", isSecure, true)
+	c.SetCookie(middleware.AdminRefreshCookieName, refreshToken, int(refreshTTL.Seconds()), "/", "", isSecure, true)
+	c.SetCookie(middleware.AdminCSRFCookieName, csrfToken, int(refreshTTL.Seconds()), "/", "", isSecure, false)
+	c.SetCookie(middleware.LegacyAdminAccessCookieName, "", -1, "/", "", isSecure, true)
+}
+
+func clearAdminSessionCookies(c *gin.Context) {
+	isSecure := c.Request.TLS != nil || c.Request.Header.Get("X-Forwarded-Proto") == "https"
+	if isSecure {
+		c.SetSameSite(http.SameSiteNoneMode)
+	} else {
+		c.SetSameSite(http.SameSiteLaxMode)
+	}
+
+	c.SetCookie(middleware.AdminAccessCookieName, "", -1, "/", "", isSecure, true)
+	c.SetCookie(middleware.AdminRefreshCookieName, "", -1, "/", "", isSecure, true)
+	c.SetCookie(middleware.AdminCSRFCookieName, "", -1, "/", "", isSecure, false)
+	c.SetCookie(middleware.LegacyAdminAccessCookieName, "", -1, "/", "", isSecure, true)
+}
+
+func writeAdminAuthResponse(c *gin.Context, role, csrfToken string) {
+	c.Header("X-CSRF-Token", csrfToken)
+	c.JSON(http.StatusOK, gin.H{
+		"role":       role,
+		"csrf_token": csrfToken,
+	})
 }
 
 func getContextString(c *gin.Context, key string) (string, bool) {

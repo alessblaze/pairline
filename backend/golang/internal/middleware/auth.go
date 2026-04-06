@@ -23,6 +23,14 @@ const (
 	RoleKey     contextKey = "role"
 	DatabaseKey contextKey = "database"
 	RedisKey    contextKey = "redis"
+
+	AdminAccessCookieName       = "admin_access_token"
+	AdminRefreshCookieName      = "admin_refresh_token"
+	LegacyAdminAccessCookieName = "admin_token"
+	AdminCSRFCookieName         = "admin_csrf_token"
+
+	TokenTypeAccess  = "access"
+	TokenTypeRefresh = "refresh"
 )
 
 type User struct {
@@ -43,7 +51,7 @@ func JWTAuth(jwtSecret string, db *storage.Database) mux.MiddlewareFunc {
 				token = token[7:]
 			}
 
-			username, role, err := verifyJWT(token, jwtSecret)
+			username, role, err := verifyJWT(token, jwtSecret, TokenTypeAccess)
 			if err != nil {
 				sendError(w, "Invalid token", http.StatusUnauthorized)
 				return
@@ -108,7 +116,7 @@ func contains(slice []string, item string) bool {
 	return false
 }
 
-func verifyJWT(token string, jwtSecret string) (string, string, error) {
+func verifyJWT(token string, jwtSecret string, expectedType string) (string, string, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		return "", "", fmt.Errorf("invalid token format")
@@ -152,16 +160,33 @@ func verifyJWT(token string, jwtSecret string) (string, string, error) {
 		return "", "", fmt.Errorf("missing role")
 	}
 
+	tokenType, ok := claims["token_type"].(string)
+	if !ok {
+		tokenType = TokenTypeAccess
+	}
+
+	if expectedType != "" && tokenType != expectedType {
+		return "", "", fmt.Errorf("invalid token type")
+	}
+
 	return username, role, nil
 }
 
 // VerifyJWT is exported for use in server middleware
 func VerifyJWT(token string, jwtSecret string) (string, string, error) {
-	return verifyJWT(token, jwtSecret)
+	return verifyJWT(token, jwtSecret, TokenTypeAccess)
+}
+
+func VerifyJWTWithType(token string, jwtSecret string, expectedType string) (string, string, error) {
+	return verifyJWT(token, jwtSecret, expectedType)
 }
 
 func GenerateJWT(username, role, jwtSecret string, expiresHours int) (string, error) {
-	expiration := time.Now().Add(time.Duration(expiresHours) * time.Hour).Unix()
+	return GenerateJWTWithType(username, role, TokenTypeAccess, jwtSecret, time.Duration(expiresHours)*time.Hour)
+}
+
+func GenerateJWTWithType(username, role, tokenType, jwtSecret string, expiresIn time.Duration) (string, error) {
+	expiration := time.Now().Add(expiresIn).Unix()
 
 	header := map[string]string{
 		"alg": "HS256",
@@ -172,10 +197,11 @@ func GenerateJWT(username, role, jwtSecret string, expiresHours int) (string, er
 	headerEncoded := base64.RawURLEncoding.EncodeToString(headerJSON)
 
 	payload := map[string]interface{}{
-		"username": username,
-		"role":     role,
-		"iat":      time.Now().Unix(),
-		"exp":      expiration,
+		"username":   username,
+		"role":       role,
+		"token_type": tokenType,
+		"iat":        time.Now().Unix(),
+		"exp":        expiration,
 	}
 
 	payloadJSON, _ := json.Marshal(payload)

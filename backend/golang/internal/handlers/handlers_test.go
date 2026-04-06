@@ -1,8 +1,14 @@
 package handlers
 
 import (
+	"encoding/json"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/anish/omegle/backend/golang/internal/middleware"
+	"github.com/gin-gonic/gin"
 )
 
 func TestCanCreateAdminRole(t *testing.T) {
@@ -45,5 +51,50 @@ func TestNormalizeChatLogSanitizesHTML(t *testing.T) {
 	}
 	if normalized != `[{"id":"1","text":"Hello","sender":"peer","timestamp":1}]` {
 		t.Fatalf("normalizeChatLog() = %s", normalized)
+	}
+}
+
+func TestIssueAdminSessionIssuesTypedTokens(t *testing.T) {
+	secret := "0123456789abcdef0123456789abcdef"
+
+	accessToken, refreshToken, csrfToken, err := issueAdminSession("alice", "moderator", secret, 15*time.Minute, time.Hour)
+	if err != nil {
+		t.Fatalf("issueAdminSession returned error: %v", err)
+	}
+
+	if csrfToken == "" {
+		t.Fatal("issueAdminSession should return a CSRF token")
+	}
+
+	if _, _, err := middleware.VerifyJWT(accessToken, secret); err != nil {
+		t.Fatalf("VerifyJWT(access) returned error: %v", err)
+	}
+
+	if _, _, err := middleware.VerifyJWTWithType(refreshToken, secret, middleware.TokenTypeRefresh); err != nil {
+		t.Fatalf("VerifyJWTWithType(refresh) returned error: %v", err)
+	}
+}
+
+func TestWriteAdminAuthResponseSetsHeaderAndBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+
+	writeAdminAuthResponse(ctx, "admin", "csrf-123")
+
+	if got := recorder.Header().Get("X-CSRF-Token"); got != "csrf-123" {
+		t.Fatalf("X-CSRF-Token header = %q, want %q", got, "csrf-123")
+	}
+
+	var body struct {
+		Role      string `json:"role"`
+		CSRFToken string `json:"csrf_token"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v", err)
+	}
+
+	if body.Role != "admin" || body.CSRFToken != "csrf-123" {
+		t.Fatalf("response body = %+v", body)
 	}
 }
