@@ -2,7 +2,6 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { LandingPage } from './components/LandingPage';
 import { VideoChat } from './components/VideoChat';
 import { TextChat } from './components/TextChat';
-import { AdminPanel } from './components/AdminPanel';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { VideoDisabled } from './components/VideoDisabled';
 
@@ -35,7 +34,6 @@ function App() {
           } 
         />
         <Route path="/video-disabled" element={<VideoDisabled />} />
-        <Route path="/admin-login" element={<AdminPanel />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </div>

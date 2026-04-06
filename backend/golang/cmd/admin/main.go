@@ -4,14 +4,12 @@ import (
 	"log"
 	"os"
 
+	"github.com/anish/omegle/backend/golang/internal/config"
 	"github.com/anish/omegle/backend/golang/internal/server"
-	"github.com/joho/godotenv"
 )
 
 func main() {
-	if err := godotenv.Load(); err != nil {
-		log.Println("Warning: .env file not found, using default values")
-	}
+	config.LoadDotEnvIfEnabled()
 
 	svc := server.NewAdminServer()
 

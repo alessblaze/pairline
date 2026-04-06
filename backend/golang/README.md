@@ -53,6 +53,7 @@ Copy `.env.example` to `.env` and review:
 `JWT_EXPIRATION_HOURS` now acts as the refresh-token/session lifetime for admin and moderator accounts.
 `BAN_SYNC_INTERVAL_SECONDS` defaults to disabled behavior when unset or `0`, which means startup reconciliation plus event-driven Redis updates only.
 Go services are Redis Cluster only and require `REDIS_CLUSTER_NODES`.
+Set `IGNORE_DOTENV=1` (or any non-empty value) to skip loading a local `.env` file even if one is present in the working directory.
 
 ## Useful commands
 

@@ -21,7 +21,6 @@ export default defineConfig(({ mode }) => {
         output: {
           // Use function form to satisfy Rollup's ManualChunksFunction TS signature
           manualChunks: (id) => {
-            if (id.includes('AdminPanel')) return 'admin';
             if (id.includes('VideoChat') || id.includes('useVideoChat')) return 'video';
             if (id.includes('node_modules')) return 'vendor';
           },
