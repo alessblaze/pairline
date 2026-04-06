@@ -390,7 +390,7 @@ func CreateBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 
 		if req.SessionID != "" {
 			sessionID = req.SessionID
-			ipAddress = lookupSessionIP(ctx, redisClient.GetClient(), req.SessionID)
+			ipAddress = resolveBanIPAddress(ctx, redisClient.GetClient(), req.SessionID, req.IP)
 		} else {
 			ipAddress = normalizeIP(req.IP)
 			if ipAddress == "" {
@@ -1274,6 +1274,16 @@ func lookupSessionIP(ctx context.Context, redisClient redis.UniversalClient, ses
 	}
 
 	return normalizeIP(raw)
+}
+
+func resolveBanIPAddress(ctx context.Context, redisClient redis.UniversalClient, sessionID, requestedIP string) string {
+	if redisClient != nil {
+		if ipAddress := lookupSessionIP(ctx, redisClient, sessionID); ipAddress != "" {
+			return ipAddress
+		}
+	}
+
+	return normalizeIP(requestedIP)
 }
 
 func activeBanLookup(tx *gorm.DB, sessionID, ipAddress string, now time.Time) *gorm.DB {

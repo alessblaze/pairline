@@ -98,3 +98,10 @@ func TestWriteAdminAuthResponseSetsHeaderAndBody(t *testing.T) {
 		t.Fatalf("response body = %+v", body)
 	}
 }
+
+func TestResolveBanIPAddressFallsBackToRequestedIP(t *testing.T) {
+	ip := resolveBanIPAddress(t.Context(), nil, "4f9a0eb6-59fd-4a6f-a10d-c3b91e782a97", "203.0.113.24")
+	if ip != "203.0.113.24" {
+		t.Fatalf("resolveBanIPAddress() = %q, want %q", ip, "203.0.113.24")
+	}
+}
