@@ -481,6 +481,16 @@ func (s *Server) Run(addr string) error {
 		IdleTimeout:  60 * time.Second,
 	}
 
+	cleanup := func() {
+		if err := s.db.Close(); err != nil {
+			log.Printf("Error closing DB: %v", err)
+		}
+
+		if err := s.redis.Close(); err != nil {
+			log.Printf("Error closing Redis: %v", err)
+		}
+	}
+
 	serverErr := make(chan error, 1)
 
 	go func() {
@@ -492,31 +502,25 @@ func (s *Server) Run(addr string) error {
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(quit)
 
 	select {
 	case err := <-serverErr:
+		cleanup()
 		return err
 	case <-quit:
 		log.Println("Graceful shutdown sequence initiated...")
 	}
 
-	signal.Stop(quit)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
+		cleanup()
 		return err
 	}
 
-	// Close DB pool safely
-	if err := s.db.Close(); err != nil {
-		log.Printf("Error closing DB: %v", err)
-	}
-
-	if err := s.redis.Close(); err != nil {
-		log.Printf("Error closing Redis: %v", err)
-	}
+	cleanup()
 
 	log.Println("Server exiting properly.")
 	return nil

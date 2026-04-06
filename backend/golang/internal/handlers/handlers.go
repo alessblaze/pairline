@@ -25,6 +25,7 @@ import (
 	"github.com/anish/omegle/backend/golang/internal/middleware"
 	"github.com/anish/omegle/backend/golang/internal/storage"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
@@ -781,6 +782,10 @@ func CreateAdminHandlerGin(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "Admin already exists"})
 		return
 	}
+	if !errors.Is(result, gorm.ErrRecordNotFound) {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check existing admin"})
+		return
+	}
 
 	hash, err := storage.HashPassword(req.Password)
 	if err != nil {
@@ -799,6 +804,11 @@ func CreateAdminHandlerGin(c *gin.Context) {
 
 	result = db.GetDB().WithContext(ctx).Create(&admin).Error
 	if result != nil {
+		if isDuplicateKeyError(result) {
+			c.JSON(http.StatusConflict, gin.H{"error": "Admin already exists"})
+			return
+		}
+
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create admin"})
 		return
 	}
@@ -1221,6 +1231,15 @@ func redisBanTTL(ban storage.Ban) time.Duration {
 	}
 
 	return ttl
+}
+
+func isDuplicateKeyError(err error) bool {
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
 type reportMetricRow struct {
