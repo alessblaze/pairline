@@ -55,6 +55,66 @@ mix compile
 mix test
 ```
 
+## Testing
+
+Fast unit-style tests:
+
+```bash
+SECRET_KEY_BASE=test-secret \
+SHARED_SECRET=test-shared \
+MIX_ENV=test \
+mix test --no-start
+```
+
+These cover the Elixir app logic and the Redis compatibility shim without
+requiring a live Redis cluster.
+
+Live Redis cluster integration tests:
+
+```bash
+LIVE_REDIS_CLUSTER_TESTS=1 \
+REDIS_CLUSTER_NODES=127.0.0.1:7000,127.0.0.1:7001,127.0.0.1:7002 \
+REDIS_PASSWORD=your-redis-password \
+SECRET_KEY_BASE=test-secret \
+SHARED_SECRET=test-shared \
+MIX_ENV=test \
+mix test test/redis_live_integration_test.exs
+```
+
+The live suite exercises the real `eredis_cluster` client against a real Redis
+cluster and covers:
+
+- Redis wrapper reply normalization
+- mixed keyless/keyed pipeline handling
+- session create/get/delete
+- matchmaking join/leave queue
+- pair/reset flows
+- emergency disconnect partner recovery
+- reaper orphan cleanup
+- IP ban/unban flow
+
+If your local shell cannot reach the Redis cluster directly, run the live test
+inside a Phoenix container from the Docker stack instead.
+
+Stress harness:
+
+```bash
+SECRET_KEY_BASE=test-secret \
+SHARED_SECRET=test-shared \
+MIX_ENV=test \
+STRESS_SESSION_COUNT=1000 \
+STRESS_CONCURRENCY=500 \
+mix run scripts/redis_live_stress.exs
+```
+
+Useful stress env vars:
+
+- `STRESS_SESSION_COUNT`
+- `STRESS_CONCURRENCY`
+- `STRESS_PAIR_COUNT`
+- `STRESS_LEAVE_COUNT`
+- `STRESS_DISCONNECT_COUNT`
+
 ## Main responsibilities
 
 - websocket transport at `/ws`

@@ -6,6 +6,7 @@ defmodule OmeglePhoenix.MixProject do
       app: :omegle_phoenix,
       version: "0.1.0",
       elixir: "~> 1.17",
+      elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       deps: deps()
     ]
@@ -36,4 +37,6 @@ defmodule OmeglePhoenix.MixProject do
       {:gettext, "~> 0.23"}
     ]
   end
+
+  defp elixirc_paths(_), do: ["lib"]
 end

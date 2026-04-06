@@ -20,11 +20,13 @@ type Client struct {
 func NewClient() *Client {
 	addrs := redisAddrsFromEnv()
 	password := os.Getenv("REDIS_PASSWORD")
+	mode := strings.ToLower(strings.TrimSpace(os.Getenv("REDIS_MODE")))
 
 	rdb := redis.NewUniversalClient(&redis.UniversalOptions{
-		Addrs:    addrs,
-		Password: password,
-		DB:       0,
+		Addrs:      addrs,
+		Password:   password,
+		DB:         0,
+		MasterName: redisMasterName(mode),
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -37,6 +39,14 @@ func NewClient() *Client {
 	}
 
 	return &Client{client: rdb}
+}
+
+func redisMasterName(mode string) string {
+	if mode == "sentinel" {
+		return os.Getenv("REDIS_MASTER_NAME")
+	}
+
+	return ""
 }
 
 func (r *Client) PublishBanAction(ctx context.Context, sessionID, ipAddress, reason string) error {

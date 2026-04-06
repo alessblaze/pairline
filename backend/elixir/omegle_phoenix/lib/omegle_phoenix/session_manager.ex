@@ -321,7 +321,11 @@ defmodule OmeglePhoenix.SessionManager do
         end
       end)
 
-    {:ok, banned_sessions}
+    case OmeglePhoenix.Redis.command(["SET", ip_ban_key(ip), reason]) do
+      {:ok, "OK"} -> {:ok, banned_sessions}
+      {:error, reason} -> {:error, reason}
+      _ -> {:error, :ip_ban_store_failed}
+    end
   end
 
   def emergency_unban(session_id) do
@@ -335,11 +339,14 @@ defmodule OmeglePhoenix.SessionManager do
       _ = emergency_unban(session.id)
     end)
 
-    :ok
+    case OmeglePhoenix.Redis.command(["DEL", ip_ban_key(ip)]) do
+      {:ok, _} -> :ok
+      _ -> :ok
+    end
   end
 
   def ip_ban_reason(ip) do
-    case OmeglePhoenix.Redis.command(["GET", "ban:ip:#{ip}"]) do
+    case OmeglePhoenix.Redis.command(["GET", ip_ban_key(ip)]) do
       {:ok, nil} -> nil
       {:ok, reason} -> reason
       _ -> nil
@@ -788,4 +795,5 @@ defmodule OmeglePhoenix.SessionManager do
   defp session_key(session_id, route), do: OmeglePhoenix.RedisKeys.session_key(session_id, route)
   defp queue_meta_key(session_id, route), do: OmeglePhoenix.RedisKeys.queue_meta_key(session_id, route)
   defp ip_sessions_key(ip), do: "ip:#{ip}"
+  defp ip_ban_key(ip), do: "ban:ip:#{ip}"
 end

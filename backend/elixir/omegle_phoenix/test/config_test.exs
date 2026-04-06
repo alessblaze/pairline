@@ -1,5 +1,6 @@
 defmodule OmeglePhoenix.ConfigTest do
   use ExUnit.Case, async: false
+  @moduletag capture_log: true
 
   setup do
     tracked = [

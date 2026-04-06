@@ -31,6 +31,7 @@ All Phoenix nodes share:
 
 - the same Redis Cluster seed list
 - the same Redis password: `pairline-dev-redis-password`
+- the same Turnstile test secret: `1x0000000000000000000000000000000AA`
 - the same Erlang cookie
 - the same cluster node list
 - the same explicit Docker network: `pairline_cluster`
@@ -99,6 +100,89 @@ You should see for `/api/health`:
 - `connected_nodes` listing the peer Phoenix nodes
 - shared-state counters and `active_sessions`
 
+## Run tests
+
+Build the local Phoenix image used by the Docker stack:
+
+```bash
+./docker/build-container.sh
+```
+
+Run the Elixir unit-style test suite from the host:
+
+```bash
+cd backend/elixir/omegle_phoenix
+SECRET_KEY_BASE=test-secret \
+SHARED_SECRET=test-shared \
+MIX_ENV=test \
+mix test --no-start
+```
+
+Run the live Redis integration suite inside `phoenix1` so it uses the running
+cluster and container env:
+
+```bash
+docker compose -f docker/docker-compose.yml exec phoenix1 bash -lc '
+  cd /app &&
+  LIVE_REDIS_CLUSTER_TESTS=1 \
+  SECRET_KEY_BASE=test-secret \
+  SHARED_SECRET=test-shared \
+  MIX_ENV=test \
+  mix test test/redis_live_integration_test.exs
+'
+```
+
+That live suite covers:
+
+- real `eredis_cluster` communication
+- Redis wrapper normalization and mixed pipeline behavior
+- session create/get/delete
+- matchmaking join/leave queue
+- pair/reset flows
+- emergency disconnect partner recovery
+- reaper orphan cleanup
+- IP ban/unban
+
+Run the stress harness inside `phoenix1`:
+
+```bash
+./docker/run-tests.sh
+```
+
+By default that script:
+
+- builds the local Phoenix image if it is missing
+- starts `docker/docker-compose.yml` if `phoenix1` is not already running
+- shows named ExUnit tests for the unit and live stages
+- then runs the full Elixir test stack
+
+It includes:
+
+- Elixir unit tests
+- live Redis integration tests
+- the Redis stress harness
+
+The default stress run uses `1000` sessions at `500` concurrency.
+
+Override the load parameters with env vars:
+
+```bash
+STRESS_SESSION_COUNT=1000 \
+STRESS_CONCURRENCY=500 \
+STRESS_PAIR_COUNT=200 \
+STRESS_LEAVE_COUNT=320 \
+STRESS_DISCONNECT_COUNT=100 \
+./docker/run-tests.sh
+```
+
+Run only selected stages:
+
+```bash
+RUN_STRESS=0 ./docker/run-tests.sh
+RUN_UNIT=0 RUN_LIVE=1 RUN_STRESS=0 ./docker/run-tests.sh
+TEST_TRACE=0 ./docker/run-tests.sh
+```
+
 ## Useful commands
 
 View logs:
@@ -133,6 +217,9 @@ docker compose -f docker/docker-compose.yml exec phoenix3 curl -s http://localho
 - The services mount the local Elixir app source into the containers.
 - Phoenix containers set `SKIP_DOTENV=1` so a local mounted `.env` does not
   override Docker-provided Redis/cluster settings.
+- The local Docker stack uses Cloudflare Turnstile test credentials, so the
+  frontend test site key and Phoenix verification path work together without an
+  insecure CAPTCHA bypass.
 - The app services are cluster-only and seed from `redis-node-1:7000`, `redis-node-2:7001`, and `redis-node-3:7002`.
 - If you are testing through a public hostname or tunnel, add that origin to the
   Phoenix `CORS_ORIGINS` values in the Compose file so websocket origin checks pass.

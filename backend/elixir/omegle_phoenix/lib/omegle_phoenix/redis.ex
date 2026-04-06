@@ -16,20 +16,20 @@ defmodule OmeglePhoenix.Redis do
                   "PUBSUB"
                 ])
   @integer_response_commands MapSet.new([
-                             "DEL",
-                             "DBSIZE",
-                             "EXISTS",
-                             "EXPIRE",
-                             "PEXPIRE",
-                             "PUBLISH",
-                             "SADD",
-                             "SCARD",
-                             "SREM",
-                             "XACK",
-                             "ZADD",
-                             "ZCARD",
-                             "ZREM"
-                           ])
+                               "DEL",
+                               "DBSIZE",
+                               "EXISTS",
+                               "EXPIRE",
+                               "PEXPIRE",
+                               "PUBLISH",
+                               "SADD",
+                               "SCARD",
+                               "SREM",
+                               "XACK",
+                               "ZADD",
+                               "ZCARD",
+                               "ZREM"
+                             ])
 
   def start_link(opts \\ []) do
     Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
@@ -53,16 +53,11 @@ defmodule OmeglePhoenix.Redis do
 
   def pipeline(commands, opts \\ [])
   def pipeline([], _opts), do: {:ok, []}
+
   def pipeline(commands, opts) do
     normalized = Enum.map(commands, &normalize_command/1)
 
-    with_timeout(opts, fn ->
-      if Enum.all?(normalized, &any_command?/1) do
-        :eredis_cluster.qk(@cluster_name, normalized, @any_route_key)
-      else
-        :eredis_cluster.qmn(@cluster_name, normalized)
-      end
-    end)
+    with_timeout(opts, fn -> run_pipeline(normalized) end)
     |> normalize_pipeline_result(normalized)
   end
 
@@ -147,6 +142,72 @@ defmodule OmeglePhoenix.Redis do
     case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
       {:ok, result} -> result
       nil -> {:error, :timeout}
+    end
+  end
+
+  defp run_pipeline(commands) do
+    cond do
+      Enum.all?(commands, &any_command?/1) ->
+        :eredis_cluster.qk(@cluster_name, commands, @any_route_key)
+
+      Enum.any?(commands, &any_command?/1) ->
+        run_mixed_pipeline(commands)
+
+      true ->
+        :eredis_cluster.qmn(@cluster_name, commands)
+    end
+  end
+
+  defp run_mixed_pipeline(commands) do
+    {keyless_entries, keyed_entries} =
+      commands
+      |> Enum.with_index()
+      |> Enum.split_with(fn {command, _index} -> any_command?(command) end)
+
+    with {:ok, keyless_results} <- run_indexed_pipeline(keyless_entries, :keyless),
+         {:ok, keyed_results} <- run_indexed_pipeline(keyed_entries, :keyed) do
+      keyless_results
+      |> Kernel.++(keyed_results)
+      |> Enum.sort_by(&elem(&1, 0))
+      |> Enum.map(&elem(&1, 1))
+    end
+  end
+
+  defp run_indexed_pipeline([], _kind), do: {:ok, []}
+
+  defp run_indexed_pipeline(entries, :keyless) do
+    commands = Enum.map(entries, &elem(&1, 0))
+
+    case :eredis_cluster.qk(@cluster_name, commands, @any_route_key) do
+      {:ok, results} when is_list(results) ->
+        {:ok, Enum.zip(Enum.map(entries, &elem(&1, 1)), results)}
+
+      results when is_list(results) ->
+        {:ok, Enum.zip(Enum.map(entries, &elem(&1, 1)), results)}
+
+      {:error, reason} ->
+        {:error, reason}
+
+      other ->
+        {:error, {:unexpected_pipeline_result, other}}
+    end
+  end
+
+  defp run_indexed_pipeline(entries, :keyed) do
+    commands = Enum.map(entries, &elem(&1, 0))
+
+    case :eredis_cluster.qmn(@cluster_name, commands) do
+      {:ok, results} when is_list(results) ->
+        {:ok, Enum.zip(Enum.map(entries, &elem(&1, 1)), results)}
+
+      results when is_list(results) ->
+        {:ok, Enum.zip(Enum.map(entries, &elem(&1, 1)), results)}
+
+      {:error, reason} ->
+        {:error, reason}
+
+      other ->
+        {:error, {:unexpected_pipeline_result, other}}
     end
   end
 

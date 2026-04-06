@@ -1,3 +1,5 @@
+x-phoenix-image: &phoenix_image pairline-phoenix:local
+
 services:
   nginx:
     image: nginx:stable
@@ -267,7 +269,7 @@ services:
       - postgres_cluster_data:/var/lib/postgresql/data
 
   phoenix1:
-    image: hexpm/elixir:1.17.3-erlang-27.1.2-debian-bookworm-20260316-slim
+    image: *phoenix_image
     container_name: pairline-phoenix1
     hostname: phoenix1
     working_dir: /app
@@ -291,6 +293,7 @@ services:
       NODE_DISTRIBUTION: short
       CLUSTER_CONNECT_INTERVAL_MS: "2000"
       REAPER_INTERVAL_MS: "5000"
+      TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
       SKIP_DOTENV: "1"
       MIX_ENV: dev
     networks:
@@ -306,15 +309,13 @@ services:
       - /bin/bash
       - -lc
       - |
-        apt-get update &&
-        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential &&
         mix local.hex --force &&
         mix local.rebar --force &&
         mix deps.get &&
         ./start.sh
 
   phoenix2:
-    image: hexpm/elixir:1.17.3-erlang-27.1.2-debian-bookworm-20260316-slim
+    image: *phoenix_image
     container_name: pairline-phoenix2
     hostname: phoenix2
     working_dir: /app
@@ -338,6 +339,7 @@ services:
       NODE_DISTRIBUTION: short
       CLUSTER_CONNECT_INTERVAL_MS: "2000"
       REAPER_INTERVAL_MS: "5000"
+      TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
       SKIP_DOTENV: "1"
       MIX_ENV: dev
     networks:
@@ -353,15 +355,13 @@ services:
       - /bin/bash
       - -lc
       - |
-        apt-get update &&
-        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential &&
         mix local.hex --force &&
         mix local.rebar --force &&
         mix deps.get &&
         ./start.sh
 
   phoenix3:
-    image: hexpm/elixir:1.17.3-erlang-27.1.2-debian-bookworm-20260316-slim
+    image: *phoenix_image
     container_name: pairline-phoenix3
     hostname: phoenix3
     working_dir: /app
@@ -385,6 +385,7 @@ services:
       NODE_DISTRIBUTION: short
       CLUSTER_CONNECT_INTERVAL_MS: "2000"
       REAPER_INTERVAL_MS: "5000"
+      TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
       SKIP_DOTENV: "1"
       MIX_ENV: dev
     networks:
@@ -400,8 +401,6 @@ services:
       - /bin/bash
       - -lc
       - |
-        apt-get update &&
-        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential &&
         mix local.hex --force &&
         mix local.rebar --force &&
         mix deps.get &&
