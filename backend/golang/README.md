@@ -22,7 +22,7 @@ The legacy combined binary defaults to port `8082`.
   - `GET /health`
   - `POST /api/v1/moderation/report`
   - `GET /api/v1/webrtc/ws`
-  - `GET /api/v1/webrtc/turn`
+  - `POST /api/v1/webrtc/turn`
 - `go run ./cmd/admin`
   Starts the admin binary only:
   - `GET /health`
@@ -47,6 +47,7 @@ Copy `.env.example` to `.env` and review:
 
 `JWT_SECRET` is only required for the admin or combined binaries.
 `BAN_SYNC_INTERVAL_SECONDS` defaults to disabled behavior when unset or `0`, which means startup reconciliation plus event-driven Redis updates only.
+Go services are Redis Cluster only and require `REDIS_CLUSTER_NODES`.
 
 ## Useful commands
 
@@ -63,7 +64,7 @@ GOCACHE=/tmp/go-build go test ./...
   - `GET /health`
   - `POST /api/v1/moderation/report`
   - `GET /api/v1/webrtc/ws`
-  - `GET /api/v1/webrtc/turn`
+  - `POST /api/v1/webrtc/turn`
 - Admin:
   - `GET /health`
   - `POST /api/v1/admin/login`

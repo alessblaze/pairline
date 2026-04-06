@@ -380,7 +380,7 @@ func (s *Server) setupRoutes() {
 		webrtc := s.router.Group("/api/v1/webrtc")
 		{
 			webrtc.GET("/ws", handlers.WebRTCWebSocketHandlerGin(s.redis))
-			webrtc.GET("/turn", handlers.GetTURNCredentials(s.redis))
+			webrtc.POST("/turn", handlers.GetTURNCredentials(s.redis))
 		}
 
 		moderation := s.router.Group("/api/v1/moderation")
@@ -481,28 +481,41 @@ func (s *Server) Run(addr string) error {
 		IdleTimeout:  60 * time.Second,
 	}
 
+	serverErr := make(chan error, 1)
+
 	go func() {
 		log.Printf("Starting server on %s\n", addr)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server ListenAndServe failed: %v", err)
+			serverErr <- err
 		}
 	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-	log.Println("Graceful shutdown sequence initiated...")
+
+	select {
+	case err := <-serverErr:
+		return err
+	case <-quit:
+		log.Println("Graceful shutdown sequence initiated...")
+	}
+
+	signal.Stop(quit)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
-		log.Fatalf("Server forced to shutdown incorrectly: %v", err)
+		return err
 	}
 
 	// Close DB pool safely
 	if err := s.db.Close(); err != nil {
 		log.Printf("Error closing DB: %v", err)
+	}
+
+	if err := s.redis.Close(); err != nil {
+		log.Printf("Error closing Redis: %v", err)
 	}
 
 	log.Println("Server exiting properly.")

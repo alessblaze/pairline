@@ -542,11 +542,16 @@ export function useVideoChat(wsUrl: string) {
           return null;
         }
 
-        const turnUrl = new URL(`${goApiUrl}/api/v1/webrtc/turn`);
-        turnUrl.searchParams.set('session_id', activeSessionId);
-        turnUrl.searchParams.set('session_token', activeSessionToken);
-
-        const res = await fetch(turnUrl.toString());
+        const res = await fetch(`${goApiUrl}/api/v1/webrtc/turn`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            session_id: activeSessionId,
+            session_token: activeSessionToken,
+          }),
+        });
         const data = await res.json();
 
         if (data.iceServers && Array.isArray(data.iceServers)) {

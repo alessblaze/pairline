@@ -15,6 +15,7 @@ import (
 	appredis "github.com/anish/omegle/backend/golang/internal/redis"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/redis/go-redis/v9"
 )
 
 var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -86,10 +87,11 @@ type redisSignalEnvelope struct {
 
 type RedisSignalingHub struct {
 	sync.RWMutex
-	Clients    map[string]*SignalingClient
-	redis      *appredis.Client
-	instanceID string
-	startOnce  sync.Once
+	Clients      map[string]*SignalingClient
+	claiming     map[string]struct{}
+	redis        *appredis.Client
+	instanceID   string
+	startOnce    sync.Once
 }
 
 var Signaling = NewRedisSignalingHub()
@@ -104,6 +106,7 @@ func NewRedisSignalingHub() *RedisSignalingHub {
 
 	return &RedisSignalingHub{
 		Clients:    make(map[string]*SignalingClient),
+		claiming:   make(map[string]struct{}),
 		instanceID: instanceID,
 	}
 }
@@ -120,18 +123,32 @@ func (h *RedisSignalingHub) Register(sessionID string, conn *websocket.Conn) (*S
 	client := &SignalingClient{Conn: conn}
 
 	h.Lock()
-	defer h.Unlock()
-
 	if _, exists := h.Clients[sessionID]; exists {
+		h.Unlock()
 		return nil, nil, errSessionAlreadyOwned
 	}
+	if _, claiming := h.claiming[sessionID]; claiming {
+		h.Unlock()
+		return nil, nil, errSessionAlreadyOwned
+	}
+	h.claiming[sessionID] = struct{}{}
+	h.Unlock()
 
 	pending, err := h.claimSession(sessionID)
+	h.Lock()
+	delete(h.claiming, sessionID)
 	if err != nil {
+		h.Unlock()
 		return nil, nil, err
 	}
 
+	if _, exists := h.Clients[sessionID]; exists {
+		h.Unlock()
+		return nil, nil, errSessionAlreadyOwned
+	}
+
 	h.Clients[sessionID] = client
+	h.Unlock()
 
 	return client, pending, nil
 }
@@ -280,13 +297,13 @@ func (h *RedisSignalingHub) runOwnerRefresh() {
 			continue
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		for _, sessionID := range sessionIDs {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			if err := h.refreshOwner(ctx, sessionID); err != nil {
 				log.Printf("Failed refreshing Redis signaling ownership for %s: %v", sessionID, err)
 			}
+			cancel()
 		}
-		cancel()
 	}
 }
 
@@ -455,7 +472,11 @@ return 0
 func (h *RedisSignalingHub) claimPreconditions(ctx context.Context, sessionID string) (string, bool, error) {
 	route, err := appredis.ResolveSessionRoute(ctx, h.redis.GetClient(), sessionID)
 	if err != nil {
-		return "", false, nil
+		if errors.Is(err, appredis.ErrSessionRouteNotFound) {
+			return "", false, nil
+		}
+
+		return "", false, err
 	}
 
 	currentOwner, err := h.redis.GetClient().Get(ctx, ownerKey(sessionID, route)).Result()
@@ -470,7 +491,15 @@ func (h *RedisSignalingHub) claimPreconditions(ctx context.Context, sessionID st
 		return currentOwner, false, nil
 	}
 
-	return "", false, nil
+	if errors.Is(err, appredis.ErrSessionRouteNotFound) {
+		return "", false, nil
+	}
+
+	if errors.Is(err, redis.Nil) {
+		return "", false, nil
+	}
+
+	return "", false, err
 }
 
 func boolToLuaFlag(value bool) string {

@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -18,35 +19,28 @@ type Client struct {
 }
 
 func NewClient() *Client {
-	addrs := redisAddrsFromEnv()
-	password := os.Getenv("REDIS_PASSWORD")
-	mode := strings.ToLower(strings.TrimSpace(os.Getenv("REDIS_MODE")))
+	addrs, err := redisClusterAddrsFromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	rdb := redis.NewUniversalClient(&redis.UniversalOptions{
-		Addrs:      addrs,
-		Password:   password,
-		DB:         0,
-		MasterName: redisMasterName(mode),
+	password := os.Getenv("REDIS_PASSWORD")
+
+	rdb := redis.NewClusterClient(&redis.ClusterOptions{
+		Addrs:    addrs,
+		Password: password,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	if err := rdb.Ping(ctx).Err(); err != nil {
-		log.Printf("Warning: Failed to connect to Redis: %v", err)
-	} else {
-		log.Println("Connected to Redis successfully")
+		_ = rdb.Close()
+		log.Fatalf("Failed to connect to Redis Cluster: %v", err)
 	}
 
+	log.Println("Connected to Redis Cluster successfully")
 	return &Client{client: rdb}
-}
-
-func redisMasterName(mode string) string {
-	if mode == "sentinel" {
-		return os.Getenv("REDIS_MASTER_NAME")
-	}
-
-	return ""
 }
 
 func (r *Client) PublishBanAction(ctx context.Context, sessionID, ipAddress, reason string) error {
@@ -136,7 +130,15 @@ func SetIndexedValue(
 		return err
 	}
 
-	return client.SAdd(ctx, indexKey, key).Err()
+	if err := client.SAdd(ctx, indexKey, key).Err(); err != nil {
+		if rollbackErr := client.Del(ctx, key).Err(); rollbackErr != nil {
+			return fmt.Errorf("add index entry: %w (rollback delete failed: %v)", err, rollbackErr)
+		}
+
+		return fmt.Errorf("add index entry: %w", err)
+	}
+
+	return nil
 }
 
 func DeleteIndexedKey(ctx context.Context, client redis.UniversalClient, indexKey, key string) error {
@@ -144,7 +146,11 @@ func DeleteIndexedKey(ctx context.Context, client redis.UniversalClient, indexKe
 		return err
 	}
 
-	return client.SRem(ctx, indexKey, key).Err()
+	if err := client.SRem(ctx, indexKey, key).Err(); err != nil {
+		return fmt.Errorf("remove index entry: %w", err)
+	}
+
+	return nil
 }
 
 // GetClient returns the underlying redis client
@@ -152,33 +158,25 @@ func (r *Client) GetClient() redis.UniversalClient {
 	return r.client
 }
 
-func redisAddrsFromEnv() []string {
+func redisClusterAddrsFromEnv() ([]string, error) {
 	clusterNodes := strings.TrimSpace(os.Getenv("REDIS_CLUSTER_NODES"))
-	if clusterNodes != "" {
-		parts := strings.Split(clusterNodes, ",")
-		addrs := make([]string, 0, len(parts))
+	if clusterNodes == "" {
+		return nil, fmt.Errorf("REDIS_CLUSTER_NODES is required for Go services")
+	}
 
-		for _, part := range parts {
-			addr := strings.TrimSpace(part)
-			if addr != "" {
-				addrs = append(addrs, addr)
-			}
-		}
+	parts := strings.Split(clusterNodes, ",")
+	addrs := make([]string, 0, len(parts))
 
-		if len(addrs) > 0 {
-			return addrs
+	for _, part := range parts {
+		addr := strings.TrimSpace(part)
+		if addr != "" {
+			addrs = append(addrs, addr)
 		}
 	}
 
-	addr := os.Getenv("REDIS_HOST")
-	if addr == "" {
-		addr = "localhost"
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("REDIS_CLUSTER_NODES must contain at least one host:port entry")
 	}
 
-	port := os.Getenv("REDIS_PORT")
-	if port == "" {
-		port = "6379"
-	}
-
-	return []string{addr + ":" + port}
+	return addrs, nil
 }

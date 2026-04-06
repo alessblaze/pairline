@@ -2,13 +2,13 @@ package handlers
 
 import (
 	"context"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	internalredis "github.com/anish/omegle/backend/golang/internal/redis"
@@ -17,6 +17,11 @@ import (
 
 type cloudflareCredentialsRequest struct {
 	TTL int `json:"ttl"`
+}
+
+type turnCredentialsClientRequest struct {
+	SessionID    string `json:"session_id"`
+	SessionToken string `json:"session_token"`
 }
 
 type cloudflareIceServer struct {
@@ -39,14 +44,25 @@ type cloudflareIceServersWrapper struct {
 // This keeps the Cloudflare API token server-side and hidden from clients.
 func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		sessionID := c.Query("session_id")
-		sessionToken := c.Query("session_token")
+		if c.Request.ContentLength > 4096 {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "Request too large"})
+			return
+		}
+
+		var authReq turnCredentialsClientRequest
+		if err := c.ShouldBindJSON(&authReq); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+			return
+		}
+
+		sessionID := authReq.SessionID
+		sessionToken := authReq.SessionToken
 		if sessionID == "" || sessionToken == "" || len(sessionID) > 100 || len(sessionToken) > 128 || !uuidRe.MatchString(sessionID) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid session_id or session_token format"})
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 		defer cancel()
 
 		if !verifySessionToken(ctx, redisClient.GetClient(), sessionID, sessionToken) {
@@ -75,16 +91,16 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 		reqBody, _ := json.Marshal(cloudflareCredentialsRequest{TTL: 3600})
 
 		httpClient := &http.Client{Timeout: 5 * time.Second}
-		req, err := http.NewRequest("POST", cfURL, strings.NewReader(string(reqBody)))
+		cfReq, err := http.NewRequestWithContext(c.Request.Context(), "POST", cfURL, bytes.NewReader(reqBody))
 		if err != nil {
 			log.Printf("Failed to build Cloudflare TURN request: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to build TURN request"})
 			return
 		}
-		req.Header.Set("Authorization", "Bearer "+apiToken)
-		req.Header.Set("Content-Type", "application/json")
+		cfReq.Header.Set("Authorization", "Bearer "+apiToken)
+		cfReq.Header.Set("Content-Type", "application/json")
 
-		resp, err := httpClient.Do(req)
+		resp, err := httpClient.Do(cfReq)
 		if err != nil {
 			log.Printf("Failed to reach Cloudflare TURN API: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to contact Cloudflare TURN API"})
