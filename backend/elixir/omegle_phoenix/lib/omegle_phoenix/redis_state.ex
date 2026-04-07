@@ -322,33 +322,51 @@ defmodule OmeglePhoenix.RedisState do
       {delete_result, delete_us} = timed_us(fn -> exec(delete_command, opts) end)
 
       with {:ok, _} <- delete_result do
-        {locator_result, locator_us} =
+        {active_session_result, active_session_us} =
           timed_us(fn ->
-            cleanup_locators_for_report_grace(session_id, route, report_grace_ttl)
+            OmeglePhoenix.Redis.command([
+              "SREM",
+              OmeglePhoenix.RedisKeys.active_sessions_key(),
+              session_id
+            ])
           end)
 
-        with :ok <- locator_result do
-          case Keyword.get(opts, :index_cleanup, :sync) do
-            :async ->
-              schedule_async_index_cleanup(session_id, ip, report_grace_ttl)
-              {:ok, 1}
+        case active_session_result do
+          {:ok, _} ->
+            {locator_result, locator_us} =
+              timed_us(fn ->
+                cleanup_locators_for_report_grace(session_id, route, report_grace_ttl)
+              end)
 
-            _ ->
-              {index_result, index_us} =
-                timed_us(fn -> cleanup_indexes(session_id, ip, report_grace_ttl) end)
+            with :ok <- locator_result do
+              case Keyword.get(opts, :index_cleanup, :sync) do
+                :async ->
+                  schedule_async_index_cleanup(session_id, ip, report_grace_ttl)
+                  {:ok, 1}
 
-              with :ok <- index_result do
-                maybe_log_slow_delete_session(
-                  session_id,
-                  resolve_route_us,
-                  delete_us,
-                  locator_us,
-                  index_us
-                )
+                _ ->
+                  {index_result, index_us} =
+                    timed_us(fn -> cleanup_indexes(session_id, ip, report_grace_ttl) end)
 
-                {:ok, 1}
+                  with :ok <- index_result do
+                    maybe_log_slow_delete_session(
+                      session_id,
+                      resolve_route_us,
+                      delete_us + active_session_us,
+                      locator_us,
+                      index_us
+                    )
+
+                    {:ok, 1}
+                  end
               end
-          end
+            end
+
+          {:error, reason} ->
+            {:error, reason}
+
+          other ->
+            other
         end
       end
     end
@@ -523,23 +541,32 @@ defmodule OmeglePhoenix.RedisState do
     updates_json = updates |> stringify_updates() |> Jason.encode!()
 
     with {:ok, route} <- resolve_route(session_id) do
-      exec(
-        [
-          "EVAL",
-          @update_session_fields_script,
-          "6",
-          session_key(session_id, route),
-          session_ip_key(session_id, route),
-          session_token_key(session_id, route),
-          session_owner_key(session_id, route),
-          match_key(session_id, route),
-          queue_meta_key(session_id, route),
-          ttl,
-          now,
-          updates_json
-        ],
-        opts
-      )
+      case OmeglePhoenix.Redis.command(["EXISTS", queue_meta_key(session_id, route)]) do
+        {:ok, 0} ->
+          {:error, :missing_queue_meta}
+
+        {:ok, _} ->
+          exec(
+            [
+              "EVAL",
+              @update_session_fields_script,
+              "6",
+              session_key(session_id, route),
+              session_ip_key(session_id, route),
+              session_token_key(session_id, route),
+              session_owner_key(session_id, route),
+              match_key(session_id, route),
+              queue_meta_key(session_id, route),
+              ttl,
+              now,
+              updates_json
+            ],
+            opts
+          )
+
+        {:error, reason} ->
+          {:error, reason}
+      end
     end
   end
 
@@ -854,12 +881,6 @@ defmodule OmeglePhoenix.RedisState do
 
   defp cleanup_indexes(session_id, ip, report_grace_ttl) do
     with {:ok, _} <-
-           OmeglePhoenix.Redis.command([
-             "SREM",
-             OmeglePhoenix.RedisKeys.active_sessions_key(),
-             session_id
-           ]),
-         {:ok, _} <-
            OmeglePhoenix.Redis.command([
              "EVAL",
              @cleanup_ip_sessions_script,

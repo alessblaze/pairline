@@ -117,6 +117,13 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
     assert_eventually(fn ->
       OmeglePhoenix.SessionManager.count_active_sessions() >= baseline + 2
     end)
+
+    assert :ok = OmeglePhoenix.SessionManager.delete_session(session_id)
+    assert :ok = OmeglePhoenix.SessionManager.delete_session(peer_session_id)
+
+    assert_eventually(fn ->
+      OmeglePhoenix.SessionManager.count_active_sessions() == baseline
+    end)
   end
 
   test "update_session applies hot field updates without losing queue metadata", %{
@@ -145,6 +152,35 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
     assert {:ok, queue_meta_payload} = OmeglePhoenix.Redis.command(["GET", queue_meta_key])
     assert {:ok, queue_meta} = Jason.decode(queue_meta_payload)
     assert queue_meta["status"] == "disconnecting"
+    assert queue_meta["mode"] == "video"
+    assert queue_meta["interest_buckets"] != []
+  end
+
+  test "update_session recreates queue metadata when it is missing", %{
+    session_id: session_id,
+    ip: ip
+  } do
+    preferences = %{"mode" => "video", "interests" => "music,games"}
+
+    assert {:ok, _created} =
+             OmeglePhoenix.SessionManager.create_session(session_id, ip, preferences)
+
+    assert {:ok, route} = OmeglePhoenix.SessionManager.get_session_route(session_id)
+    queue_meta_key = OmeglePhoenix.RedisKeys.queue_meta_key(session_id, route)
+
+    assert {:ok, 1} = OmeglePhoenix.Redis.command(["DEL", queue_meta_key])
+
+    assert {:ok, updated} =
+             OmeglePhoenix.SessionManager.update_session(session_id, %{
+               signaling_ready: true,
+               webrtc_started: true
+             })
+
+    assert updated.signaling_ready == true
+    assert updated.webrtc_started == true
+
+    assert {:ok, queue_meta_payload} = OmeglePhoenix.Redis.command(["GET", queue_meta_key])
+    assert {:ok, queue_meta} = Jason.decode(queue_meta_payload)
     assert queue_meta["mode"] == "video"
     assert queue_meta["interest_buckets"] != []
   end

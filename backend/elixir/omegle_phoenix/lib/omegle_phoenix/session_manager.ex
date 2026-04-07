@@ -157,7 +157,7 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   def get_all_sessions do
-    collect_active_sessions("0", %{})
+    collect_active_sessions("0", %{}, [])
   end
 
   def get_active_sessions_page(opts \\ []) do
@@ -171,13 +171,6 @@ defmodule OmeglePhoenix.SessionManager do
              limit
            ),
          {:ok, batched_sessions} <- get_sessions(session_ids) do
-      _ =
-        prune_stale_session_ids(
-          OmeglePhoenix.RedisKeys.active_sessions_key(),
-          session_ids,
-          batched_sessions
-        )
-
       ordered_sessions =
         session_ids
         |> Enum.map(&Map.get(batched_sessions, &1))
@@ -271,19 +264,13 @@ defmodule OmeglePhoenix.SessionManager do
              ) do
           {:ok, "not_found"} -> {:error, :not_found}
           {:ok, payload} -> decode_session(payload)
+          {:error, :missing_queue_meta} -> persist_updated_session(session_id, normalized_updates)
           {:error, reason} -> {:error, reason}
           _ -> {:error, :not_found}
         end
 
       true ->
-        with {:ok, session} <- get_session(session_id) do
-          updated_session = Map.merge(session, normalized_updates) |> touch_last_activity()
-
-          case persist_session(updated_session) do
-            :ok -> {:ok, updated_session}
-            {:error, reason} -> {:error, reason}
-          end
-        end
+        persist_updated_session(session_id, normalized_updates)
     end
   end
 
@@ -850,7 +837,8 @@ defmodule OmeglePhoenix.SessionManager do
     end
   end
 
-  defp collect_active_sessions(cursor, acc) when is_binary(cursor) and is_map(acc) do
+  defp collect_active_sessions(cursor, acc, stale_ids)
+       when is_binary(cursor) and is_map(acc) and is_list(stale_ids) do
     with {:ok, next_cursor, session_ids} <-
            scan_session_ids(
              OmeglePhoenix.RedisKeys.active_sessions_key(),
@@ -858,12 +846,7 @@ defmodule OmeglePhoenix.SessionManager do
              @active_session_scan_count
            ),
          {:ok, batched_sessions} <- get_sessions(session_ids) do
-      _ =
-        prune_stale_session_ids(
-          OmeglePhoenix.RedisKeys.active_sessions_key(),
-          session_ids,
-          batched_sessions
-        )
+      batch_stale_ids = Enum.reject(session_ids, &Map.has_key?(batched_sessions, &1))
 
       merged =
         Enum.reduce(session_ids, acc, fn session_id, sessions_acc ->
@@ -874,9 +857,16 @@ defmodule OmeglePhoenix.SessionManager do
         end)
 
       if next_cursor == "0" do
+        _ =
+          prune_stale_session_ids(
+            OmeglePhoenix.RedisKeys.active_sessions_key(),
+            Enum.uniq(stale_ids ++ batch_stale_ids),
+            %{}
+          )
+
         {:ok, merged}
       else
-        collect_active_sessions(next_cursor, merged)
+        collect_active_sessions(next_cursor, merged, stale_ids ++ batch_stale_ids)
       end
     else
       _ -> {:ok, acc}
@@ -926,6 +916,17 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   defp parse_non_negative_integer(_value, default), do: default
+
+  defp persist_updated_session(session_id, normalized_updates) do
+    with {:ok, session} <- get_session(session_id) do
+      updated_session = Map.merge(session, normalized_updates) |> touch_last_activity()
+
+      case persist_session(updated_session) do
+        :ok -> {:ok, updated_session}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
 
   defp session_key(session_id, route), do: OmeglePhoenix.RedisKeys.session_key(session_id, route)
 
