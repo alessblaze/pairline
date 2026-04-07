@@ -13,7 +13,9 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
 
   setup_all do
     ensure_live_env!()
+    ensure_distributed_test_node!()
     Application.ensure_all_started(:omegle_phoenix)
+    ensure_cluster_connected!()
     :ok
   end
 
@@ -311,6 +313,62 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
     end)
   end
 
+  test "router delivers directly to a remote owner across connected phoenix nodes", %{
+    session_id: session_id,
+    ip: ip
+  } do
+    preferences = %{"mode" => "text", "interests" => "beam,cluster"}
+    peer_node = connected_peer_node!()
+
+    assert {:ok, _session} =
+             OmeglePhoenix.SessionManager.create_session(session_id, ip, preferences)
+
+    assert {:ok, route} = OmeglePhoenix.SessionManager.get_session_route(session_id)
+
+    probe_path = "/app/lib/omegle_phoenix/router_probe.ex"
+    assert {_module, _binary} = hd(:rpc.call(peer_node, Code, :compile_file, [probe_path]))
+
+    assert {:ok, remote_probe} =
+             :rpc.call(peer_node, OmeglePhoenix.RouterProbe, :start, [session_id, self()])
+
+    on_exit(fn ->
+      if is_pid(remote_probe) do
+        send(remote_probe, {:router_probe_stop, self()})
+        assert_receive {:router_probe_stopped, ^session_id, ^peer_node}, 5_000
+      end
+    end)
+
+    assert_receive {:router_probe_registered, ^session_id, ^peer_node, ^remote_probe}, 5_000
+
+    assert_eventually(fn ->
+      OmeglePhoenix.Router.owner_node(session_id, route_hint: route) ==
+        {:ok, Atom.to_string(peer_node)}
+    end)
+
+    OmeglePhoenix.Router.send_message(
+      session_id,
+      %{
+        type: "message",
+        from: "integration-test",
+        match_generation: "gen-1",
+        data: %{content: "hello from cluster"}
+      },
+      route_hint: route,
+      owner_hint: Atom.to_string(peer_node)
+    )
+
+    assert_receive(
+      {:router_probe_message, ^session_id,
+       %{
+         type: "message",
+         from: "integration-test",
+         match_generation: "gen-1",
+         data: %{content: "hello from cluster"}
+       }, ^peer_node},
+      5_000
+    )
+  end
+
   test "ip ban and unban works through the session manager", %{
     session_id: session_id,
     ip: ip
@@ -461,6 +519,55 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
     if missing != [] do
       raise "Missing required env vars for live Redis integration tests: #{Enum.join(missing, ", ")}"
     end
+  end
+
+  defp ensure_distributed_test_node! do
+    if not Node.alive?() do
+      unique_name = :"redis_live_test_#{System.unique_integer([:positive])}"
+
+      case Node.start(unique_name, :shortnames) do
+        {:ok, _pid} ->
+          :ok
+
+        {:error, {:already_started, _pid}} ->
+          :ok
+
+        {:error, reason} ->
+          raise "Failed to start distributed test node: #{inspect(reason)}"
+      end
+    end
+
+    cookie =
+      case System.get_env("NODE_COOKIE") do
+        nil -> raise "NODE_COOKIE must be set for distributed live Redis tests"
+        value -> String.to_atom(value)
+      end
+
+    true = Node.set_cookie(cookie)
+    :ok
+  end
+
+  defp ensure_cluster_connected! do
+    peers =
+      System.get_env("CLUSTER_NODES", "")
+      |> String.split(",", trim: true)
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.map(&String.to_atom/1)
+      |> Enum.reject(&(&1 == Node.self()))
+
+    Enum.each(peers, fn peer ->
+      _ = Node.connect(peer)
+    end)
+
+    assert_eventually(fn ->
+      Enum.all?(peers, &(&1 in Node.list()))
+    end)
+  end
+
+  defp connected_peer_node! do
+    assert_eventually(fn -> Node.list() != [] end)
+    Enum.at(Node.list(), 0)
   end
 
   defp cleanup_session(session_id) do

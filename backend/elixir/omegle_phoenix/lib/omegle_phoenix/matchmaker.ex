@@ -167,7 +167,9 @@ defmodule OmeglePhoenix.Matchmaker do
       recent_queue_events: %{},
       fallback_generations: %{},
       pending_local_match_keys: MapSet.new(),
-      local_match_batch_ref: nil
+      local_match_batch_ref: nil,
+      stream_consumer_task: nil,
+      sweep_task: nil
     }
 
     send(self(), @stream_reconnect_message)
@@ -181,8 +183,13 @@ defmodule OmeglePhoenix.Matchmaker do
       :ok ->
         claim_stale_pending(state.stream, state.group, state.consumer)
         cleanup_stale_consumers(state.stream, state.group, state.consumer)
-        send(self(), @stream_consume_message)
-        {:noreply, %{state | stream_conn: :redis}}
+        connected_state = %{state | stream_conn: :redis}
+
+        if is_nil(connected_state.stream_consumer_task) do
+          send(self(), @stream_consume_message)
+        end
+
+        {:noreply, connected_state}
 
       {:error, reason} ->
         Logger.error(
@@ -198,55 +205,32 @@ defmodule OmeglePhoenix.Matchmaker do
     {:noreply, state}
   end
 
+  def handle_info(@stream_consume_message, %{stream_consumer_task: %Task{}} = state) do
+    {:noreply, state}
+  end
+
   def handle_info(@stream_consume_message, state) do
-    state =
-      case consume_stream_entries(state) do
-        {:ok, updated_state} ->
-          updated_state
+    task =
+      Task.Supervisor.async_nolink(OmeglePhoenix.TaskSupervisor, fn ->
+        {:stream_consume, consume_stream_entries(stream_consumer_state(state))}
+      end)
 
-        {:error, reason} ->
-          Logger.warning("Matchmaking stream consumer disconnected: #{inspect(reason)}")
-          Process.send_after(self(), @stream_reconnect_message, 1_000)
-          %{state | stream_conn: nil}
-      end
+    {:noreply, %{state | stream_consumer_task: task}}
+  end
 
-    if state.stream_conn != nil do
-      send(self(), @stream_consume_message)
-    end
-
+  def handle_info(@sweep_message, %{sweep_task: %Task{}} = state) do
     {:noreply, state}
   end
 
   def handle_info(@sweep_message, state) do
     now_ms = System.system_time(:millisecond)
 
-    stale_queue_keys =
-      queue_keys()
-      |> Enum.filter(fn queue_key ->
-        sweep_queue?(queue_key, state.recent_queue_events, now_ms, state.sweep_stale_after_ms)
+    task =
+      Task.Supervisor.async_nolink(OmeglePhoenix.TaskSupervisor, fn ->
+        {:sweep, run_sweep(state.recent_queue_events, now_ms, state.sweep_stale_after_ms)}
       end)
 
-    stale_queue_keys
-    |> Task.async_stream(&do_matching/1,
-      max_concurrency: System.schedulers_online(),
-      timeout: 15_000,
-      on_timeout: :kill_task,
-      ordered: false
-    )
-    |> Stream.run()
-
-    maybe_schedule_sweep(state.sweep_interval_ms)
-
-    {:noreply,
-     %{
-       state
-       | recent_queue_events:
-           prune_recent_queue_events(
-             state.recent_queue_events,
-             now_ms,
-             state.sweep_stale_after_ms
-           )
-     }}
+    {:noreply, %{state | sweep_task: task}}
   end
 
   def handle_info(@local_match_batch_message, %{local_match_batch_ref: ref} = state)
@@ -276,6 +260,81 @@ defmodule OmeglePhoenix.Matchmaker do
     end
 
     {:noreply, %{state | local_match_batch_ref: nil}}
+  end
+
+  def handle_info(
+        {ref, {:stream_consume, {:ok, processed_queue_keys}}},
+        %{stream_consumer_task: %Task{ref: ref}} = state
+      ) do
+    Process.demonitor(ref, [:flush])
+    now_ms = System.system_time(:millisecond)
+
+    updated_state = %{
+      state
+      | stream_consumer_task: nil,
+        recent_queue_events:
+          record_recent_queue_events(state.recent_queue_events, processed_queue_keys, now_ms)
+    }
+
+    if updated_state.stream_conn != nil do
+      send(self(), @stream_consume_message)
+    end
+
+    {:noreply, updated_state}
+  end
+
+  def handle_info(
+        {ref, {:stream_consume, {:error, reason}}},
+        %{stream_consumer_task: %Task{ref: ref}} = state
+      ) do
+    Process.demonitor(ref, [:flush])
+    Logger.warning("Matchmaking stream consumer disconnected: #{inspect(reason)}")
+    Process.send_after(self(), @stream_reconnect_message, 1_000)
+
+    {:noreply, %{state | stream_conn: nil, stream_consumer_task: nil}}
+  end
+
+  def handle_info(
+        {:DOWN, ref, :process, _pid, reason},
+        %{stream_consumer_task: %Task{ref: ref}} = state
+      ) do
+    if reason != :normal do
+      Logger.warning("Matchmaking stream consumer crashed: #{inspect(reason)}")
+      Process.send_after(self(), @stream_reconnect_message, 1_000)
+    end
+
+    {:noreply,
+     %{
+       state
+       | stream_conn: if(reason == :normal, do: state.stream_conn, else: nil),
+         stream_consumer_task: nil
+     }}
+  end
+
+  def handle_info({ref, {:sweep, sweep_started_at_ms}}, %{sweep_task: %Task{ref: ref}} = state) do
+    Process.demonitor(ref, [:flush])
+    maybe_schedule_sweep(state.sweep_interval_ms)
+
+    {:noreply,
+     %{
+       state
+       | sweep_task: nil,
+         recent_queue_events:
+           prune_recent_queue_events(
+             state.recent_queue_events,
+             sweep_started_at_ms,
+             state.sweep_stale_after_ms
+           )
+     }}
+  end
+
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %{sweep_task: %Task{ref: ref}} = state) do
+    if reason != :normal do
+      Logger.warning("Matchmaking sweep task crashed: #{inspect(reason)}")
+    end
+
+    maybe_schedule_sweep(state.sweep_interval_ms)
+    {:noreply, %{state | sweep_task: nil}}
   end
 
   def handle_info(
@@ -1308,16 +1367,17 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   defp consume_stream_entries(state) do
-    with {:ok, pending_state} <- consume_pending_entries(state),
-         {:ok, entries} <- read_stream(pending_state, ">") do
-      process_stream_entries(pending_state, entries)
+    with {:ok, pending_queue_keys} <- consume_pending_entries(state),
+         {:ok, entries} <- read_stream(state, ">"),
+         {:ok, processed_queue_keys} <- process_stream_entries(state, entries) do
+      {:ok, Enum.uniq(pending_queue_keys ++ processed_queue_keys)}
     end
   end
 
   defp consume_pending_entries(state) do
     case read_stream(state, "0") do
       {:ok, []} ->
-        {:ok, state}
+        {:ok, []}
 
       {:ok, entries} ->
         process_stream_entries(state, entries)
@@ -1327,16 +1387,13 @@ defmodule OmeglePhoenix.Matchmaker do
     end
   end
 
-  defp process_stream_entries(state, []), do: {:ok, state}
+  defp process_stream_entries(_state, []), do: {:ok, []}
 
   defp process_stream_entries(state, entries) do
-    {processed_queue_keys, state} =
-      Enum.reduce(entries, {[], state}, fn entry, {keys_acc, acc_state} ->
-        queue_keys = handle_stream_entry(entry)
-        {queue_keys ++ keys_acc, acc_state}
+    processed_queue_keys =
+      Enum.reduce(entries, [], fn entry, keys_acc ->
+        handle_stream_entry(entry) ++ keys_acc
       end)
-
-    now_ms = System.system_time(:millisecond)
 
     # Schedule matching BEFORE ACK so that if the node crashes between
     # these steps, the unACKed entries remain in the pending list and
@@ -1348,14 +1405,7 @@ defmodule OmeglePhoenix.Matchmaker do
       schedule_local_match_attempts(unique_keys)
     end
 
-    with :ok <- ack_stream_entries(state, entries) do
-      {:ok,
-       %{
-         state
-         | recent_queue_events:
-             record_recent_queue_events(state.recent_queue_events, processed_queue_keys, now_ms)
-       }}
-    end
+    with :ok <- ack_stream_entries(state, entries), do: {:ok, processed_queue_keys}
   end
 
   defp read_stream(state, stream_id) do
@@ -1371,6 +1421,14 @@ defmodule OmeglePhoenix.Matchmaker do
 
   defp ack_stream_entries(state, entries) do
     Streams.ack_entries(state.stream, state.group, entries)
+  end
+
+  defp stream_consumer_state(state) do
+    %{
+      stream: state.stream,
+      group: state.group,
+      consumer: state.consumer
+    }
   end
 
   defp handle_stream_entry([_entry_id, fields]) when is_list(fields) do
@@ -1448,6 +1506,31 @@ defmodule OmeglePhoenix.Matchmaker do
         acc
       end
     end)
+  end
+
+  defp run_sweep(recent_queue_events, now_ms, stale_after_ms) do
+    stale_queue_keys =
+      queue_keys()
+      |> Enum.filter(fn queue_key ->
+        sweep_queue?(queue_key, recent_queue_events, now_ms, stale_after_ms)
+      end)
+
+    max_concurrency =
+      stale_queue_keys
+      |> length()
+      |> min(System.schedulers_online())
+      |> max(1)
+
+    stale_queue_keys
+    |> Task.async_stream(&do_matching/1,
+      max_concurrency: max_concurrency,
+      timeout: 15_000,
+      on_timeout: :kill_task,
+      ordered: false
+    )
+    |> Stream.run()
+
+    now_ms
   end
 
   defp match_stream_consumer_name do

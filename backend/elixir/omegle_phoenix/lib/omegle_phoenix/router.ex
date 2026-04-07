@@ -114,24 +114,10 @@ defmodule OmeglePhoenix.Router do
   @impl true
   def init(_opts) do
     _ = ensure_owner_table()
-    node_channel = node_channel(Atom.to_string(Node.self()))
-    :ok = Phoenix.PubSub.subscribe(OmeglePhoenix.PubSub, node_channel)
-
-    state = %{
-      channel: node_channel,
-      owners: %{},
-      owner_refs: %{}
-    }
-
-    {:ok, state}
+    {:ok, %{owners: %{}, owner_refs: %{}}}
   end
 
   @impl true
-  def handle_info({:router_remote, session_id, message}, state) do
-    _ = dispatch_local_if_owned(session_id, message) || forward_remote_if_needed(session_id, message)
-    {:noreply, state}
-  end
-
   def handle_info({:DOWN, ref, :process, pid, _reason}, state) do
     case Map.pop(state.owner_refs, ref) do
       {{session_id, ^pid}, owner_refs} ->
@@ -251,8 +237,8 @@ defmodule OmeglePhoenix.Router do
       owner_node_atom in Node.list() ->
         Phoenix.PubSub.broadcast(
           OmeglePhoenix.PubSub,
-          node_channel(owner_node),
-          {:router_remote, session_id, message}
+          topic(session_id),
+          message
         )
 
         :ok
@@ -267,29 +253,39 @@ defmodule OmeglePhoenix.Router do
     end
   end
 
-  defp dispatch_remote_with_hint_fallback(session_id, %{node: owner_node}, message, opts, current_node) do
+  defp dispatch_remote_with_hint_fallback(
+         session_id,
+         %{node: owner_node},
+         message,
+         opts,
+         current_node
+       ) do
     owner_node_atom = String.to_atom(owner_node)
 
     cond do
       owner_node_atom == Node.self() ->
         dispatch_local_if_owned(session_id, message) ||
-          route_via_owner_record(session_id, message, Keyword.delete(opts, :owner_hint), current_node)
+          route_via_owner_record(
+            session_id,
+            message,
+            Keyword.delete(opts, :owner_hint),
+            current_node
+          )
 
       owner_node_atom in Node.list() ->
-        Phoenix.PubSub.broadcast(
-          OmeglePhoenix.PubSub,
-          node_channel(owner_node),
-          {:router_remote, session_id, message}
-        )
-
-        :ok
+        dispatch_remote(session_id, %{node: owner_node}, message)
 
       true ->
         Logger.warning(
           "Router owner hint #{owner_node} is not connected for #{session_id}; falling back to Redis owner lookup"
         )
 
-        route_via_owner_record(session_id, message, Keyword.delete(opts, :owner_hint), current_node)
+        route_via_owner_record(
+          session_id,
+          message,
+          Keyword.delete(opts, :owner_hint),
+          current_node
+        )
     end
   end
 
@@ -309,34 +305,6 @@ defmodule OmeglePhoenix.Router do
       {:error, reason} ->
         Logger.warning("Router owner lookup failed for #{session_id}: #{inspect(reason)}")
         maybe_cleanup_stale_session(session_id)
-    end
-  end
-
-  defp forward_remote_if_needed(session_id, message) do
-    current_node = Atom.to_string(Node.self())
-
-    case owner_record(session_id, []) do
-      {:ok, %{node: owner_node} = owner} when owner_node != current_node ->
-        dispatch_remote(session_id, owner, message)
-        true
-
-      {:ok, %{node: owner_node} = owner} when owner_node == current_node ->
-        Logger.warning("Router cleared stale local owner for #{session_id} after remote dispatch")
-        compare_and_delete_owner(session_id, owner)
-        maybe_cleanup_stale_session(session_id)
-        false
-
-      {:ok, nil} ->
-        maybe_cleanup_stale_session(session_id)
-        false
-
-      {:error, reason} ->
-        Logger.warning(
-          "Router remote fallback owner lookup failed for #{session_id}: #{inspect(reason)}"
-        )
-
-        maybe_cleanup_stale_session(session_id)
-        false
     end
   end
 
@@ -417,7 +385,6 @@ defmodule OmeglePhoenix.Router do
     end
   end
 
-  defp node_channel(owner_node), do: "router:node:" <> owner_node
   defp topic(session_id), do: "session:" <> session_id
 
   defp compare_and_delete_owner(session_id, expected_owner) do
@@ -471,8 +438,9 @@ defmodule OmeglePhoenix.Router do
 
   defp owner_hint_record(opts, current_node) do
     case Keyword.get(opts, :owner_hint) do
-      owner_node when is_binary(owner_node) and byte_size(owner_node) > 0 and
-                        owner_node != current_node ->
+      owner_node
+      when is_binary(owner_node) and byte_size(owner_node) > 0 and
+             owner_node != current_node ->
         {:ok, %{node: owner_node}}
 
       _ ->
