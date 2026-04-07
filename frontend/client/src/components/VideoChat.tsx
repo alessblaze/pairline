@@ -128,6 +128,80 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
     sendMessage, sendTyping: rawSendTyping, cameraError
   } = useVideoChat(wsUrl);
 
+  const [showVideoConnecting, setShowVideoConnecting] = useState(false);
+  const showVideoConnectingSinceRef = useRef<number | null>(null);
+  const showVideoConnectingTimersRef = useRef<{ show?: number; hide?: number }>({});
+
+  const [remoteVideoHasRendered, setRemoteVideoHasRendered] = useState(false);
+  const remoteVideoRenderedRef = useRef(false);
+
+  useEffect(() => {
+    if (status !== 'connected') {
+      remoteVideoRenderedRef.current = false;
+      setRemoteVideoHasRendered(false);
+      return;
+    }
+
+    remoteVideoRenderedRef.current = false;
+    setRemoteVideoHasRendered(false);
+  }, [status, reportPeerId]);
+
+  useEffect(() => {
+    const video = remoteVideoRef.current;
+    if (!video) return;
+
+    const markRendered = () => {
+      if (remoteVideoRenderedRef.current) return;
+      remoteVideoRenderedRef.current = true;
+      setRemoteVideoHasRendered(true);
+    };
+
+    video.addEventListener('loadeddata', markRendered);
+    video.addEventListener('canplay', markRendered);
+    video.addEventListener('playing', markRendered);
+
+    return () => {
+      video.removeEventListener('loadeddata', markRendered);
+      video.removeEventListener('canplay', markRendered);
+      video.removeEventListener('playing', markRendered);
+    };
+  }, [remoteVideoRef, status, reportPeerId]);
+
+  useEffect(() => {
+    const timers = showVideoConnectingTimersRef.current;
+    if (timers.show) window.clearTimeout(timers.show);
+    if (timers.hide) window.clearTimeout(timers.hide);
+    timers.show = undefined;
+    timers.hide = undefined;
+
+    const now = Date.now();
+
+    if (status === 'connected' && isVideoConnecting) {
+      timers.show = window.setTimeout(() => {
+        showVideoConnectingSinceRef.current = Date.now();
+        setShowVideoConnecting(true);
+      }, 150);
+      return;
+    }
+
+    const since = showVideoConnectingSinceRef.current;
+    const visibleForMs = since ? now - since : 0;
+    const minVisibleMs = 300;
+    const hideDelay = Math.max(0, minVisibleMs - visibleForMs);
+    timers.hide = window.setTimeout(() => {
+      showVideoConnectingSinceRef.current = null;
+      setShowVideoConnecting(false);
+    }, hideDelay);
+
+    return () => {
+      const timers = showVideoConnectingTimersRef.current;
+      if (timers.show) window.clearTimeout(timers.show);
+      if (timers.hide) window.clearTimeout(timers.hide);
+      timers.show = undefined;
+      timers.hide = undefined;
+    };
+  }, [status, isVideoConnecting]);
+
   // Stabilise sendTyping identity so the memoised VideoChatInput doesn't re-render on every parent state change
   const sendTyping = useCallback((isTyping: boolean) => rawSendTyping(isTyping), [rawSendTyping]);
 
@@ -399,7 +473,7 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
                 </div>
               )}
             </div>
-          ) : status === 'connected' && isVideoConnecting ? (
+          ) : status === 'connected' && showVideoConnecting && !remoteVideoHasRendered ? (
             <div className="absolute inset-0 z-20 flex flex-col items-center justify-center px-4 bg-black/55 backdrop-blur-[2px] animate-in fade-in duration-300">
               <div className="relative mb-5">
                 <div className="w-14 h-14 sm:w-16 sm:h-16 border-4 border-white/20 border-t-white rounded-full animate-spin"></div>

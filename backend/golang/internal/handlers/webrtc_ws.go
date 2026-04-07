@@ -405,8 +405,6 @@ func (h *RedisSignalingHub) SendOrQueue(targetSessionID string, payload []byte) 
 		return marshalErr
 	}
 
-	// Atomically: read current owner, attempt publish, else enqueue pending.
-	// This reduces race windows and ensures only the sender decides between publish vs pending.
 	const sendOrQueueScript = `
 local owner = redis.call("GET", KEYS[1])
 if owner and owner ~= "" and owner ~= ARGV[1] then
@@ -467,7 +465,6 @@ func (h *RedisSignalingHub) runSubscriber() {
 			}
 
 			if !h.dispatchLocal(envelope.TargetSessionID, envelope.Payload) {
-				// Avoid cross-node duplicates: only the *current owner* should enqueue pending.
 				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 				route, err := appredis.ResolveSessionRoute(ctx, h.redis.GetClient(), envelope.TargetSessionID)
 				if err == nil {
@@ -750,8 +747,6 @@ func WebRTCWebSocketHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 		go client.writePump(func() func(time.Time) {
 			nextOwnershipRefresh := time.Now().Add(ownershipJitter)
 			return func(now time.Time) {
-			// Refresh ownership TTL periodically even if the client is otherwise idle.
-			// Ownership scheduling state stays in the writer goroutine to avoid shared mutable state.
 			if now.Before(nextOwnershipRefresh) {
 				return
 			}
