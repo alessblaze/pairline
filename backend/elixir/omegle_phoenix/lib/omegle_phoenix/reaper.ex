@@ -118,21 +118,29 @@ defmodule OmeglePhoenix.Reaper do
            Integer.to_string(state.batch_size)
          ]) do
       {:ok, [next_cursor, session_ids]} when is_list(session_ids) ->
-        {:ok, sessions_by_id} = OmeglePhoenix.SessionManager.get_sessions(session_ids)
+        case OmeglePhoenix.SessionManager.get_sessions(session_ids) do
+          {:ok, sessions_by_id} ->
+            Enum.each(session_ids, fn session_id ->
+              if not Map.has_key?(sessions_by_id, session_id) do
+                _ = OmeglePhoenix.SessionManager.cleanup_orphaned_session(session_id)
 
-        Enum.each(session_ids, fn session_id ->
-          if not Map.has_key?(sessions_by_id, session_id) do
-            _ = OmeglePhoenix.SessionManager.cleanup_orphaned_session(session_id)
+                :telemetry.execute(
+                  [:omegle_phoenix, :reaper, :orphaned_session],
+                  %{count: 1},
+                  %{session_id: session_id}
+                )
+              end
+            end)
 
-            :telemetry.execute(
-              [:omegle_phoenix, :reaper, :orphaned_session],
-              %{count: 1},
-              %{session_id: session_id}
+            %{state | session_cursor: next_cursor}
+
+          {:error, reason} ->
+            Logger.warning(
+              "Reaper skipped orphan cleanup batch at cursor #{state.session_cursor}: #{inspect(reason)}"
             )
-          end
-        end)
 
-        %{state | session_cursor: next_cursor}
+            state
+        end
 
       _ ->
         %{state | session_cursor: "0"}
@@ -160,25 +168,33 @@ defmodule OmeglePhoenix.Reaper do
                 |> Enum.chunk_every(2)
                 |> Enum.map(fn [session_id, _score] -> session_id end)
 
-              {:ok, sessions_by_id} = OmeglePhoenix.SessionManager.get_sessions(session_ids)
+              case OmeglePhoenix.SessionManager.get_sessions(session_ids) do
+                {:ok, sessions_by_id} ->
+                  Enum.each(session_ids, fn session_id ->
+                    case Map.get(sessions_by_id, session_id) do
+                      %{status: :waiting} ->
+                        :ok
 
-              Enum.each(session_ids, fn session_id ->
-                case Map.get(sessions_by_id, session_id) do
-                  %{status: :waiting} ->
-                    :ok
+                      _ ->
+                        _ = OmeglePhoenix.Matchmaker.leave_queue(session_id)
 
-                  _ ->
-                    _ = OmeglePhoenix.Matchmaker.leave_queue(session_id)
+                        :telemetry.execute(
+                          [:omegle_phoenix, :reaper, :queue_entry_removed],
+                          %{count: 1},
+                          %{session_id: session_id}
+                        )
+                    end
+                  end)
 
-                    :telemetry.execute(
-                      [:omegle_phoenix, :reaper, :queue_entry_removed],
-                      %{count: 1},
-                      %{session_id: session_id}
-                    )
-                end
-              end)
+                  updated_cursor
 
-              updated_cursor
+                {:error, reason} ->
+                  Logger.warning(
+                    "Reaper skipped stale queue cleanup for #{queue_key} at cursor #{cursor}: #{inspect(reason)}"
+                  )
+
+                  cursor
+              end
 
             _ ->
               "0"

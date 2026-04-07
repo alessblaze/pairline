@@ -54,8 +54,11 @@ defmodule OmeglePhoenix.SessionManager do
         {:ok, payload} ->
           decode_session(payload)
 
+        {:error, reason} ->
+          {:error, reason}
+
         _ ->
-          {:error, :not_found}
+          {:error, :unexpected_session_lookup}
       end
     end
   end
@@ -99,12 +102,16 @@ defmodule OmeglePhoenix.SessionManager do
 
                 {:ok, sessions}
 
+              {:error, reason} ->
+                {:error, reason}
+
               _ ->
-                {:ok, %{}}
+                {:error, :unexpected_session_batch_lookup}
             end
           end
         else
-          _ -> {:ok, %{}}
+          {:error, reason} -> {:error, reason}
+          _ -> {:error, :unexpected_session_route_lookup}
         end
     end
   end
@@ -183,18 +190,19 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   def get_sessions_by_ip(ip) when is_binary(ip) do
-    sessions =
-      case OmeglePhoenix.Redis.command(["SMEMBERS", ip_sessions_key(ip)]) do
-        {:ok, session_ids} when is_list(session_ids) ->
-          {:ok, batched_sessions} = get_sessions(session_ids)
+    case OmeglePhoenix.Redis.command(["SMEMBERS", ip_sessions_key(ip)]) do
+      {:ok, session_ids} when is_list(session_ids) ->
+        with {:ok, batched_sessions} <- get_sessions(session_ids) do
           _ = prune_stale_session_ids(ip_sessions_key(ip), session_ids, batched_sessions)
-          Map.values(batched_sessions)
+          {:ok, Map.values(batched_sessions)}
+        end
 
-        _ ->
-          []
-      end
+      {:error, reason} ->
+        {:error, reason}
 
-    {:ok, sessions}
+      _ ->
+        {:ok, []}
+    end
   end
 
   def get_sessions_by_ip(_ip), do: {:ok, []}
@@ -284,23 +292,57 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   def delete_session(session_id) do
-    case get_session(session_id) do
-      {:ok, session} ->
-        route = OmeglePhoenix.RedisKeys.route_for_session(session)
-
-        case OmeglePhoenix.RedisState.delete_session(
+    with {:ok, route} <-
+           OmeglePhoenix.RedisKeys.resolve_session_route(session_id, verify_exists: false),
+         {:ok, ip} <- load_session_ip(session_id, route) do
+      case OmeglePhoenix.RedisState.delete_session(
+             session_id,
+             ip,
+             report_grace_seconds(),
+             route: route,
+             index_cleanup: :async
+           ) do
+        {:ok, _} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      {:error, :not_found} ->
+        case OmeglePhoenix.RedisState.cleanup_orphaned_session(
                session_id,
-               session.ip,
+               nil,
                report_grace_seconds(),
-               route: route,
                index_cleanup: :async
              ) do
           {:ok, _} -> :ok
           {:error, reason} -> {:error, reason}
         end
 
-      {:error, :not_found} = error ->
-        error
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp load_session_ip(session_id, route) do
+    case OmeglePhoenix.Redis.command(["GET", session_ip_key(session_id, route)]) do
+      {:ok, ip} when is_binary(ip) and ip != "" ->
+        {:ok, ip}
+
+      {:ok, _missing} ->
+        case OmeglePhoenix.Redis.command([
+               "GET",
+               OmeglePhoenix.RedisKeys.session_ip_locator_key(session_id)
+             ]) do
+          {:ok, ip} when is_binary(ip) and ip != "" -> {:ok, ip}
+          {:ok, _} -> {:error, :not_found}
+          {:error, reason} -> {:error, reason}
+          _ -> {:error, :unexpected_session_ip_lookup}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+
+      _ ->
+        {:error, :unexpected_session_ip_lookup}
     end
   end
 
@@ -929,6 +971,9 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   defp session_key(session_id, route), do: OmeglePhoenix.RedisKeys.session_key(session_id, route)
+
+  defp session_ip_key(session_id, route),
+    do: OmeglePhoenix.RedisKeys.session_ip_key(session_id, route)
 
   defp queue_meta_key(session_id, route),
     do: OmeglePhoenix.RedisKeys.queue_meta_key(session_id, route)

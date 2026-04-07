@@ -585,19 +585,9 @@ defmodule OmeglePhoenix.RedisState do
   def cleanup_orphaned_session(session_id, ip, report_grace_seconds, opts) do
     case resolve_route(session_id) do
       {:ok, route} ->
-        ip_value =
-          case ip do
-            nil ->
-              case OmeglePhoenix.Redis.command(["GET", session_ip_key(session_id, route)]) do
-                {:ok, value} when is_binary(value) -> value
-                _ -> "unknown"
-              end
-
-            value ->
-              value
-          end
-
-        delete_session(session_id, ip_value, report_grace_seconds, opts)
+        with {:ok, ip_value} <- resolve_cleanup_ip(session_id, route, ip) do
+          delete_session(session_id, ip_value, report_grace_seconds, opts)
+        end
 
       {:error, :not_found} ->
         cleanup_unrouted_orphaned_session(session_id)
@@ -607,6 +597,24 @@ defmodule OmeglePhoenix.RedisState do
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  defp resolve_cleanup_ip(_session_id, _route, ip) when is_binary(ip) and ip != "", do: {:ok, ip}
+
+  defp resolve_cleanup_ip(session_id, route, _ip) do
+    case OmeglePhoenix.Redis.command(["GET", session_ip_key(session_id, route)]) do
+      {:ok, value} when is_binary(value) and value != "" ->
+        {:ok, value}
+
+      {:ok, _} ->
+        session_ip_locator(session_id)
+
+      {:error, reason} ->
+        {:error, reason}
+
+      _ ->
+        {:error, :unexpected_session_ip_lookup}
     end
   end
 

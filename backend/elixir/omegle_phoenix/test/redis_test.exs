@@ -1,4 +1,5 @@
-live_redis_enabled? = System.get_env("LIVE_REDIS_CLUSTER_TESTS") in ["1", "true", "TRUE", "yes", "on"]
+live_redis_enabled? =
+  System.get_env("LIVE_REDIS_CLUSTER_TESTS") in ["1", "true", "TRUE", "yes", "on"]
 
 if live_redis_enabled? do
   defmodule OmeglePhoenix.RedisTest do
@@ -87,6 +88,53 @@ else
 
       assert_received {:keyless_pipeline, [["PING"]], "__eredis_cluster_any__"}
       assert_received {:keyed_pipeline, [["GET", "foo"]]}
+    end
+
+    test "get_session propagates redis lookup errors instead of treating them as not found" do
+      session_id = "session-1"
+      route = %{mode: "text", shard: 0}
+      locator = OmeglePhoenix.RedisKeys.encode_locator(route)
+      locator_key = OmeglePhoenix.RedisKeys.session_locator_key(session_id)
+      session_key = OmeglePhoenix.RedisKeys.session_key(session_id, route)
+
+      EredisClusterStub.put(:q, fn
+        :omegle_phoenix_redis_cluster, ["GET", key] when key == locator_key ->
+          {:ok, locator}
+
+        :omegle_phoenix_redis_cluster, ["GET", key] when key == session_key ->
+          {:error, :closed}
+      end)
+
+      assert OmeglePhoenix.SessionManager.get_session(session_id) == {:error, :closed}
+    end
+
+    test "get_sessions propagates batched redis lookup errors instead of returning an empty map" do
+      session_ids = ["session-1", "session-2"]
+      route_1 = %{mode: "text", shard: 0}
+      route_2 = %{mode: "text", shard: 0}
+
+      locator_commands =
+        Enum.map(session_ids, fn session_id ->
+          ["GET", OmeglePhoenix.RedisKeys.session_locator_key(session_id)]
+        end)
+
+      session_commands = [
+        ["GET", OmeglePhoenix.RedisKeys.session_key("session-1", route_1)],
+        ["GET", OmeglePhoenix.RedisKeys.session_key("session-2", route_2)]
+      ]
+
+      EredisClusterStub.put(:qmn, fn
+        :omegle_phoenix_redis_cluster, commands when commands == locator_commands ->
+          [
+            {:ok, OmeglePhoenix.RedisKeys.encode_locator(route_1)},
+            {:ok, OmeglePhoenix.RedisKeys.encode_locator(route_2)}
+          ]
+
+        :omegle_phoenix_redis_cluster, commands when commands == session_commands ->
+          {:error, :timeout}
+      end)
+
+      assert OmeglePhoenix.SessionManager.get_sessions(session_ids) == {:error, :timeout}
     end
   end
 end

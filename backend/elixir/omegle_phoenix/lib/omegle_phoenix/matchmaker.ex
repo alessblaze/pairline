@@ -270,7 +270,10 @@ defmodule OmeglePhoenix.Matchmaker do
     {:noreply, %{state | local_match_batch_ref: nil}}
   end
 
-  def handle_info({@delayed_match_event_message, queue_keys, session_id, phase, generation}, state) do
+  def handle_info(
+        {@delayed_match_event_message, queue_keys, session_id, phase, generation},
+        state
+      ) do
     _ = queue_keys
 
     if Map.get(state.fallback_generations, session_id) == generation do
@@ -309,7 +312,8 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   def handle_cast({:clear_fallback_generation, session_id}, state) do
-    {:noreply, %{state | fallback_generations: Map.delete(state.fallback_generations, session_id)}}
+    {:noreply,
+     %{state | fallback_generations: Map.delete(state.fallback_generations, session_id)}}
   end
 
   defp do_matching(queue_key) do
@@ -490,15 +494,15 @@ defmodule OmeglePhoenix.Matchmaker do
 
   defp pair_users(session_id1, session_id2, strategy) do
     OmeglePhoenix.SessionLock.with_locks([session_id1, session_id2], fn ->
-      leave_queue(session_id1)
-      leave_queue(session_id2)
-
       with {:ok, session1} <- OmeglePhoenix.SessionManager.get_session(session_id1),
            {:ok, session2} <- OmeglePhoenix.SessionManager.get_session(session_id2),
            true <- pairable_session?(session1),
            true <- pairable_session?(session2) do
+        leave_queue(session_id1)
+        leave_queue(session_id2)
+
         if session1.ban_status or session2.ban_status do
-          recover_pairing_failure(session_id1, session_id2)
+          recover_pairing_failure(session1, session2)
           {:error, :user_banned}
         else
           case OmeglePhoenix.SessionManager.pair_sessions(session1, session2) do
@@ -516,7 +520,8 @@ defmodule OmeglePhoenix.Matchmaker do
               owner_node1 = owner_node_hint(session_id1, updated_route1)
               owner_node2 = owner_node_hint(session_id2, updated_route2)
 
-              match_generation = updated_session1.match_generation || updated_session2.match_generation
+              match_generation =
+                updated_session1.match_generation || updated_session2.match_generation
 
               OmeglePhoenix.Router.notify_match(
                 session_id1,
@@ -561,7 +566,7 @@ defmodule OmeglePhoenix.Matchmaker do
               :ok
 
             {:error, reason} ->
-              recover_pairing_failure(session_id1, session_id2)
+              recover_pairing_failure(session1, session2)
               {:error, reason}
           end
         end
@@ -571,19 +576,23 @@ defmodule OmeglePhoenix.Matchmaker do
             "Matchmaker: session disappeared during pairing (#{session_id1} or #{session_id2})"
           )
 
-          recover_pairing_failure(session_id1, session_id2)
           :ok
 
         false ->
-          recover_pairing_failure(session_id1, session_id2)
           :ok
 
         {:error, _reason} = error ->
-          recover_pairing_failure(session_id1, session_id2)
+          Logger.warning(
+            "Matchmaker: failed to load sessions during pairing #{session_id1}/#{session_id2}: #{inspect(error)}"
+          )
+
           error
 
         _other ->
-          recover_pairing_failure(session_id1, session_id2)
+          Logger.warning(
+            "Matchmaker: unexpected pairing precondition for #{session_id1}/#{session_id2}"
+          )
+
           :ok
       end
     end)
@@ -604,24 +613,18 @@ defmodule OmeglePhoenix.Matchmaker do
     session.status == :waiting and is_nil(session.partner_id)
   end
 
-  defp requeue_if_waiting(session_id) do
-    case OmeglePhoenix.SessionManager.get_session(session_id) do
-      {:ok, session} ->
-        if pairable_session?(session) do
-          _ = join_queue(session_id, session.preferences)
-        else
-          :ok
-        end
-
-      _ ->
-        :ok
-    end
+  defp recover_pairing_failure(session1, session2) when is_map(session1) and is_map(session2) do
+    requeue_loaded_session(session1)
+    requeue_loaded_session(session2)
+    :ok
   end
 
-  defp recover_pairing_failure(session_id1, session_id2) do
-    requeue_if_waiting(session_id1)
-    requeue_if_waiting(session_id2)
-    :ok
+  defp requeue_loaded_session(session) when is_map(session) do
+    if pairable_session?(session) do
+      _ = join_queue(session.id, session.preferences)
+    else
+      :ok
+    end
   end
 
   defp compatible?(queue_key, session1, wait1, session2, wait2) do
@@ -766,7 +769,11 @@ defmodule OmeglePhoenix.Matchmaker do
 
   defp overflow_fallback_queue_keys(session_id, preferences, route) do
     _ = preferences
-    [random_queue_key(route.mode, route.shard) | random_queue_keys(route.mode, route.shard, session_id)]
+
+    [
+      random_queue_key(route.mode, route.shard)
+      | random_queue_keys(route.mode, route.shard, session_id)
+    ]
     |> Enum.uniq()
   end
 
@@ -1410,5 +1417,4 @@ defmodule OmeglePhoenix.Matchmaker do
   defp match_stream_consumer_name(node) when is_atom(node) do
     node |> Atom.to_string() |> String.replace(~r/[^a-zA-Z0-9:_-]/u, "_")
   end
-
 end
