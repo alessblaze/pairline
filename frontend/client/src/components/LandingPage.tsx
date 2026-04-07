@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ThemeToggle } from './ThemeToggle';
 import { EntryModal } from './EntryModal';
@@ -13,6 +13,9 @@ export function LandingPage() {
   const [showModal, setShowModal] = useState(false);
   const [targetRoute, setTargetRoute] = useState<'/text' | '/video' | null>(null);
   const enableVideoChat = import.meta.env.VITE_ENABLE_VIDEO_CHAT !== 'false';
+  const promoVideoRef = useRef<HTMLVideoElement | null>(null);
+  const [promoVideoKey, setPromoVideoKey] = useState(0);
+  const [promoVideoReady, setPromoVideoReady] = useState(false);
 
   const openModal = (route: '/text' | '/video') => {
     if (route === '/video' && !enableVideoChat) {
@@ -29,6 +32,33 @@ export function LandingPage() {
       setShowModal(false);
     }
   };
+
+  useEffect(() => {
+    const restorePromoVideo = () => {
+      // Remount the video so mobile Firefox restarts from frame 0 instead of
+      // briefly showing a stale black surface before playback resumes.
+      setPromoVideoReady(false);
+      setPromoVideoKey((current) => current + 1);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        restorePromoVideo();
+      }
+    };
+
+    const handlePageShow = () => {
+      restorePromoVideo();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pageshow', handlePageShow);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pageshow', handlePageShow);
+    };
+  }, []);
 
   return (
     <div className="relative w-full min-h-screen flex flex-col overflow-x-hidden font-nunito bg-slate-50 dark:bg-slate-950 transition-colors duration-500">
@@ -127,14 +157,22 @@ export function LandingPage() {
       </div>
 
       {/* Top Video Header */}
-      <div className="w-full relative bg-gray-950 flex justify-center items-center">
+      <div className="w-full relative bg-gray-950 flex justify-center items-center overflow-hidden">
+        <img
+          src={promoPoster}
+          alt="Pairline promo preview"
+          className={`absolute inset-0 z-10 h-full w-full object-cover transition-opacity duration-500 ${promoVideoReady ? 'opacity-0' : 'opacity-100'}`}
+        />
         <video
+          key={promoVideoKey}
+          ref={promoVideoRef}
           src={promoVideo}
           poster={promoPoster}
           autoPlay
           loop
           muted
           playsInline
+          onPlaying={() => setPromoVideoReady(true)}
           className="w-full h-auto block"
         />
       </div>
