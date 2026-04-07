@@ -301,6 +301,9 @@ func CreateReportHandlerGin(redisClient redis.UniversalClient) gin.HandlerFunc {
 		if reportedRouteErr == nil {
 			rawReportedIP, _ = redisClient.Get(ctx, appredis.SessionIPKey(req.ReportedSessionID, reportedRoute)).Result()
 		}
+		if rawReportedIP == "" {
+			rawReportedIP, _ = redisClient.Get(ctx, appredis.SessionIPLocatorKey(req.ReportedSessionID)).Result()
+		}
 
 		reporterIP := normalizeIP(rawReporterIP)
 		reportedIP := normalizeIP(rawReportedIP)

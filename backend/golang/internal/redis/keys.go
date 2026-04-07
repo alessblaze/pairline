@@ -22,6 +22,10 @@ func SessionLocatorKey(sessionID string) string {
 	return "session:locator:" + sessionID
 }
 
+func SessionIPLocatorKey(sessionID string) string {
+	return "session:ip_locator:" + sessionID
+}
+
 func BanIndexKey() string {
 	return "bans:index"
 }
