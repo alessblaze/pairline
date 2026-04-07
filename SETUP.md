@@ -28,6 +28,10 @@ Or start local services manually with a Redis Cluster available on the ports abo
 
 ## 2. Configure the services
 
+## Environment variables reference
+
+Backend environment variables are documented in [`ENVIRONMENT.md`](./ENVIRONMENT.md) (Phoenix + Go consolidated reference).
+
 Frontend:
 
 ```bash

@@ -48,6 +48,8 @@ Copy `.env.example` to `.env` and review:
 - `TRUSTED_PROXY_CIDRS`
 - `BAN_SYNC_INTERVAL_SECONDS`
 
+For the full backend env var reference (Phoenix + Go), see [`ENVIRONMENT.md`](../../ENVIRONMENT.md).
+
 `JWT_SECRET` is only required for the admin or combined binaries.
 `JWT_ACCESS_EXPIRATION_MINUTES` defaults to `15` and controls the short-lived access token used for authenticated admin/moderator requests.
 `JWT_EXPIRATION_HOURS` now acts as the refresh-token/session lifetime for admin and moderator accounts.
