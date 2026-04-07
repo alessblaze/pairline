@@ -382,7 +382,11 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
     hook_ref = make_ref()
 
     original_hook = Application.get_env(:omegle_phoenix, :matchmaker_pairing_test_hook)
-    Application.put_env(:omegle_phoenix, :matchmaker_pairing_test_hook, {self(), hook_ref, :once})
+    Application.put_env(
+      :omegle_phoenix,
+      :matchmaker_pairing_test_hook,
+      {self(), hook_ref, :once, :before_pair_sessions}
+    )
 
     on_exit(fn ->
       if original_hook do
@@ -435,6 +439,159 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
       else
         _ -> false
       end
+    end)
+  end
+
+  test "removing the second candidate mid-pair still retries the first session in the same sweep",
+       %{
+         session_id: session_id,
+         peer_session_id: peer_session_id,
+         ip: ip,
+         peer_ip: peer_ip
+       } do
+    third_session_id = UUID.uuid4()
+    third_ip = next_test_ip()
+    preferences = %{"mode" => "text", "interests" => "retry,second"}
+    hook_ref = make_ref()
+
+    on_exit(fn -> cleanup_session(third_session_id) end)
+
+    original_hook = Application.get_env(:omegle_phoenix, :matchmaker_pairing_test_hook)
+    Application.put_env(
+      :omegle_phoenix,
+      :matchmaker_pairing_test_hook,
+      {self(), hook_ref, :once, :before_load_sessions}
+    )
+
+    on_exit(fn ->
+      if original_hook do
+        Application.put_env(:omegle_phoenix, :matchmaker_pairing_test_hook, original_hook)
+      else
+        Application.delete_env(:omegle_phoenix, :matchmaker_pairing_test_hook)
+      end
+    end)
+
+    {route_1, route_2, route_3} =
+      prepare_three_queued_sessions(
+        {session_id, ip},
+        {peer_session_id, peer_ip},
+        {third_session_id, third_ip},
+        preferences
+      )
+
+    membership_key_1 = OmeglePhoenix.RedisKeys.session_queue_key(session_id, route_1)
+    membership_key_2 = OmeglePhoenix.RedisKeys.session_queue_key(peer_session_id, route_2)
+    membership_key_3 = OmeglePhoenix.RedisKeys.session_queue_key(third_session_id, route_3)
+
+    assert {:ok, queue_keys} = OmeglePhoenix.Redis.command(["SMEMBERS", membership_key_1])
+    GenServer.cast(OmeglePhoenix.Matchmaker, {:schedule_local_match_attempts, queue_keys})
+
+    assert_receive(
+      {:matchmaker_pairing_hook, ^hook_ref, :before_load_sessions, first_id, second_id, task_pid},
+      5_000
+    )
+
+    assert {first_id, second_id} == {session_id, peer_session_id}
+
+    assert {:ok, %{id: ^peer_session_id, ban_status: true}} =
+             OmeglePhoenix.SessionManager.emergency_ban(peer_session_id, "retry-second-test")
+
+    send(task_pid, {:matchmaker_pairing_hook_reply, hook_ref, :continue})
+
+    wait_for_local_match_batch_idle()
+
+    assert {:ok, matched_1} = OmeglePhoenix.SessionManager.get_session(session_id)
+    assert {:ok, matched_3} = OmeglePhoenix.SessionManager.get_session(third_session_id)
+    assert {:ok, banned_2} = OmeglePhoenix.SessionManager.get_session(peer_session_id)
+
+    assert matched_1.status == :matched
+    assert matched_1.partner_id == third_session_id
+    assert matched_3.status == :matched
+    assert matched_3.partner_id == session_id
+    assert banned_2.ban_status
+
+    assert_eventually(fn ->
+      OmeglePhoenix.Redis.command(["SMEMBERS", membership_key_1]) == {:ok, []} and
+        OmeglePhoenix.Redis.command(["SMEMBERS", membership_key_2]) == {:ok, []} and
+        OmeglePhoenix.Redis.command(["SMEMBERS", membership_key_3]) == {:ok, []}
+    end)
+  end
+
+  test "making the first candidate unpairable mid-pair still retries the second session in the same sweep",
+       %{
+         session_id: session_id,
+         peer_session_id: peer_session_id,
+         ip: ip,
+         peer_ip: peer_ip
+       } do
+    third_session_id = UUID.uuid4()
+    third_ip = next_test_ip()
+    preferences = %{"mode" => "text", "interests" => "retry,first"}
+    hook_ref = make_ref()
+
+    on_exit(fn -> cleanup_session(third_session_id) end)
+
+    original_hook = Application.get_env(:omegle_phoenix, :matchmaker_pairing_test_hook)
+    Application.put_env(
+      :omegle_phoenix,
+      :matchmaker_pairing_test_hook,
+      {self(), hook_ref, :once, :before_load_sessions}
+    )
+
+    on_exit(fn ->
+      if original_hook do
+        Application.put_env(:omegle_phoenix, :matchmaker_pairing_test_hook, original_hook)
+      else
+        Application.delete_env(:omegle_phoenix, :matchmaker_pairing_test_hook)
+      end
+    end)
+
+    {route_1, route_2, route_3} =
+      prepare_three_queued_sessions(
+        {session_id, ip},
+        {peer_session_id, peer_ip},
+        {third_session_id, third_ip},
+        preferences
+      )
+
+    membership_key_1 = OmeglePhoenix.RedisKeys.session_queue_key(session_id, route_1)
+    membership_key_2 = OmeglePhoenix.RedisKeys.session_queue_key(peer_session_id, route_2)
+    membership_key_3 = OmeglePhoenix.RedisKeys.session_queue_key(third_session_id, route_3)
+
+    assert {:ok, queue_keys} = OmeglePhoenix.Redis.command(["SMEMBERS", membership_key_1])
+    GenServer.cast(OmeglePhoenix.Matchmaker, {:schedule_local_match_attempts, queue_keys})
+
+    assert_receive(
+      {:matchmaker_pairing_hook, ^hook_ref, :before_load_sessions, first_id, second_id, task_pid},
+      5_000
+    )
+
+    assert {first_id, second_id} == {session_id, peer_session_id}
+
+    assert {:ok, _updated_session} =
+             OmeglePhoenix.SessionManager.update_session(session_id, %{
+               status: :matched,
+               partner_id: "external-partner"
+             })
+
+    send(task_pid, {:matchmaker_pairing_hook_reply, hook_ref, :continue})
+
+    wait_for_local_match_batch_idle()
+
+    assert {:ok, updated_1} = OmeglePhoenix.SessionManager.get_session(session_id)
+    assert {:ok, matched_2} = OmeglePhoenix.SessionManager.get_session(peer_session_id)
+    assert {:ok, matched_3} = OmeglePhoenix.SessionManager.get_session(third_session_id)
+
+    assert updated_1.status == :matched
+    assert updated_1.partner_id == "external-partner"
+    assert matched_2.status == :matched
+    assert matched_2.partner_id == third_session_id
+    assert matched_3.status == :matched
+    assert matched_3.partner_id == peer_session_id
+
+    assert_eventually(fn ->
+      OmeglePhoenix.Redis.command(["SMEMBERS", membership_key_2]) == {:ok, []} and
+        OmeglePhoenix.Redis.command(["SMEMBERS", membership_key_3]) == {:ok, []}
     end)
   end
 
@@ -706,6 +863,67 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
     Enum.at(Node.list(), 0)
   end
 
+  defp prepare_three_queued_sessions(
+         {session_id_1, ip_1},
+         {session_id_2, ip_2},
+         {session_id_3, ip_3},
+         preferences
+       ) do
+    assert {:ok, _session_1} =
+             OmeglePhoenix.SessionManager.create_session(session_id_1, ip_1, preferences)
+
+    assert {:ok, _session_2} =
+             OmeglePhoenix.SessionManager.create_session(session_id_2, ip_2, preferences)
+
+    assert {:ok, _session_3} =
+             OmeglePhoenix.SessionManager.create_session(session_id_3, ip_3, preferences)
+
+    assert {:ok, session_1} = OmeglePhoenix.SessionManager.get_session(session_id_1)
+
+    assert {:ok, _moved_session_2} =
+             OmeglePhoenix.SessionManager.move_session_shard(session_id_2, session_1.redis_shard)
+
+    assert {:ok, _moved_session_3} =
+             OmeglePhoenix.SessionManager.move_session_shard(session_id_3, session_1.redis_shard)
+
+    join_queue_in_order(session_id_1, preferences)
+    join_queue_in_order(session_id_2, preferences)
+    join_queue_in_order(session_id_3, preferences)
+
+    assert {:ok, route_1} = OmeglePhoenix.SessionManager.get_session_route(session_id_1)
+    assert {:ok, route_2} = OmeglePhoenix.SessionManager.get_session_route(session_id_2)
+    assert {:ok, route_3} = OmeglePhoenix.SessionManager.get_session_route(session_id_3)
+
+    membership_key_1 = OmeglePhoenix.RedisKeys.session_queue_key(session_id_1, route_1)
+    membership_key_2 = OmeglePhoenix.RedisKeys.session_queue_key(session_id_2, route_2)
+    membership_key_3 = OmeglePhoenix.RedisKeys.session_queue_key(session_id_3, route_3)
+
+    assert_eventually(fn ->
+      with {:ok, queue_keys_1} <- OmeglePhoenix.Redis.command(["SMEMBERS", membership_key_1]),
+           {:ok, queue_keys_2} <- OmeglePhoenix.Redis.command(["SMEMBERS", membership_key_2]),
+           {:ok, queue_keys_3} <- OmeglePhoenix.Redis.command(["SMEMBERS", membership_key_3]) do
+        queue_keys_1 != [] and queue_keys_2 != [] and queue_keys_3 != []
+      else
+        _ -> false
+      end
+    end)
+
+    {route_1, route_2, route_3}
+  end
+
+  defp join_queue_in_order(session_id, preferences) do
+    assert :ok = OmeglePhoenix.Matchmaker.join_queue(session_id, preferences)
+    Process.sleep(5)
+    :ok
+  end
+
+  defp wait_for_local_match_batch_idle do
+    assert_eventually(fn ->
+      state = :sys.get_state(OmeglePhoenix.Matchmaker)
+      is_nil(state.local_match_batch_ref) and MapSet.size(state.pending_local_match_keys) == 0
+    end)
+  end
+
   defp cleanup_session(session_id) do
     _ =
       case OmeglePhoenix.SessionManager.delete_session(session_id) do
@@ -721,6 +939,11 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
   defp cleanup_ip_ban(ip) do
     _ = OmeglePhoenix.Redis.command(["DEL", "ban:ip:#{ip}"])
     :ok
+  end
+
+  defp next_test_ip do
+    suffix = System.unique_integer([:positive])
+    "203.0.113.#{rem(suffix, 200) + 1}"
   end
 
   defp assert_eventually(fun, attempts \\ 30)

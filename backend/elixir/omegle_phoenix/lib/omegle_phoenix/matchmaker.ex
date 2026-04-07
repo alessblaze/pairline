@@ -508,7 +508,11 @@ defmodule OmeglePhoenix.Matchmaker do
               )
 
             {:retry, :session2_removed} ->
-              match_from_pool(queue_key, remaining, MapSet.put(matched, sid2))
+              match_from_pool(
+                queue_key,
+                [{sid1, session1, wait1} | remaining],
+                MapSet.put(matched, sid2)
+              )
 
             {:retry, :both_removed} ->
               match_from_pool(
@@ -519,7 +523,11 @@ defmodule OmeglePhoenix.Matchmaker do
 
             _ ->
               # Pairing failed (locked/unavailable); skip sid2, retry sid1 with remaining
-              match_from_pool(queue_key, remaining, MapSet.put(matched, sid2))
+              match_from_pool(
+                queue_key,
+                [{sid1, session1, wait1} | remaining],
+                MapSet.put(matched, sid2)
+              )
           end
 
         nil ->
@@ -605,97 +613,134 @@ defmodule OmeglePhoenix.Matchmaker do
 
   defp pair_users(session_id1, session_id2, strategy) do
     OmeglePhoenix.SessionLock.with_locks([session_id1, session_id2], fn ->
-      with {:ok, session1} <- OmeglePhoenix.SessionManager.get_session(session_id1),
-           {:ok, session2} <- OmeglePhoenix.SessionManager.get_session(session_id2),
-           true <- pairable_session?(session1),
-           true <- pairable_session?(session2) do
-        case banned_pair_result(session1, session2) do
-          nil ->
-            maybe_run_pairing_test_hook(:before_pair_sessions, session1, session2)
+      maybe_run_pairing_test_hook(
+        :before_load_sessions,
+        %{id: session_id1},
+        %{id: session_id2}
+      )
 
-            case OmeglePhoenix.SessionManager.pair_sessions(session1, session2) do
-              {:ok, updated_session1, updated_session2, common_interests} ->
-                drop_matched_from_queues([session_id1, session_id2])
+      session1_result = OmeglePhoenix.SessionManager.get_session(session_id1)
+      session2_result = OmeglePhoenix.SessionManager.get_session(session_id2)
 
-                updated_route1 = %{
-                  mode: OmeglePhoenix.RedisKeys.mode(updated_session1.preferences),
-                  shard: updated_session1.redis_shard
-                }
+      case {session1_result, session2_result} do
+        {{:ok, session1}, {:ok, session2}} ->
+          cond do
+            not pairable_session?(session1) and not pairable_session?(session2) ->
+              {:retry, :both_removed}
 
-                updated_route2 = %{
-                  mode: OmeglePhoenix.RedisKeys.mode(updated_session2.preferences),
-                  shard: updated_session2.redis_shard
-                }
+            not pairable_session?(session1) ->
+              {:retry, :session1_removed}
 
-                owner_node1 = owner_node_hint(session_id1, updated_route1)
-                owner_node2 = owner_node_hint(session_id2, updated_route2)
+            not pairable_session?(session2) ->
+              {:retry, :session2_removed}
 
-                match_generation =
-                  updated_session1.match_generation || updated_session2.match_generation
+            true ->
+              case banned_pair_result(session1, session2) do
+                nil ->
+                  maybe_run_pairing_test_hook(:before_pair_sessions, session1, session2)
 
-                OmeglePhoenix.Router.notify_match(
-                  session_id1,
-                  session_id2,
-                  common_interests,
-                  match_generation,
-                  updated_route2,
-                  owner_node2
-                )
+                  case OmeglePhoenix.SessionManager.pair_sessions(session1, session2) do
+                    {:ok, updated_session1, updated_session2, common_interests} ->
+                      drop_matched_from_queues([session_id1, session_id2])
 
-                OmeglePhoenix.Router.notify_match(
-                  session_id2,
-                  session_id1,
-                  common_interests,
-                  match_generation,
-                  updated_route1,
-                  owner_node1
-                )
+                      updated_route1 = %{
+                        mode: OmeglePhoenix.RedisKeys.mode(updated_session1.preferences),
+                        shard: updated_session1.redis_shard
+                      }
 
-                :telemetry.execute(
-                  [:omegle_phoenix, :matchmaking, :matched],
-                  %{count: 1},
-                  %{
-                    session_id: session_id1,
-                    partner_id: session_id2,
-                    common_interests: length(common_interests),
-                    strategy: strategy
-                  }
-                )
+                      updated_route2 = %{
+                        mode: OmeglePhoenix.RedisKeys.mode(updated_session2.preferences),
+                        shard: updated_session2.redis_shard
+                      }
 
-                event =
-                  case strategy do
-                    :overflow -> [:omegle_phoenix, :matchmaking, :matched_overflow]
-                    _ -> [:omegle_phoenix, :matchmaking, :matched_local]
+                      owner_node1 = owner_node_hint(session_id1, updated_route1)
+                      owner_node2 = owner_node_hint(session_id2, updated_route2)
+
+                      match_generation =
+                        updated_session1.match_generation || updated_session2.match_generation
+
+                      OmeglePhoenix.Router.notify_match(
+                        session_id1,
+                        session_id2,
+                        common_interests,
+                        match_generation,
+                        updated_route2,
+                        owner_node2
+                      )
+
+                      OmeglePhoenix.Router.notify_match(
+                        session_id2,
+                        session_id1,
+                        common_interests,
+                        match_generation,
+                        updated_route1,
+                        owner_node1
+                      )
+
+                      :telemetry.execute(
+                        [:omegle_phoenix, :matchmaking, :matched],
+                        %{count: 1},
+                        %{
+                          session_id: session_id1,
+                          partner_id: session_id2,
+                          common_interests: length(common_interests),
+                          strategy: strategy
+                        }
+                      )
+
+                      event =
+                        case strategy do
+                          :overflow -> [:omegle_phoenix, :matchmaking, :matched_overflow]
+                          _ -> [:omegle_phoenix, :matchmaking, :matched_local]
+                        end
+
+                      :telemetry.execute(event, %{count: 1}, %{
+                        session_id: session_id1,
+                        partner_id: session_id2
+                      })
+
+                      :ok
+
+                    {:error, reason} ->
+                      {:error, reason}
                   end
 
-                :telemetry.execute(event, %{count: 1}, %{
-                  session_id: session_id1,
-                  partner_id: session_id2
-                })
+                retry ->
+                  retry
+              end
+          end
 
-                :ok
-
-              {:error, reason} ->
-                {:error, reason}
-            end
-
-          retry ->
-            retry
-        end
-      else
-        {:error, :not_found} ->
+        {{:error, :not_found}, {:error, :not_found}} ->
           Logger.warning(
-            "Matchmaker: session disappeared during pairing (#{session_id1} or #{session_id2})"
+            "Matchmaker: sessions disappeared during pairing (#{session_id1} and #{session_id2})"
           )
 
-          :ok
+          {:retry, :both_removed}
 
-        false ->
-          :ok
-
-        {:error, _reason} = error ->
+        {{:error, :not_found}, _} ->
           Logger.warning(
-            "Matchmaker: failed to load sessions during pairing #{session_id1}/#{session_id2}: #{inspect(error)}"
+            "Matchmaker: session disappeared during pairing (#{session_id1})"
+          )
+
+          {:retry, :session1_removed}
+
+        {_, {:error, :not_found}} ->
+          Logger.warning(
+            "Matchmaker: session disappeared during pairing (#{session_id2})"
+          )
+
+          {:retry, :session2_removed}
+
+        {{:error, _reason} = error, _} ->
+          Logger.warning(
+            "Matchmaker: failed to load session during pairing #{session_id1}/#{session_id2}: #{inspect(error)}"
+          )
+
+          error
+
+        {_, {:error, _reason} = error} ->
+          Logger.warning(
+            "Matchmaker: failed to load session during pairing #{session_id1}/#{session_id2}: #{inspect(error)}"
           )
 
           error
@@ -705,7 +750,7 @@ defmodule OmeglePhoenix.Matchmaker do
             "Matchmaker: unexpected pairing precondition for #{session_id1}/#{session_id2}"
           )
 
-          :ok
+          {:retry, :both_removed}
       end
     end)
   end
@@ -716,6 +761,32 @@ defmodule OmeglePhoenix.Matchmaker do
 
   defp maybe_run_pairing_test_hook(stage, session1, session2) do
     case Application.get_env(:omegle_phoenix, :matchmaker_pairing_test_hook) do
+      {owner, ref, :once, expected_stage} when is_pid(owner) ->
+        if stage == expected_stage do
+          Application.delete_env(:omegle_phoenix, :matchmaker_pairing_test_hook)
+
+          send(
+            owner,
+            {:matchmaker_pairing_hook, ref, stage, session1.id, session2.id, self()}
+          )
+
+          receive do
+            {:matchmaker_pairing_hook_reply, ^ref, :continue} ->
+              :ok
+
+            {:matchmaker_pairing_hook_reply, ^ref, {:exit, reason}} ->
+              exit(reason)
+
+            {:matchmaker_pairing_hook_reply, ^ref, {:raise, reason}} ->
+              raise reason
+          after
+            5_000 ->
+              raise "timed out waiting for pairing test hook reply for #{inspect(stage)}"
+          end
+        else
+          :ok
+        end
+
       {owner, ref, :once} when is_pid(owner) ->
         Application.delete_env(:omegle_phoenix, :matchmaker_pairing_test_hook)
 
