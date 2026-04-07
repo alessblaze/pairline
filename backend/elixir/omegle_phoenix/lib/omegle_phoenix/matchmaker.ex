@@ -522,11 +522,11 @@ defmodule OmeglePhoenix.Matchmaker do
               )
 
             _ ->
-              # Pairing failed (locked/unavailable); skip sid2, retry sid1 with remaining
+              # Pairing failed (locked/unavailable); skip both for this sweep to avoid stalling the queue
               match_from_pool(
                 queue_key,
-                [{sid1, session1, wait1} | remaining],
-                MapSet.put(matched, sid2)
+                remaining,
+                MapSet.put(MapSet.put(matched, sid1), sid2)
               )
           end
 

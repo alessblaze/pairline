@@ -10,6 +10,7 @@ export class WebSocketClient {
   private topic: string;
   private messageHandlers: ((msg: Message) => void)[] = [];
   private closeHandlers: (() => void)[] = [];
+  private openHandlers: (() => void)[] = [];
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 10;
   private reconnectDelay = 1000;
@@ -55,6 +56,7 @@ export class WebSocketClient {
             this.connectPromise = null;
             this.reconnectAttempts = 0;
             this.shouldReconnect = true;
+            this.openHandlers.forEach(handler => handler());
             resolve();
           })
           .receive('error', (error: unknown) => {
@@ -210,6 +212,10 @@ export class WebSocketClient {
     this.closeHandlers.push(handler);
   }
 
+  onOpen(handler: () => void) {
+    this.openHandlers.push(handler);
+  }
+
   disconnect() {
     this.shouldReconnect = false;
     this.isConnecting = false;
@@ -229,6 +235,7 @@ export class WebSocketClient {
 
     this.messageHandlers = [];
     this.closeHandlers = [];
+    this.openHandlers = [];
   }
 
   isConnected(): boolean {

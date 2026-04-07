@@ -235,3 +235,9 @@ func TestSignalRateLimiterBlocksMessageFloods(t *testing.T) {
 		t.Fatalf("allowed burst = %d, want %d", allowed, int(signalBurstLimit))
 	}
 }
+
+func TestWriteCloseControlNilConnNoop(t *testing.T) {
+	if err := writeCloseControl(nil, websocket.ClosePolicyViolation, "already connected"); err != nil {
+		t.Fatalf("writeCloseControl(nil) returned error: %v", err)
+	}
+}

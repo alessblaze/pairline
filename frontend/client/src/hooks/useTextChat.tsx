@@ -11,9 +11,27 @@ export function useTextChat(wsUrl: string) {
   const [reportPeerId, setReportPeerId] = useState<string | null>(null);
   const [status, setStatus] = useState<'idle' | 'searching' | 'connected' | 'disconnected'>('idle');
   const [messages, setMessages] = useState<Array<{ id: string; text: string; sender: 'me' | 'peer' | 'system'; timestamp: number }>>([]);
-  const [showReconnectMessage, setShowReconnectMessage] = useState(false);
+  const [, setShowReconnectMessage] = useState(false);
   const [peerTyping, setPeerTyping] = useState(false);
   const peerTypingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showReconnectMessageRef = useRef(false);
+
+  const setReconnectMessageVisible = (visible: boolean) => {
+    showReconnectMessageRef.current = visible;
+    setShowReconnectMessage(visible);
+  };
+
+  const showConnectionStatusMessage = (text: string) => {
+    if (showReconnectMessageRef.current) return;
+
+    setMessages(msgs => [...msgs, {
+      id: crypto.randomUUID(),
+      text,
+      sender: 'system',
+      timestamp: Date.now()
+    }]);
+    setReconnectMessageVisible(true);
+  };
 
   const cleanup = () => {
     setPeerId(null);
@@ -21,7 +39,7 @@ export function useTextChat(wsUrl: string) {
     setSessionToken(null);
     setReportPeerId(null);
     setMessages([]);
-    setShowReconnectMessage(false);
+    setReconnectMessageVisible(false);
     setPeerTyping(false);
     if (peerTypingTimeoutRef.current) {
       clearTimeout(peerTypingTimeoutRef.current);
@@ -49,7 +67,7 @@ export function useTextChat(wsUrl: string) {
         setPeerId(peerIdMatch || '');
         setReportPeerId(peerIdMatch || null);
         setStatus('connected');
-        setShowReconnectMessage(false);
+        setReconnectMessageVisible(false);
         setPeerTyping(false);
 
         if (peerTypingTimeoutRef.current) {
@@ -185,11 +203,19 @@ export function useTextChat(wsUrl: string) {
         await wsClient.connect();
         if (mounted) {
           setConnected(true);
-          setShowReconnectMessage(false);
+          setReconnectMessageVisible(false);
         }
 
         wsClient.onMessage((message: Message) => {
           if (mounted) handleMessage(message);
+        });
+
+        wsClient.onOpen(() => {
+          if (mounted) {
+            setConnected(true);
+            setReconnectMessageVisible(false);
+            setStatus(prev => prev === 'disconnected' ? 'idle' : prev);
+          }
         });
 
         wsClient.onClose(() => {
@@ -197,20 +223,16 @@ export function useTextChat(wsUrl: string) {
             setConnected(false);
             setStatus(prev => {
               if (prev === 'connected' || prev === 'searching') {
-                if (!showReconnectMessage) {
-                  setMessages(msgs => [...msgs, {
-                    id: crypto.randomUUID(),
-                    text: 'Connection to server lost. Reconnecting...',
-                    sender: 'system',
-                    timestamp: Date.now()
-                  }]);
-                  setShowReconnectMessage(true);
-                }
+                showConnectionStatusMessage('Connection to server lost. Reconnecting...');
                 return 'disconnected';
               }
               return prev;
             });
             setPeerId(null);
+            setSessionId(null);
+            setSessionToken(null);
+            setReportPeerId(null);
+            setPeerTyping(false);
           }
         });
       } catch (error) {
@@ -218,15 +240,7 @@ export function useTextChat(wsUrl: string) {
         if (mounted) {
           setConnected(false);
           setStatus('disconnected');
-          if (!showReconnectMessage) {
-            setMessages(msgs => [...msgs, {
-              id: crypto.randomUUID(),
-              text: 'Failed to connect to server. Please refresh the page.',
-              sender: 'system',
-              timestamp: Date.now()
-            }]);
-            setShowReconnectMessage(true);
-          }
+          showConnectionStatusMessage('Failed to connect to server. Please refresh the page.');
         }
       }
     };
@@ -248,7 +262,7 @@ export function useTextChat(wsUrl: string) {
       }
 
       setMessages([]);
-      setShowReconnectMessage(false);
+      setReconnectMessageVisible(false);
       setReportPeerId(null);
       setStatus('searching');
 

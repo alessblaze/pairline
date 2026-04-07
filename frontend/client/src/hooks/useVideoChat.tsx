@@ -38,7 +38,8 @@ export function useVideoChat(wsUrl: string) {
   const [messages, setMessages] = useState<Array<{ id: string; text: string; sender: 'me' | 'peer' | 'system'; timestamp: number }>>([]);
   const [peerTyping, setPeerTyping] = useState(false);
   const peerTypingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [showReconnectMessage, setShowReconnectMessage] = useState(false);
+  const [, setShowReconnectMessage] = useState(false);
+  const showReconnectMessageRef = useRef(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [isVideoConnecting, setIsVideoConnecting] = useState(false);
   const localVideoRef = useRef<HTMLVideoElement>(null);
@@ -58,6 +59,7 @@ export function useVideoChat(wsUrl: string) {
   const negotiationStartedRef = useRef(false);
   const pendingWebrtcStartRef = useRef<string | null>(null);
   const goWsConnectTimeoutRef = useRef<number | null>(null);
+  const suppressedGoWsEventsRef = useRef<WeakSet<WebSocket>>(new WeakSet());
   const transceiversRef = useRef<{ audio: RTCRtpTransceiver | null; video: RTCRtpTransceiver | null }>({
     audio: null,
     video: null,
@@ -77,6 +79,83 @@ export function useVideoChat(wsUrl: string) {
     if (!webrtcDebugEnabled) return;
     if (import.meta.env.VITE_WEBSOCKET_DEBUG === 'true') {
       console.log(`[WebRTC] ${label}`, details ?? '');
+    }
+  };
+
+  const setReconnectMessageVisible = (visible: boolean) => {
+    showReconnectMessageRef.current = visible;
+    setShowReconnectMessage(visible);
+  };
+
+  const showConnectionStatusMessage = (text: string) => {
+    if (showReconnectMessageRef.current) return;
+
+    setMessages(msgs => [...msgs, {
+      id: crypto.randomUUID(),
+      text,
+      sender: 'system',
+      timestamp: Date.now()
+    }]);
+    setReconnectMessageVisible(true);
+  };
+
+  const clearGoWsConnectTimeout = () => {
+    if (goWsConnectTimeoutRef.current !== null) {
+      window.clearTimeout(goWsConnectTimeoutRef.current);
+      goWsConnectTimeoutRef.current = null;
+    }
+  };
+
+  const closeGoWebSocket = (reason: string) => {
+    const ws = webrtcWsRef.current;
+    if (!ws) return;
+
+    suppressedGoWsEventsRef.current.add(ws);
+    logWebRTC('Closing Go WebRTC WS', { reason, readyState: ws.readyState });
+    webrtcWsRef.current = null;
+    webrtcSocketOpenRef.current = false;
+    signalingReadySentRef.current = false;
+    clearGoWsConnectTimeout();
+
+    try {
+      ws.close();
+    } catch (error) {
+      console.warn('Failed closing Go WebRTC WS cleanly:', error);
+    }
+  };
+
+  const resetWebRTCTransport = (reason: string, options?: { keepLocalMedia?: boolean }) => {
+    const keepLocalMedia = options?.keepLocalMedia === true;
+
+    iceRestartPendingRef.current = false;
+    pendingWebrtcStartRef.current = null;
+    signalingReadySentRef.current = false;
+    negotiationStartedRef.current = false;
+    turnFetchedRef.current = false;
+    turnFetchPromiseRef.current = null;
+    closeGoWebSocket(reason);
+
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+      peerConnectionRef.current = null;
+    }
+
+    transceiversRef.current = { audio: null, video: null };
+    pendingIceCandidatesRef.current = [];
+    webrtcWsQueueRef.current = [];
+    setIsVideoConnecting(false);
+
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = null;
+    }
+
+    if (!keepLocalMedia && localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(track => track.stop());
+      localStreamRef.current = null;
+    }
+
+    if (!keepLocalMedia && localVideoRef.current) {
+      localVideoRef.current.srcObject = null;
     }
   };
 
@@ -160,11 +239,19 @@ export function useVideoChat(wsUrl: string) {
         await wsClient.connect();
         if (mounted) {
           setConnected(true);
-          setShowReconnectMessage(false);
+          setReconnectMessageVisible(false);
         }
 
         wsClient.onMessage((message: Message) => {
           if (mounted) handleMessage(message);
+        });
+
+        wsClient.onOpen(() => {
+          if (mounted) {
+            setConnected(true);
+            setReconnectMessageVisible(false);
+            setStatus(prev => prev === 'disconnected' ? 'idle' : prev);
+          }
         });
 
         wsClient.onClose(() => {
@@ -172,15 +259,7 @@ export function useVideoChat(wsUrl: string) {
             setConnected(false);
             setStatus(prev => {
               if (prev === 'connected' || prev === 'searching') {
-                if (!showReconnectMessage) {
-                  setMessages(msgs => [...msgs, {
-                    id: crypto.randomUUID(),
-                    text: 'Connection to server lost. Reconnecting...',
-                    sender: 'system',
-                    timestamp: Date.now()
-                  }]);
-                  setShowReconnectMessage(true);
-                }
+                showConnectionStatusMessage('Connection to server lost. Reconnecting...');
                 return 'disconnected';
               }
               return prev;
@@ -189,6 +268,11 @@ export function useVideoChat(wsUrl: string) {
             setSessionId(null);
             setSessionToken(null);
             sessionTokenRef.current = null;
+            setReportPeerId(null);
+            setPeerTyping(false);
+            peerIdRef.current = null;
+            sessionIdRef.current = null;
+            resetWebRTCTransport('phoenix_disconnect', { keepLocalMedia: true });
           }
         });
       } catch (error) {
@@ -196,15 +280,7 @@ export function useVideoChat(wsUrl: string) {
         if (mounted) {
           setConnected(false);
           setStatus('disconnected');
-          if (!showReconnectMessage) {
-            setMessages(msgs => [...msgs, {
-              id: crypto.randomUUID(),
-              text: 'Failed to connect to server. Please refresh the page.',
-              sender: 'system',
-              timestamp: Date.now()
-            }]);
-            setShowReconnectMessage(true);
-          }
+          showConnectionStatusMessage('Failed to connect to server. Please refresh the page.');
         }
       }
     };
@@ -631,15 +707,8 @@ export function useVideoChat(wsUrl: string) {
             sessionTokenRef.current = message.session_token;
           }
 
-          // Hydrate raw WebRTC socket to Go exclusively for signaling
-          if (webrtcWsRef.current) {
-            webrtcWsRef.current.close();
-          }
-          // Clear any previous connection timeout
-          if (goWsConnectTimeoutRef.current !== null) {
-            window.clearTimeout(goWsConnectTimeoutRef.current);
-            goWsConnectTimeoutRef.current = null;
-          }
+          // Hydrate raw WebRTC socket to Go exclusively for signaling.
+          closeGoWebSocket('session_changed');
 
           const goApiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8082';
           const wsProtocol = goApiUrl.startsWith('https') ? 'wss:' : 'ws:';
@@ -648,9 +717,11 @@ export function useVideoChat(wsUrl: string) {
           const ws = new WebSocket(
             `${wsProtocol}//${host}/api/v1/webrtc/ws?session_id=${encodeURIComponent(message.session_id)}&session_token=${encodeURIComponent(message.session_token || '')}`
           );
+          webrtcWsRef.current = ws;
+          webrtcSocketOpenRef.current = false;
 
           goWsConnectTimeoutRef.current = window.setTimeout(() => {
-            if (!webrtcSocketOpenRef.current) {
+            if (webrtcWsRef.current === ws && !webrtcSocketOpenRef.current) {
               console.error('Go WebRTC WS connection timed out after 8s');
               setMessages(msgs => [...msgs, {
                 id: crypto.randomUUID(),
@@ -662,12 +733,19 @@ export function useVideoChat(wsUrl: string) {
           }, 8000);
 
           ws.onopen = () => {
+            if (webrtcWsRef.current !== ws) {
+              suppressedGoWsEventsRef.current.add(ws);
+              try {
+                ws.close();
+              } catch {
+                // Ignore redundant close on a stale socket.
+              }
+              return;
+            }
+
             logWebRTC('Go WebRTC WS opened', { sessionId: message.session_id });
             webrtcSocketOpenRef.current = true;
-            if (goWsConnectTimeoutRef.current !== null) {
-              window.clearTimeout(goWsConnectTimeoutRef.current);
-              goWsConnectTimeoutRef.current = null;
-            }
+            clearGoWsConnectTimeout();
             // Flush any pending WS signaling packets (offer/answer/ice) upon tcp connect
             while (webrtcWsQueueRef.current.length > 0) {
               const queuedMessage = webrtcWsQueueRef.current.shift();
@@ -682,18 +760,49 @@ export function useVideoChat(wsUrl: string) {
               startNegotiationIfNeeded(pendingPeerId);
             }
           };
-          ws.onclose = () => {
+          ws.onclose = (event) => {
+            const suppressed = suppressedGoWsEventsRef.current.has(ws);
+            const activeSocket = webrtcWsRef.current === ws;
+
+            if (activeSocket) {
+              webrtcWsRef.current = null;
+              webrtcSocketOpenRef.current = false;
+              signalingReadySentRef.current = false;
+              clearGoWsConnectTimeout();
+            }
+
+            if (suppressed || !activeSocket) {
+              logWebRTC('Ignoring stale Go WebRTC WS close', {
+                sessionId: message.session_id,
+                code: event.code,
+                reason: event.reason || undefined
+              });
+              return;
+            }
+
             console.warn('Go WebRTC WS closed', {
               sessionId: message.session_id,
+              code: event.code,
+              reason: event.reason || undefined,
+              wasClean: event.wasClean,
               readyState: ws.readyState
             });
-            webrtcSocketOpenRef.current = false;
-            signalingReadySentRef.current = false;
           };
           ws.onerror = (event) => {
-            console.error('Go WebRTC WS error', {
+            const suppressed = suppressedGoWsEventsRef.current.has(ws);
+            const activeSocket = webrtcWsRef.current === ws;
+
+            if (suppressed || !activeSocket) {
+              logWebRTC('Ignoring stale Go WebRTC WS error', {
+                sessionId: message.session_id
+              });
+              return;
+            }
+
+            console.warn('Go WebRTC WS error', {
               sessionId: message.session_id,
-              event
+              readyState: ws.readyState,
+              eventType: event.type
             });
           };
           ws.onmessage = (event) => {
@@ -705,8 +814,6 @@ export function useVideoChat(wsUrl: string) {
               console.error("Failed parsing Go WS signal:", err);
             }
           };
-          webrtcWsRef.current = ws;
-
           // Proactively fetch TURN credentials as soon as we have a session to avoid delay during match
           if (turnEnabled && !turnFetchedRef.current) {
             void fetchTurnServers().then(iceServers => {
@@ -1016,6 +1123,11 @@ export function useVideoChat(wsUrl: string) {
       signalingReadySentRef.current = false;
       negotiationStartedRef.current = false;
       turnFetchPromiseRef.current = null;
+      setMessages([]);
+      setReconnectMessageVisible(false);
+      setReportPeerId(null);
+      setIsVideoConnecting(false);
+      setStatus('searching');
 
       // Must prompt for camera synchronously with the raw user click to satisfy strict Safari/Firefox Android Transient Activation rules.
       await getLocalStream();
@@ -1031,12 +1143,6 @@ export function useVideoChat(wsUrl: string) {
         await wsClient.connect();
         setConnected(true);
       }
-
-      setMessages([]);
-      setShowReconnectMessage(false);
-      setReportPeerId(null);
-      setIsVideoConnecting(false);
-      setStatus('searching');
 
       wsClient.send('start', {
         token: turnstileToken,
@@ -1134,46 +1240,18 @@ export function useVideoChat(wsUrl: string) {
   };
 
   const cleanup = () => {
-    iceRestartPendingRef.current = false;
-    pendingWebrtcStartRef.current = null;
     sessionTokenRef.current = null;
-    turnFetchPromiseRef.current = null;
+    setReconnectMessageVisible(false);
     if (peerTypingTimeoutRef.current) {
       clearTimeout(peerTypingTimeoutRef.current);
       peerTypingTimeoutRef.current = null;
     }
-    if (goWsConnectTimeoutRef.current !== null) {
-      window.clearTimeout(goWsConnectTimeoutRef.current);
-      goWsConnectTimeoutRef.current = null;
-    }
+    clearGoWsConnectTimeout();
     if (mockVideoTimerRef.current !== null) {
       window.clearInterval(mockVideoTimerRef.current);
       mockVideoTimerRef.current = null;
     }
-    if (webrtcWsRef.current) {
-      webrtcWsRef.current.close();
-      webrtcWsRef.current = null;
-    }
-    webrtcSocketOpenRef.current = false;
-    signalingReadySentRef.current = false;
-    negotiationStartedRef.current = false;
-    if (peerConnectionRef.current) {
-      peerConnectionRef.current.close();
-      peerConnectionRef.current = null;
-    }
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(track => track.stop());
-      localStreamRef.current = null;
-    }
-    transceiversRef.current = { audio: null, video: null };
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = null;
-    }
-    if (remoteVideoRef.current) {
-      remoteVideoRef.current.srcObject = null;
-    }
-    pendingIceCandidatesRef.current = [];
-    webrtcWsQueueRef.current = [];
+    resetWebRTCTransport('cleanup');
   };
 
   return {

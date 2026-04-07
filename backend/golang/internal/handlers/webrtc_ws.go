@@ -155,6 +155,16 @@ func (c *SignalingClient) writeMessage(messageType int, data []byte) error {
 	return c.Conn.WriteMessage(messageType, data)
 }
 
+func writeCloseControl(conn *websocket.Conn, code int, text string) error {
+	if conn == nil {
+		return nil
+	}
+
+	deadline := time.Now().Add(writeWait)
+	message := websocket.FormatCloseMessage(code, text)
+	return conn.WriteControl(websocket.CloseMessage, message, deadline)
+}
+
 func (c *SignalingClient) writePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer ticker.Stop()
@@ -710,6 +720,7 @@ func WebRTCWebSocketHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 		client, pendingMessages, err := Signaling.Register(sessionID, conn)
 		if err != nil {
 			log.Printf("Failed to register signaling session %s: %v", sessionID, err)
+			_ = writeCloseControl(conn, websocket.ClosePolicyViolation, "already connected")
 			_ = conn.Close()
 			return
 		}
@@ -736,6 +747,7 @@ func WebRTCWebSocketHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 		sessionRouteCancel()
 		if routeErr != nil {
 			log.Printf("WebRTC WS missing session route for %s: %v", sessionID, routeErr)
+			_ = writeCloseControl(conn, websocket.CloseInternalServerErr, "missing route")
 			return
 		}
 
