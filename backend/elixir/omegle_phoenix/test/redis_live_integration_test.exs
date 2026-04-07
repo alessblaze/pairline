@@ -98,6 +98,98 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
     end)
   end
 
+  test "delete_session preserves report-grace locators and session token", %{
+    session_id: session_id,
+    ip: ip
+  } do
+    preferences = %{"mode" => "text", "interests" => "report,grace"}
+
+    assert {:ok, _created} =
+             OmeglePhoenix.SessionManager.create_session(session_id, ip, preferences)
+
+    assert {:ok, route} = OmeglePhoenix.SessionManager.get_session_route(session_id)
+
+    assert :ok = OmeglePhoenix.SessionManager.delete_session(session_id)
+
+    encoded_route = OmeglePhoenix.RedisKeys.encode_locator(route)
+    report_locator_key = OmeglePhoenix.RedisKeys.session_report_locator_key(session_id)
+    ip_locator_key = OmeglePhoenix.RedisKeys.session_ip_locator_key(session_id)
+    token_key = OmeglePhoenix.RedisKeys.session_token_key(session_id, route)
+
+    assert OmeglePhoenix.Redis.command(["GET", OmeglePhoenix.RedisKeys.session_locator_key(session_id)]) ==
+             {:ok, nil}
+
+    assert OmeglePhoenix.Redis.command(["GET", report_locator_key]) == {:ok, encoded_route}
+    assert OmeglePhoenix.Redis.command(["GET", ip_locator_key]) == {:ok, ip}
+
+    assert {:ok, report_ttl} = OmeglePhoenix.Redis.command(["TTL", report_locator_key])
+    assert {:ok, ip_ttl} = OmeglePhoenix.Redis.command(["TTL", ip_locator_key])
+    assert {:ok, token_ttl} = OmeglePhoenix.Redis.command(["TTL", token_key])
+
+    assert report_ttl > 0
+    assert ip_ttl > 0
+    assert token_ttl > 0
+  end
+
+  test "stale get_session after delete does not clear report locators", %{
+    session_id: session_id,
+    ip: ip
+  } do
+    preferences = %{"mode" => "text", "interests" => "stale,read"}
+
+    assert {:ok, _created} =
+             OmeglePhoenix.SessionManager.create_session(session_id, ip, preferences)
+
+    assert {:ok, route} = OmeglePhoenix.SessionManager.get_session_route(session_id)
+    assert :ok = OmeglePhoenix.SessionManager.delete_session(session_id)
+
+    assert OmeglePhoenix.SessionManager.get_session(session_id) == {:error, :not_found}
+
+    assert OmeglePhoenix.Redis.command([
+             "GET",
+             OmeglePhoenix.RedisKeys.session_report_locator_key(session_id)
+           ]) == {:ok, OmeglePhoenix.RedisKeys.encode_locator(route)}
+
+    assert OmeglePhoenix.Redis.command([
+             "GET",
+             OmeglePhoenix.RedisKeys.session_ip_locator_key(session_id)
+           ]) == {:ok, ip}
+  end
+
+  test "cleanup_orphaned_session removes preserved report locators", %{
+    session_id: session_id,
+    ip: ip
+  } do
+    preferences = %{"mode" => "text", "interests" => "cleanup,report"}
+
+    assert {:ok, _created} =
+             OmeglePhoenix.SessionManager.create_session(session_id, ip, preferences)
+
+    assert :ok = OmeglePhoenix.SessionManager.delete_session(session_id)
+
+    assert {:ok, _} =
+             OmeglePhoenix.Redis.command([
+               "GET",
+               OmeglePhoenix.RedisKeys.session_report_locator_key(session_id)
+             ])
+
+    assert :ok = OmeglePhoenix.SessionManager.cleanup_orphaned_session(session_id)
+
+    assert_eventually(fn ->
+      OmeglePhoenix.Redis.command([
+        "GET",
+        OmeglePhoenix.RedisKeys.session_report_locator_key(session_id)
+      ]) == {:ok, nil}
+    end)
+
+    assert_eventually(fn ->
+      OmeglePhoenix.Redis.command([
+        "GET",
+        OmeglePhoenix.RedisKeys.session_ip_locator_key(session_id)
+      ]) == {:ok, nil}
+    end)
+  end
+
   test "matchmaker join and leave queue works against live cluster", %{
     session_id: session_id,
     ip: ip
@@ -279,11 +371,15 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
   end
 
   defp cleanup_session(session_id) do
-    case OmeglePhoenix.SessionManager.delete_session(session_id) do
-      :ok -> :ok
-      {:error, :not_found} -> :ok
-      _ -> :ok
-    end
+    _ =
+      case OmeglePhoenix.SessionManager.delete_session(session_id) do
+        :ok -> :ok
+        {:error, :not_found} -> :ok
+        _ -> :ok
+      end
+
+    _ = OmeglePhoenix.SessionManager.cleanup_orphaned_session(session_id)
+    :ok
   end
 
   defp cleanup_ip_ban(ip) do
