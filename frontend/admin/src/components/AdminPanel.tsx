@@ -1,23 +1,35 @@
-// Pairline - Open Source Video Chat and Matchmaking
-// Copyright (C) 2026 Albert Blasczykowski
-// Aless Microsystems
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as published
-// by the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU Affero General Public License for more details.
-//
-// You should have received a copy of the GNU Affero General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+/// <reference types="vite/client" />
+/**
+ * Pairline - Open Source Video Chat and Matchmaking
+ * Enhanced Admin Dashboard
+ */
 
 import React, { useDeferredValue, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DOMPurify from 'dompurify';
+import { motion, AnimatePresence } from 'motion/react';
+import { 
+  Shield, 
+  AlertTriangle, 
+  Ban as BanIcon, 
+  Users, 
+  LogOut, 
+  RefreshCw, 
+  CheckCircle2, 
+  XCircle, 
+  MessageSquare, 
+  Search, 
+  Plus, 
+  Trash2, 
+  Clock, 
+  Globe, 
+  UserPlus,
+  Eye,
+  EyeOff,
+  Activity,
+  Menu,
+  X
+} from 'lucide-react';
 import type { AdminAccount, AdminRole, Ban, CreateBanRequest, LoginResponse, Report } from '../types';
 
 interface BanModalState {
@@ -32,57 +44,66 @@ interface BanModalState {
   clearManualInputsOnSubmit?: boolean;
 }
 
+// Design Constants
 const tabButtonClass = (active: boolean) =>
-  `rounded-full px-4 py-2 text-sm font-semibold transition ${
+  `relative flex h-11 w-full items-center justify-start gap-3 rounded-xl px-5 text-sm font-bold uppercase tracking-[0.14em] transition-all duration-200 ${
     active
-      ? 'bg-white text-slate-950 shadow-lg shadow-cyan-950/20'
-      : 'text-slate-300 hover:bg-white/10 hover:text-white'
+      ? 'border border-electric-cyan/40 bg-electric-cyan/10 text-electric-cyan shadow-[0_0_12px_rgba(34,211,238,0.12)]'
+      : 'text-slate-400 hover:bg-white/5 hover:text-white font-medium'
   }`;
 
-const filterButtonClass = (active: boolean) =>
-  `rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] transition ${
-    active
-      ? 'border-cyan-300/60 bg-cyan-300/20 text-cyan-100'
-      : 'border-white/10 bg-white/5 text-slate-400 hover:border-white/20 hover:text-slate-200'
+const filterButtonClass = (active: boolean, type: 'cyan' | 'rose' = 'cyan') => {
+  const activeStyles = type === 'rose' 
+    ? 'border-danger-rose/40 bg-danger-rose/[0.08] text-danger-rose shadow-[0_0_12px_rgba(244,63,94,0.12)]'
+    : 'border-electric-cyan/40 bg-electric-cyan/[0.08] text-electric-cyan shadow-[0_0_12px_rgba(34,211,238,0.12)]';
+  
+  return `inline-flex h-11 items-center justify-center rounded-xl border px-4 text-[10px] font-bold uppercase tracking-[0.14em] transition-all duration-200 ${
+    active ? activeStyles : 'border-white/[0.07] bg-white/[0.04] text-slate-400 hover:text-slate-200 hover:bg-white/[0.07]'
   }`;
+};
 
-const metricCardClass =
-  'rounded-[28px] border border-white/10 bg-white/6 p-5 backdrop-blur-xl shadow-[0_24px_80px_rgba(15,23,42,0.28)]';
+const metricCardClass = (type: 'active' | 'inactive' | 'total' | 'pending' | 'approved') => {
+  const glowShadow = 
+    type === 'active' || type === 'pending' ? 'shadow-[inset_0_0_20px_rgba(244,63,94,0.05)] border-danger-rose/20' : 
+    type === 'total' ? 'shadow-[inset_0_0_20px_rgba(34,211,238,0.05)] border-electric-cyan/20' :
+    type === 'approved' ? 'shadow-[inset_0_0_20px_rgba(52,211,153,0.05)] border-success-emerald/20' :
+    'border-white/[0.07]';
+  
+  return `surface-card rounded-[20px] flex flex-row items-center gap-4 p-5 transition-all duration-300 hover:border-white/20 ${glowShadow}`;
+};
 
-const surfaceCardClass =
-  'rounded-[30px] border border-white/10 bg-slate-950/55 backdrop-blur-xl shadow-[0_30px_120px_rgba(8,15,30,0.55)]';
+const surfaceCardClass = 'surface-card rounded-[20px] p-5';
 
 const inputClass =
-  'w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm text-white placeholder:text-slate-500 outline-none transition focus:border-cyan-300/60 focus:bg-white/8';
+  'h-11 w-full rounded-xl border border-white/[0.07] bg-white/[0.04] px-4 font-mono text-sm text-white placeholder:text-slate-500 outline-none transition-all duration-200 focus:border-electric-cyan/50 focus:ring-2 focus:ring-electric-cyan/15 focus:bg-white/[0.06] scanlines';
+
+const compactSelectClass =
+  'h-11 w-full rounded-xl border border-white/[0.07] bg-white/[0.04] px-3 font-semibold uppercase tracking-wider text-sm text-white outline-none transition-all duration-200 focus:border-electric-cyan/50 focus:ring-2 focus:ring-electric-cyan/15';
+
+const segmentedToggleButtonClass = (active: boolean) =>
+  `flex h-10 flex-1 items-center justify-center rounded-lg px-4 text-[10px] font-bold uppercase tracking-[0.14em] transition-all duration-200 ${
+    active
+      ? 'bg-white text-navy-black shadow-[0_0_14px_rgba(255,255,255,0.1)]'
+      : 'text-slate-500 hover:bg-white/[0.05] hover:text-slate-200'
+  }`;
 
 const actionButtonClass =
-  'rounded-2xl px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50';
+  'flex h-11 items-center justify-center gap-2 rounded-xl px-4 text-xs font-bold uppercase tracking-wide transition-all duration-100 disabled:cursor-not-allowed disabled:opacity-50 active:scale-[0.97]';
 
+// Helper Functions
 function buildAdminHeaders(includeJSON = false) {
   const headers: Record<string, string> = {};
   const csrfToken = window.sessionStorage.getItem('admin_csrf') || '';
-
-  if (includeJSON) {
-    headers['Content-Type'] = 'application/json';
-  }
-
-  if (csrfToken) {
-    headers['X-CSRF-Token'] = csrfToken;
-  }
-
+  if (includeJSON) headers['Content-Type'] = 'application/json';
+  if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
   return headers;
 }
 
 function persistAdminSession(username: string | undefined, role: AdminRole, csrfToken?: string) {
   localStorage.setItem('admin_auth', 'true');
   localStorage.setItem('admin_role', role);
-  if (username) {
-    localStorage.setItem('admin_username', username);
-  }
-
-  if (csrfToken) {
-    sessionStorage.setItem('admin_csrf', csrfToken);
-  }
+  if (username) localStorage.setItem('admin_username', username);
+  if (csrfToken) sessionStorage.setItem('admin_csrf', csrfToken);
 }
 
 function clearAdminSession() {
@@ -92,39 +113,28 @@ function clearAdminSession() {
   sessionStorage.removeItem('admin_csrf');
 }
 
-function formatShort(value?: string | null, length = 12) {
-  if (!value) return 'N/A';
-  return value.length > length ? `${value.slice(0, length)}...` : value;
-}
-
 function formatDate(value?: string | null) {
   if (!value) return 'N/A';
-  return new Date(value).toLocaleString();
+  return new Date(value).toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 function reportStatusClass(status: Report['status']) {
-  if (status === 'approved') return 'bg-emerald-400/15 text-emerald-200 ring-1 ring-emerald-300/20';
-  if (status === 'rejected') return 'bg-rose-400/15 text-rose-200 ring-1 ring-rose-300/20';
-  return 'bg-amber-300/15 text-amber-100 ring-1 ring-amber-200/20';
-}
-
-function banStatusClass(active: boolean) {
-  return active
-    ? 'bg-rose-400/15 text-rose-200 ring-1 ring-rose-300/20'
-    : 'bg-slate-400/15 text-slate-300 ring-1 ring-slate-300/20';
+  if (status === 'approved') return 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
+  if (status === 'rejected') return 'bg-rose-500/10 text-rose-400 border border-rose-500/20';
+  return 'bg-amber-500/10 text-amber-400 border border-amber-500/20';
 }
 
 function buildExpiryDate(durationValue: string, durationUnit: 'hours' | 'days') {
   const amount = Number(durationValue);
   if (!Number.isFinite(amount) || amount <= 0) return null;
-
   const expiresAt = new Date();
-  if (durationUnit === 'hours') {
-    expiresAt.setHours(expiresAt.getHours() + amount);
-  } else {
-    expiresAt.setDate(expiresAt.getDate() + amount);
-  }
-
+  if (durationUnit === 'hours') expiresAt.setHours(expiresAt.getHours() + amount);
+  else expiresAt.setDate(expiresAt.getDate() + amount);
   return expiresAt.toISOString();
 }
 
@@ -145,6 +155,9 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
   const [accounts, setAccounts] = useState<AdminAccount[]>([]);
   const [selectedReports, setSelectedReports] = useState<Set<string>>(new Set());
   const [expandedReport, setExpandedReport] = useState<string | null>(null);
+  const [viewingDescription, setViewingDescription] = useState<string | null>(null);
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [bans, setBans] = useState<Ban[]>([]);
   const [currentTab, setCurrentTab] = useState<'reports' | 'bans' | 'accounts'>('reports');
   const [reportStatusFilter, setReportStatusFilter] = useState<'pending' | 'decided' | 'all'>('pending');
@@ -163,7 +176,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
   const [accountRole, setAccountRole] = useState<AdminRole>('moderator');
   const [accountSearch, setAccountSearch] = useState('');
   const [accountPage, setAccountPage] = useState(1);
-  const [accountPageSize] = useState(25);
+  const accountPageSize = 25;
   const [accountTotal, setAccountTotal] = useState(0);
   const [submittingAccount, setSubmittingAccount] = useState(false);
   const [submittingBan, setSubmittingBan] = useState(false);
@@ -183,35 +196,17 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
   const canManageAccounts = role === 'admin' || role === 'root';
   const deferredBanSearch = useDeferredValue(banSearch);
   const deferredAccountSearch = useDeferredValue(accountSearch);
+  const accountTotalPages = Math.max(1, Math.ceil(accountTotal / accountPageSize));
 
-  useEffect(() => {
-    if (authReady && isAuthenticated) {
-      fetchBans();
-    }
-  }, [authReady, isAuthenticated, banFilter, banLimit, deferredBanSearch]);
-
-  useEffect(() => {
-    if (authReady && isAuthenticated) {
-      fetchReports();
-    }
-  }, [authReady, isAuthenticated, reportStatusFilter, reportLimit]);
-
-  useEffect(() => {
-    if (authReady && isAuthenticated && canManageAccounts) {
-      void fetchAccounts();
-    }
-  }, [authReady, isAuthenticated, canManageAccounts, accountPage, accountPageSize, deferredAccountSearch]);
-
+  // Authentication Logic
   useEffect(() => {
     const bootstrapAuth = async () => {
       const rememberedAuth = localStorage.getItem('admin_auth') === 'true';
       const csrfToken = sessionStorage.getItem('admin_csrf');
-
       if (!rememberedAuth || !csrfToken) {
         setAuthReady(true);
         return;
       }
-
       const refreshed = await refreshSession();
       if (!refreshed) {
         clearAdminSession();
@@ -220,32 +215,20 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
       }
       setAuthReady(true);
     };
-
     void bootstrapAuth();
   }, []);
 
-  const storeCSRFFromResponse = async (response: Response) => {
-    const csrfToken = response.headers.get('X-CSRF-Token');
-    if (csrfToken) {
-      sessionStorage.setItem('admin_csrf', csrfToken);
-    }
-  };
-
   const refreshSession = async () => {
     const csrfToken = window.sessionStorage.getItem('admin_csrf') || '';
-
     try {
       const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/refresh`, {
         method: 'POST',
         headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {},
         credentials: 'include',
       });
-
-      if (!response.ok) {
-        return false;
-      }
-
-      await storeCSRFFromResponse(response);
+      if (!response.ok) return false;
+      const csrfTokenHeader = response.headers.get('X-CSRF-Token');
+      if (csrfTokenHeader) sessionStorage.setItem('admin_csrf', csrfTokenHeader);
       const data: LoginResponse = await response.json();
       persistAdminSession(data.username, data.role, data.csrf_token);
       setIsAuthenticated(true);
@@ -267,11 +250,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
       },
       credentials: 'include',
     });
-
-    if (response.status !== 401 || !retryOnUnauthorized) {
-      return response;
-    }
-
+    if (response.status !== 401 || !retryOnUnauthorized) return response;
     const refreshed = await refreshSession();
     if (!refreshed) {
       clearAdminSession();
@@ -279,7 +258,6 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
       setRole(null);
       return response;
     }
-
     return fetch(path, {
       ...init,
       headers: {
@@ -299,9 +277,9 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
         body: JSON.stringify({ username, password }),
         credentials: 'include',
       });
-
       if (response.ok) {
-        await storeCSRFFromResponse(response);
+        const csrfTokenHeader = response.headers.get('X-CSRF-Token');
+        if (csrfTokenHeader) sessionStorage.setItem('admin_csrf', csrfTokenHeader);
         const data: LoginResponse = await response.json();
         persistAdminSession(data.username || username, data.role, data.csrf_token);
         setIsAuthenticated(true);
@@ -327,7 +305,6 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
     } catch (error) {
       console.error('Failed to clear admin session cookies:', error);
     }
-
     setIsAuthenticated(false);
     setRole(null);
     setCurrentAdminUsername('');
@@ -335,17 +312,17 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
     setReports([]);
     setBans([]);
     setAccounts([]);
+    setSelectedReports(new Set());
     navigate(loginRoute);
   };
 
+  // Data Fetching
   const fetchReports = async () => {
     try {
       const response = await adminFetch(
         `${import.meta.env.VITE_API_URL}/api/v1/admin/reports?status=${reportStatusFilter}&limit=${reportLimit}`
       );
-
       if (response.status === 401) return logout();
-
       if (response.ok) {
         const data = await response.json();
         if (data.metrics) {
@@ -357,85 +334,93 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
         }
         const normalized = (data.reports || []).map((r: any) => ({
           ...r,
-          chat_log:
-            typeof r.chat_log === 'string'
-              ? (() => {
-                  try {
-                    return JSON.parse(r.chat_log);
-                  } catch {
-                    return [];
-                  }
-                })()
-              : Array.isArray(r.chat_log)
-                ? r.chat_log
-                : [],
+          chat_log: typeof r.chat_log === 'string' ? JSON.parse(r.chat_log) : (r.chat_log || []),
         }));
         setReports(normalized);
+        setSelectedReports((current) => {
+          const visibleIds = new Set(normalized.map((report: Report) => report.id));
+          return new Set([...current].filter((id) => visibleIds.has(id)));
+        });
       }
     } catch (error) {
       console.error('Failed to fetch reports:', error);
     }
   };
 
+  const fetchBans = async () => {
+    try {
+      const params = new URLSearchParams({ status: banFilter, limit: banLimit });
+      if (deferredBanSearch.trim()) params.set('ip', deferredBanSearch.trim());
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/bans?${params.toString()}`);
+      if (response.status === 401) return logout();
+      if (response.ok) {
+        const data = await response.json();
+        if (data.metrics) {
+          setServerBanMetrics({
+            active: data.metrics.active || 0,
+            inactive: data.metrics.inactive || 0,
+            total: data.metrics.total || 0,
+          });
+        }
+        setBans(data.bans || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch bans:', error);
+    }
+  };
+
+  const fetchAccounts = async () => {
+    if (!canManageAccounts) return;
+    try {
+      const params = new URLSearchParams({ page: String(accountPage), limit: String(accountPageSize) });
+      if (deferredAccountSearch.trim()) params.set('q', deferredAccountSearch.trim());
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/accounts?${params.toString()}`);
+      if (response.status === 401) return logout();
+      if (response.ok) {
+        const data = await response.json();
+        setAccounts(data.accounts || []);
+        setAccountTotal(Number(data.total || 0));
+      }
+    } catch (error) {
+      console.error('Failed to fetch admin accounts:', error);
+    }
+  };
+
+  // Actions
   const updateReportStatus = async (reportId: string, newStatus: 'approved' | 'rejected') => {
     try {
       const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/reports/${reportId}`, {
         method: 'PUT',
         body: JSON.stringify({ status: newStatus }),
       });
-
       if (response.status === 401) return logout();
-
       if (response.ok) {
-        await storeCSRFFromResponse(response);
         fetchReports();
-        return;
+      } else {
+        const data = await response.json().catch(() => ({}));
+        alert(data.error || 'Failed to update report');
       }
-
-      const data = await response.json().catch(() => ({}));
-      if (response.status === 409) {
-        alert(data.error || 'This report was already reviewed by another moderator');
-        fetchReports();
-        return;
-      }
-
-      alert(data.error || 'Failed to update report');
     } catch (error) {
       console.error('Failed to update report:', error);
-      alert('Failed to update report');
     }
   };
 
   const createBan = async (request: CreateBanRequest) => {
-    if (!canCreateBans) {
-      alert('Your role cannot create bans');
-      return false;
-    }
-
+    if (!canCreateBans) return false;
     try {
       const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/ban`, {
         method: 'POST',
         body: JSON.stringify(request),
       });
-
-      if (response.status === 401) {
-        logout();
-        return false;
-      }
-
+      if (response.status === 401) { logout(); return false; }
       if (response.ok) {
-        await storeCSRFFromResponse(response);
-        const data = await response.json();
-        alert(data.status === 'already_banned' ? 'User is already banned' : 'User banned successfully');
         fetchBans();
         fetchReports();
         return true;
       }
     } catch (error) {
       console.error('Failed to create ban:', error);
-      alert('Failed to create ban');
     }
-
     return false;
   };
 
@@ -466,6 +451,53 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
     });
   };
 
+  const unban = async (banId: string) => {
+    if (!canManageBans) return;
+    try {
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/ban/${banId}`, {
+        method: 'DELETE',
+      });
+      if (response.status === 401) return logout();
+      if (response.ok) {
+        fetchBans();
+        fetchReports();
+      }
+    } catch (error) {
+      console.error('Failed to unban:', error);
+    }
+  };
+
+  const createAccount = async () => {
+    if (!canManageAccounts) return;
+    setSubmittingAccount(true);
+    try {
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/accounts`, {
+        method: 'POST',
+        body: JSON.stringify({ username: accountUsername.trim(), password: accountPassword, role: accountRole }),
+      });
+      if (response.ok) {
+        setAccountUsername('');
+        setAccountPassword('');
+        setAccountPage(1);
+        fetchAccounts();
+      }
+    } finally {
+      setSubmittingAccount(false);
+    }
+  };
+
+  const deleteAccount = async (targetUsername: string) => {
+    if (!canManageAccounts || !window.confirm(`Delete ${targetUsername}?`)) return;
+    try {
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/accounts/${encodeURIComponent(targetUsername)}`, {
+        method: 'DELETE',
+      });
+      if (response.ok) fetchAccounts();
+    } catch (error) {
+      console.error('Failed to delete account:', error);
+    }
+  };
+
   const closeBanModal = () => {
     if (submittingBan) return;
     setBanModal((current) => ({ ...current, open: false }));
@@ -477,25 +509,19 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
       alert(`Missing ${banModal.target === 'session' ? 'session ID' : 'IP address'} for ban`);
       return;
     }
-
     if (!banModal.reason.trim()) {
       alert('Please enter a reason');
       return;
     }
-
     const request: CreateBanRequest = {
       reason: banModal.reason.trim(),
     };
-
     if (banModal.target === 'session') {
       request.session_id = banModal.sessionId;
-      if (banModal.ip) {
-        request.ip = banModal.ip;
-      }
+      if (banModal.ip) request.ip = banModal.ip;
     } else {
       request.ip = banModal.ip;
     }
-
     if (banModal.mode === 'temporary') {
       const expiryDate = buildExpiryDate(banModal.durationValue, banModal.durationUnit);
       if (!expiryDate) {
@@ -504,1134 +530,1321 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
       }
       request.expiry_date = expiryDate;
     }
-
     setSubmittingBan(true);
     const success = await createBan(request);
     setSubmittingBan(false);
-
-    if (!success) {
-      return;
-    }
-
-    if (banModal.clearManualInputsOnSubmit) {
-      setManualBanSessionId('');
-      setManualBanIP('');
-      setManualBanReason('');
-    }
-
-    setBanModal((current) => ({ ...current, open: false }));
-  };
-
-  const fetchBans = async () => {
-    try {
-      const params = new URLSearchParams({
-        status: banFilter,
-        limit: banLimit,
-      });
-
-      const normalizedBanSearch = deferredBanSearch.trim();
-      if (normalizedBanSearch) {
-        params.set('ip', normalizedBanSearch);
+    if (success) {
+      if (banModal.clearManualInputsOnSubmit) {
+        setManualBanSessionId('');
+        setManualBanIP('');
+        setManualBanReason('');
       }
-
-      const response = await adminFetch(
-        `${import.meta.env.VITE_API_URL}/api/v1/admin/bans?${params.toString()}`
-      );
-
-      if (response.status === 401) return logout();
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data.metrics) {
-          setServerBanMetrics({
-            active: data.metrics.active || 0,
-            inactive: data.metrics.inactive || 0,
-            total: data.metrics.total || 0,
-          });
-        }
-        setBans(data.bans || []);
-      }
-    } catch (error) {
-      console.error('Failed to fetch bans:', error);
+      closeBanModal();
     }
   };
 
-  const unban = async (banId: string) => {
-    if (!canManageBans) {
-      alert('Your role cannot remove bans');
-      return;
-    }
+  // Effects for data sync
+  useEffect(() => {
+    setAccountPage(1);
+  }, [deferredAccountSearch]);
 
-    try {
-      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/ban/${banId}`, {
-        method: 'DELETE',
-      });
-
-      if (response.status === 401) return logout();
-
-      if (response.ok) {
-        await storeCSRFFromResponse(response);
-        alert('User unbanned successfully');
-        fetchBans();
-        fetchReports();
-      }
-    } catch (error) {
-      console.error('Failed to unban:', error);
-      alert('Failed to unban');
-    }
-  };
-
-  const fetchAccounts = async () => {
-    if (!canManageAccounts) return;
-
-    try {
-      const params = new URLSearchParams({
-        page: String(accountPage),
-        limit: String(accountPageSize),
-      });
-
-      const normalizedAccountSearch = deferredAccountSearch.trim();
-      if (normalizedAccountSearch) {
-        params.set('q', normalizedAccountSearch);
-      }
-
-      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/accounts?${params.toString()}`);
-      if (response.status === 401) return logout();
-      if (!response.ok) return;
-
-      const data = await response.json();
-      const nextAccounts = data.accounts || [];
-      const nextTotal = Number(data.total || 0);
-
-      if (nextAccounts.length === 0 && nextTotal > 0 && accountPage > 1) {
-        setAccountPage((current) => Math.max(1, current - 1));
-        return;
-      }
-
-      setAccounts(nextAccounts);
-      setAccountTotal(nextTotal);
-    } catch (error) {
-      console.error('Failed to fetch admin accounts:', error);
-    }
-  };
-
-  const createAccount = async () => {
-    if (!canManageAccounts) return;
-    if (!accountUsername.trim() || !accountPassword.trim()) {
-      alert('Please enter username and password');
-      return;
-    }
-
-    setSubmittingAccount(true);
-    try {
-      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/accounts`, {
-        method: 'POST',
-        body: JSON.stringify({
-          username: accountUsername.trim(),
-          password: accountPassword,
-          role: accountRole,
-        }),
-      });
-
-      if (response.status === 401) return logout();
-      if (response.ok) {
-        await storeCSRFFromResponse(response);
-        setAccountUsername('');
-        setAccountPassword('');
-        setAccountRole('moderator');
-        await fetchAccounts();
-        alert('Admin account created');
-        return;
-      }
-
-      const data = await response.json().catch(() => ({}));
-      alert(data.error || 'Failed to create admin account');
-    } catch (error) {
-      console.error('Failed to create admin account:', error);
-      alert('Failed to create admin account');
-    } finally {
-      setSubmittingAccount(false);
-    }
-  };
-
-  const deleteAccount = async (targetUsername: string) => {
-    if (!canManageAccounts) return;
-    if (!window.confirm(`Delete admin account "${targetUsername}"?`)) return;
-
-    try {
-      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/accounts/${encodeURIComponent(targetUsername)}`, {
-        method: 'DELETE',
-      });
-
-      if (response.status === 401) return logout();
-      if (response.ok) {
-        await storeCSRFFromResponse(response);
-        await fetchAccounts();
-        alert('Admin account deleted');
-        return;
-      }
-
-      const data = await response.json().catch(() => ({}));
-      alert(data.error || 'Failed to delete admin account');
-    } catch (error) {
-      console.error('Failed to delete admin account:', error);
-      alert('Failed to delete admin account');
-    }
-  };
+  useEffect(() => { if (authReady && isAuthenticated) fetchReports(); }, [authReady, isAuthenticated, reportStatusFilter, reportLimit]);
+  useEffect(() => { if (authReady && isAuthenticated) fetchBans(); }, [authReady, isAuthenticated, banFilter, banLimit, deferredBanSearch]);
+  useEffect(() => { if (authReady && isAuthenticated && canManageAccounts) fetchAccounts(); }, [authReady, isAuthenticated, canManageAccounts, accountPage, deferredAccountSearch]);
 
   if (!authReady) {
     return (
-      <div className="min-h-screen bg-[#050816] text-white">
-        <div className="fixed inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(34,211,238,0.15),_transparent_28%),radial-gradient(circle_at_80%_20%,_rgba(244,114,182,0.14),_transparent_22%),linear-gradient(180deg,_#0a1020_0%,_#050816_55%,_#02040b_100%)]" />
-        <div className="relative flex min-h-screen items-center justify-center px-6">
-          <div className="rounded-[28px] border border-white/10 bg-white/6 px-6 py-4 text-sm text-slate-300 backdrop-blur-xl">
-            Restoring moderation session...
-          </div>
-        </div>
+      <div className="flex min-h-screen items-center justify-center bg-[#050816]">
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="flex flex-col items-center gap-4"
+        >
+          <div className="h-12 w-12 animate-spin rounded-full border-4 border-cyan-400/20 border-t-cyan-400" />
+          <p className="text-sm font-medium text-slate-400">Initializing Pairline Console...</p>
+        </motion.div>
       </div>
     );
   }
 
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen overflow-hidden bg-[#050816] text-white">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(34,211,238,0.18),_transparent_26%),radial-gradient(circle_at_80%_20%,_rgba(244,114,182,0.16),_transparent_20%),linear-gradient(180deg,_#0a1020_0%,_#050816_50%,_#02040b_100%)]" />
-        <div className="relative mx-auto flex min-h-screen max-w-6xl items-center justify-center px-6 py-12">
-          <div className="grid w-full gap-8 lg:grid-cols-[1.15fr_0.85fr]">
-            <section className="rounded-[36px] border border-white/10 bg-white/6 p-8 backdrop-blur-2xl shadow-[0_30px_140px_rgba(3,8,20,0.65)]">
-              <div className="mb-8 inline-flex rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em] text-cyan-100">
-                Moderation Console
-              </div>
-              <h1 className="max-w-xl text-4xl font-semibold leading-tight text-white sm:text-5xl">
-                Review reports and act fast with a cleaner admin workspace.
-              </h1>
-              <p className="mt-5 max-w-xl text-sm leading-7 text-slate-300 sm:text-base">
-                Designed for high-signal moderation: pending queues, active bans, transcript review, and fast response controls in one modern surface.
-              </p>
-              <div className="mt-10 grid gap-4 sm:grid-cols-3">
-                <div className={metricCardClass}>
-                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Signal</p>
-                  <p className="mt-3 text-3xl font-semibold text-white">Live</p>
-                  <p className="mt-2 text-sm text-slate-400">Reports and bans stay in one moderation stream.</p>
-                </div>
-                <div className={metricCardClass}>
-                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Focus</p>
-                  <p className="mt-3 text-3xl font-semibold text-white">Sharp</p>
-                  <p className="mt-2 text-sm text-slate-400">Readable spacing, fast actions, less scanning fatigue.</p>
-                </div>
-                <div className={metricCardClass}>
-                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Control</p>
-                  <p className="mt-3 text-3xl font-semibold text-white">Direct</p>
-                  <p className="mt-2 text-sm text-slate-400">Jump from transcripts to bans without context switching.</p>
-                </div>
-              </div>
-            </section>
+      <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#050816]">
+        {/* Animated Background Elements */}
+        <div className="absolute inset-0 z-0">
+          <div className="absolute top-[-10%] left-[-10%] h-[40%] w-[40%] rounded-full bg-cyan-500/10 blur-[120px]" />
+          <div className="absolute bottom-[-10%] right-[-10%] h-[40%] w-[40%] rounded-full bg-rose-500/10 blur-[120px]" />
+        </div>
 
-            <section className="rounded-[36px] border border-white/10 bg-slate-950/70 p-8 backdrop-blur-2xl shadow-[0_24px_100px_rgba(2,6,23,0.6)]">
-              <div className="mb-8">
-                <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Secure Access</p>
-                <h2 className="mt-3 text-2xl font-semibold text-white">Admin Login</h2>
-              </div>
-              <form onSubmit={login} className="space-y-5">
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-300">Username</label>
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="relative z-10 w-full max-w-md px-6"
+        >
+          <div className="mb-8 text-center">
+            <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-white text-slate-950 shadow-[0_0_30px_rgba(255,255,255,0.2)]">
+              <Shield size={32} />
+            </div>
+            <h1 className="text-4xl font-bold tracking-tight text-slate-300">Pairline</h1>
+            <p className="mt-2 text-slate-400">Moderation & Safety Console</p>
+          </div>
+
+          <div className={`${surfaceCardClass} p-8`}>
+            <form onSubmit={login} className="space-y-6">
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-300">Admin Username</label>
+                <div className="relative">
+                  <Users className="absolute top-3.5 left-4 text-slate-700" size={18} />
                   <input
                     type="text"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
-                    className={inputClass}
+                    className={`${inputClass} pl-12`}
+                    placeholder="Enter username"
                     required
                   />
                 </div>
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-300">Password</label>
-                  <div className="relative">
-                    <input
-                      type={showLoginPassword ? 'text' : 'password'}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className={`${inputClass} pr-24`}
-                      required
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowLoginPassword((current) => !current)}
-                      className="absolute inset-y-1.5 right-1.5 rounded-xl border border-white/10 bg-white/8 px-3 text-xs font-semibold uppercase tracking-[0.16em] text-slate-300 transition hover:bg-white/12"
-                    >
-                      {showLoginPassword ? 'Hide' : 'Show'}
-                    </button>
-                  </div>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-300">Security Key</label>
+                <div className="relative">
+                  <Shield className="absolute top-3.5 left-4 text-slate-700" size={18} />
+                  <input
+                    type={showLoginPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className={`${inputClass} px-12`}
+                    placeholder="Enter password"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowLoginPassword(!showLoginPassword)}
+                    className="absolute top-3 right-4 text-slate-700 hover:text-slate-300"
+                  >
+                    {showLoginPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
                 </div>
-                <button
-                  type="submit"
-                  className="w-full rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
-                >
-                  Enter Dashboard
-                </button>
-              </form>
-            </section>
+              </div>
+
+              <button
+                type="submit"
+                className="group relative w-full overflow-hidden rounded-xl bg-white py-3.5 text-sm font-bold text-slate-950 transition-all hover:scale-[1.02] active:scale-[0.98]"
+              >
+                <div className="absolute inset-0 bg-gradient-to-r from-cyan-400/0 via-cyan-400/20 to-cyan-400/0 opacity-0 transition-opacity group-hover:opacity-100" />
+                Sign In to Console
+              </button>
+            </form>
           </div>
-        </div>
+
+          <p className="mt-8 text-center text-xs text-slate-700">
+            Authorized personnel only. All actions are logged.
+          </p>
+        </motion.div>
       </div>
     );
   }
 
-  const quickActionTitle =
-    currentTab === 'reports' ? 'Review Controls' : currentTab === 'bans' ? 'Ban Controls' : 'Account Controls';
-  const permanentBans = bans.filter((ban) => !ban.expires_at);
-  const temporaryBans = bans.filter((ban) => Boolean(ban.expires_at));
-  const accountPageCount = Math.max(1, Math.ceil(accountTotal / accountPageSize));
-  const accountRangeStart = accountTotal === 0 ? 0 : (accountPage - 1) * accountPageSize + 1;
-  const accountRangeEnd = accountTotal === 0 ? 0 : Math.min(accountTotal, accountPage * accountPageSize);
-
-  const renderBanCard = (ban: Ban) => (
-    <article
-      key={ban.id}
-      className="rounded-[28px] border border-white/10 bg-white/5 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.2)]"
-    >
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${banStatusClass(ban.is_active)}`}>
-              {ban.is_active ? 'Active' : 'Inactive'}
-            </span>
-            <span className="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">
-              {ban.expires_at ? 'Temporary' : 'Permanent'}
-            </span>
-            <span className="text-xs uppercase tracking-[0.18em] text-slate-500">{formatDate(ban.created_at)}</span>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <div className="min-w-0">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Ban ID</p>
-              <p className="mt-1 break-all text-sm font-medium text-slate-200">{formatShort(ban.id, 16)}</p>
-            </div>
-            <div className="min-w-0">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Session ID</p>
-              <p className="mt-1 break-all text-sm font-medium text-slate-200">{formatShort(ban.session_id, 16)}</p>
-            </div>
-            <div className="min-w-0">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">IP Address</p>
-              <p className="mt-1 break-all text-sm font-medium text-slate-200">{ban.ip_address || 'N/A'}</p>
-            </div>
-            <div className="min-w-0">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Banned By</p>
-              <p className="mt-1 break-all text-sm font-medium text-slate-200">{ban.banned_by_username || 'N/A'}</p>
-            </div>
-          </div>
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Reason</p>
-            <p className="mt-1 text-sm text-slate-200">{ban.reason}</p>
-          </div>
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Expires</p>
-            <p className="mt-1 text-sm text-slate-200">{ban.expires_at ? formatDate(ban.expires_at) : 'Permanent'}</p>
-          </div>
-        </div>
-
-        <div className="xl:text-right">
-          {ban.is_active && canManageBans ? (
-            <button
-              onClick={() => unban(ban.id)}
-              className={`${actionButtonClass} bg-emerald-400/15 text-emerald-100 hover:bg-emerald-400/25`}
-            >
-              Unban
-            </button>
-          ) : ban.is_active ? (
-            <div className="text-sm text-slate-400">
-              Admin or root access required to remove bans
-            </div>
-          ) : (
-            <div className="text-sm text-slate-400">
-              Unbanned by {ban.unbanned_by_username || 'Unknown'}
-            </div>
-          )}
-        </div>
-      </div>
-    </article>
-  );
-
   return (
-    <div className="min-h-screen bg-[#050816] text-white">
-      <div className="fixed inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(34,211,238,0.15),_transparent_28%),radial-gradient(circle_at_80%_20%,_rgba(244,114,182,0.14),_transparent_22%),radial-gradient(circle_at_50%_100%,_rgba(56,189,248,0.12),_transparent_28%),linear-gradient(180deg,_#0a1020_0%,_#050816_55%,_#02040b_100%)]" />
-      <div className="relative mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-        <header className={`${surfaceCardClass} sticky top-4 z-20 mb-6 overflow-hidden`}>
-          <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,0.09),transparent_35%,transparent_65%,rgba(34,211,238,0.12))]" />
-          <div className="relative flex flex-col gap-5 px-6 py-6 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <div className="inline-flex rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-cyan-100">
-                Admin Panel
-              </div>
-              <h1 className="mt-3 text-3xl font-semibold text-white">Trust & Safety Dashboard</h1>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">
-                Review incoming reports, inspect transcripts, and enforce session or IP bans from a single moderation workspace.
-              </p>
-            </div>
+    <div className="h-screen overflow-hidden bg-[#050816] text-slate-200 flex flex-col">
+      {/* Background Gradients */}
+      <div className="fixed inset-0 z-0">
+        <div className="absolute top-0 left-0 h-[500px] w-[500px] rounded-full bg-cyan-500/5 blur-[100px]" />
+        <div className="absolute bottom-0 right-0 h-[500px] w-[500px] rounded-full bg-rose-500/5 blur-[100px]" />
+      </div>
 
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <div className="inline-flex rounded-full border border-white/10 bg-white/6 px-3 py-2 text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">
-                Role: {role || 'unknown'}
-              </div>
-              <div className="inline-flex rounded-full border border-white/10 bg-white/6 p-1">
-                <button onClick={() => setCurrentTab('reports')} className={tabButtonClass(currentTab === 'reports')}>
-                  Reports
+      {/* Mobile Top Bar */}
+      <div className="relative z-40 flex h-16 shrink-0 items-center justify-between border-b border-white/5 bg-slate-950/50 px-6 backdrop-blur-xl lg:hidden">
+        <div className="flex items-center gap-3">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white text-slate-950">
+            <Shield size={16} />
+          </div>
+          <h2 className="text-base font-bold text-slate-300">Pairline</h2>
+        </div>
+        <button
+          onClick={() => setIsMobileMenuOpen(true)}
+          className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/5 text-slate-400 hover:text-white"
+        >
+          <Menu size={20} />
+        </button>
+      </div>
+
+      {/* Mobile Menu Drawer */}
+      <AnimatePresence>
+        {isMobileMenuOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="fixed inset-0 z-[60] bg-slate-950/60 backdrop-blur-sm lg:hidden"
+            />
+            <motion.div
+              initial={{ x: '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              className="fixed inset-y-0 left-0 z-[70] w-[280px] bg-slate-950 border-r border-white/10 p-6 shadow-2xl lg:hidden flex flex-col"
+            >
+              <div className="mb-10 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-slate-950">
+                    <Shield size={20} />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-slate-300">Pairline</h2>
+                    <p className="text-[10px] uppercase tracking-widest text-slate-700">Admin Console</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/5 text-slate-400 hover:text-white"
+                >
+                  <X size={20} />
                 </button>
-                <button onClick={() => setCurrentTab('bans')} className={tabButtonClass(currentTab === 'bans')}>
-                  Bans
+              </div>
+
+              <nav className="flex-1 space-y-2 overflow-y-auto pr-2 custom-scrollbar">
+                <button 
+                  onClick={() => {
+                    setCurrentTab('reports');
+                    setIsMobileMenuOpen(false);
+                  }} 
+                  className={tabButtonClass(currentTab === 'reports')}
+                >
+                  <AlertTriangle size={18} />
+                  Reports Queue
+                  {serverReportMetrics.pending > 0 && (
+                    <span className="ml-auto flex h-5 w-5 items-center justify-center rounded-full bg-rose-500 text-[10px] font-bold text-slate-300">
+                      {serverReportMetrics.pending}
+                    </span>
+                  )}
+                </button>
+                <button 
+                  onClick={() => {
+                    setCurrentTab('bans');
+                    setIsMobileMenuOpen(false);
+                  }} 
+                  className={tabButtonClass(currentTab === 'bans')}
+                >
+                  <BanIcon size={18} />
+                  Ban Registry
                 </button>
                 {canManageAccounts && (
-                  <button onClick={() => setCurrentTab('accounts')} className={tabButtonClass(currentTab === 'accounts')}>
-                    Accounts
+                  <button 
+                    onClick={() => {
+                      setCurrentTab('accounts');
+                      setIsMobileMenuOpen(false);
+                    }} 
+                    className={tabButtonClass(currentTab === 'accounts')}
+                  >
+                    <Users size={18} />
+                    Admin Accounts
                   </button>
                 )}
+              </nav>
+
+              <div className="mt-auto pt-6 border-t border-white/5">
+                <div className="flex flex-col gap-4">
+                  <div className="flex items-center gap-3 px-2">
+                    <div className="h-10 w-10 rounded-full bg-gradient-to-br from-cyan-400 to-blue-500 shadow-lg" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-bold text-slate-300">{currentAdminUsername}</p>
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-700 leading-none mt-1">{role}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={logout}
+                    className="flex w-full items-center gap-3 rounded-xl bg-rose-500/10 px-4 py-3 text-sm font-bold uppercase tracking-[0.14em] text-rose-400 transition-all hover:bg-rose-500/20 active:scale-[0.98]"
+                  >
+                    <LogOut size={16} />
+                    Sign Out
+                  </button>
+                </div>
               </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      <div className="relative z-10 flex h-full overflow-hidden">
+        {/* Sidebar */}
+        <aside className="hidden w-72 border-r border-white/5 bg-slate-950/20 backdrop-blur-xl lg:block">
+          <div className="flex h-full flex-col p-6">
+            <div className="mb-10 flex items-center gap-3 px-2">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-slate-950">
+                <Shield size={20} />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-slate-300">Pairline</h2>
+                <p className="text-[10px] uppercase tracking-widest text-slate-700">Admin Console</p>
+              </div>
+            </div>
+
+            <nav className="flex-1 space-y-2 overflow-y-auto pr-2 custom-scrollbar">
+              <button onClick={() => setCurrentTab('reports')} className={tabButtonClass(currentTab === 'reports')}>
+                <AlertTriangle size={18} />
+                Reports Queue
+                {serverReportMetrics.pending > 0 && (
+                  <span className="ml-auto flex h-5 w-5 items-center justify-center rounded-full bg-rose-500 text-[10px] font-bold text-slate-300">
+                    {serverReportMetrics.pending}
+                  </span>
+                )}
+              </button>
+              <button onClick={() => setCurrentTab('bans')} className={tabButtonClass(currentTab === 'bans')}>
+                <BanIcon size={18} />
+                Ban Registry
+              </button>
+              {canManageAccounts && (
+                <button onClick={() => setCurrentTab('accounts')} className={tabButtonClass(currentTab === 'accounts')}>
+                  <Users size={18} />
+                  Admin Accounts
+                </button>
+              )}
+            </nav>
+
+            <div className="mt-auto relative">
+              <AnimatePresence>
+                {isUserMenuOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                    className="absolute bottom-full left-0 mb-4 w-full rounded-2xl border border-white/10 bg-slate-900/90 p-2 shadow-2xl backdrop-blur-xl"
+                  >
+                    <div className="mb-2 border-b border-white/5 px-4 py-3">
+                      <p className="truncate text-xs font-bold text-slate-300 tracking-wide uppercase">{currentAdminUsername}</p>
+                      <p className="mt-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-700">{role}</p>
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        logout();
+                      }}
+                      className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-bold uppercase tracking-[0.14em] text-rose-400 transition-all hover:bg-rose-500/10 active:scale-[0.98]"
+                    >
+                      <LogOut size={16} />
+                      Sign Out
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
               <button
-                onClick={logout}
-                className="rounded-full border border-rose-300/20 bg-rose-400/10 px-4 py-2 text-sm font-semibold text-rose-100 transition hover:bg-rose-400/20"
+                onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
+                className={`group flex w-full items-center gap-3 rounded-2xl border p-4 transition-all duration-300 ${
+                  isUserMenuOpen 
+                    ? 'border-electric-cyan/40 bg-electric-cyan/10 shadow-[0_0_15px_rgba(34,211,238,0.1)]' 
+                    : 'border-white/5 bg-white/5 hover:border-white/10 hover:bg-white/[0.07]'
+                }`}
               >
-                Logout
+                <div className="relative">
+                  <div className="h-10 w-10 rounded-full bg-gradient-to-br from-cyan-400 to-blue-500 shadow-lg" />
+                  <div className={`absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-slate-950 bg-emerald-500 transition-transform ${isUserMenuOpen ? 'scale-110' : 'scale-100'}`} />
+                </div>
+                <div className="min-w-0 flex-1 text-left">
+                  <p className="truncate text-sm font-bold text-slate-300">{currentAdminUsername}</p>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-700 leading-none mt-1">{role}</p>
+                </div>
+                <div className={`text-slate-600 transition-transform duration-300 ${isUserMenuOpen ? 'rotate-180' : ''}`}>
+                  <RefreshCw size={14} className={isUserMenuOpen ? 'animate-spin-slow' : ''} />
+                </div>
               </button>
             </div>
           </div>
-        </header>
+        </aside>
 
-        <section className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-          <div className={metricCardClass}>
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Pending Reports</p>
-            <p className="mt-3 text-3xl font-semibold text-white">{serverReportMetrics.pending}</p>
-            <p className="mt-2 text-sm text-slate-400">Items still waiting for human review.</p>
-          </div>
-          <div className={metricCardClass}>
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Approved</p>
-            <p className="mt-3 text-3xl font-semibold text-white">{serverReportMetrics.approved}</p>
-            <p className="mt-2 text-sm text-slate-400">Reports already acted on.</p>
-          </div>
-          <div className={metricCardClass}>
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Rejected</p>
-            <p className="mt-3 text-3xl font-semibold text-white">{serverReportMetrics.rejected}</p>
-            <p className="mt-2 text-sm text-slate-400">Reports closed without action.</p>
-          </div>
-          <div className={metricCardClass}>
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Active Bans</p>
-            <p className="mt-3 text-3xl font-semibold text-white">{serverBanMetrics.active}</p>
-            <p className="mt-2 text-sm text-slate-400">Currently enforced session or IP blocks.</p>
-          </div>
-          <div className={metricCardClass}>
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Ban History</p>
-            <p className="mt-3 text-3xl font-semibold text-white">{serverBanMetrics.total}</p>
-            <p className="mt-2 text-sm text-slate-400">Includes active and inactive records.</p>
-          </div>
-        </section>
-
-        <div className="flex flex-col gap-6">
-          <aside className="space-y-6">
-            <section className={`${surfaceCardClass} p-6`}>
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Quick Actions</p>
-                  <h2 className="mt-2 text-xl font-semibold text-white">{quickActionTitle}</h2>
-                </div>
+        {/* Main Content */}
+        <main className="flex-1 overflow-y-auto">
+          <div className="mx-auto max-w-6xl p-6 lg:p-10">
+            {/* Header */}
+            <header className="mb-10 flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h1 className="text-3xl font-bold text-slate-300">
+                  {currentTab === 'reports' ? 'Reports Queue' : currentTab === 'bans' ? 'Ban Registry' : 'Admin Accounts'}
+                </h1>
+                <p className="mt-1 text-slate-400">
+                  {currentTab === 'reports' ? 'Review and act on user reports in real-time.' : currentTab === 'bans' ? 'Manage active and historical user bans.' : 'Manage moderation team access.'}
+                </p>
               </div>
 
-              {currentTab === 'reports' ? (
-                <div className="mt-6 flex flex-col gap-4 lg:flex-row lg:items-end">
-                  <div className="flex flex-col gap-2">
-                    <label className="text-xs uppercase tracking-[0.2em] text-slate-400">Status Filter</label>
-                    <div className="flex flex-wrap gap-2">
-                      <button onClick={() => setReportStatusFilter('pending')} className={filterButtonClass(reportStatusFilter === 'pending')}>Pending</button>
-                      <button onClick={() => setReportStatusFilter('decided')} className={filterButtonClass(reportStatusFilter === 'decided')}>Decided</button>
-                      <button onClick={() => setReportStatusFilter('all')} className={filterButtonClass(reportStatusFilter === 'all')}>All</button>
+            </header>
+
+            {/* Metrics Grid */}
+            {/* Tab Content */}
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={currentTab}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="space-y-6"
+              >
+                {currentTab === 'reports' && (
+                  <div className="space-y-6">
+                    {/* Reports Metrics */}
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                      <div className={metricCardClass('pending')}>
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-danger-rose/10 text-danger-rose border border-danger-rose/20 shadow-[inset_0_0_20px_rgba(244,63,94,0.05)]">
+                          <Activity size={20} />
+                          <div className="hud-bracket hud-bracket-tl" />
+                          <div className="hud-bracket-br" />
+                        </div>
+                        <div className="flex flex-col">
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-slate-700 mb-0.5">Pending Reports</p>
+                          <p className="font-heading text-2xl font-bold text-slate-300">{serverReportMetrics.pending}</p>
+                        </div>
+                      </div>
+                      <div className={metricCardClass('approved')}>
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-success-emerald/10 text-success-emerald border border-success-emerald/20 shadow-[inset_0_0_20px_rgba(52,211,153,0.05)]">
+                          <CheckCircle2 size={20} />
+                          <div className="hud-bracket hud-bracket-tl" />
+                          <div className="hud-bracket-br" />
+                        </div>
+                        <div className="flex flex-col">
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-slate-700 mb-0.5">Approved Actions</p>
+                          <p className="font-heading text-2xl font-bold text-slate-300">{serverReportMetrics.approved}</p>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <label className="text-xs uppercase tracking-[0.2em] text-slate-400">Show Limit</label>
-                    <select
-                      value={reportLimit}
-                      onChange={(e) => setReportLimit(e.target.value)}
-                      className={`${inputClass} appearance-none bg-white/5 [&>option]:bg-slate-900 w-full lg:w-48`}
-                    >
-                      <option value="10">10 entries</option>
-                      <option value="20">20 entries</option>
-                      <option value="50">50 entries</option>
-                      <option value="all">All entries (Max)</option>
-                    </select>
-                  </div>
-                  <div className="flex flex-wrap gap-2 lg:ml-auto">
-                    <button
-                      onClick={fetchReports}
-                      className={`${actionButtonClass} bg-white text-slate-950 hover:bg-cyan-100`}
-                    >
-                      Refresh Reports
-                    </button>
-                    <button
-                      onClick={() => {
-                        selectedReports.forEach((id) => updateReportStatus(id, 'approved'));
-                        setSelectedReports(new Set());
-                      }}
-                      disabled={selectedReports.size === 0}
-                      className={`${actionButtonClass} bg-emerald-400/15 text-emerald-100 hover:bg-emerald-400/25`}
-                    >
-                      Approve Selected ({selectedReports.size})
-                    </button>
-                    <button
-                      onClick={() => {
-                        selectedReports.forEach((id) => updateReportStatus(id, 'rejected'));
-                        setSelectedReports(new Set());
-                      }}
-                      disabled={selectedReports.size === 0}
-                      className={`${actionButtonClass} bg-rose-400/15 text-rose-100 hover:bg-rose-400/25`}
-                    >
-                      Reject Selected ({selectedReports.size})
-                    </button>
-                  </div>
-                </div>
-              ) : currentTab === 'bans' ? (
-                <div className="mt-6 flex flex-col gap-4 lg:flex-row lg:items-end">
-                  <div className="flex flex-col gap-2">
-                    <label className="text-xs uppercase tracking-[0.2em] text-slate-400">Ban Filter</label>
-                    <div className="flex flex-wrap gap-2">
-                      <button onClick={() => setBanFilter('active')} className={filterButtonClass(banFilter === 'active')}>
-                        Active
-                      </button>
-                      <button onClick={() => setBanFilter('inactive')} className={filterButtonClass(banFilter === 'inactive')}>
-                        Inactive
-                      </button>
-                      <button onClick={() => setBanFilter('all')} className={filterButtonClass(banFilter === 'all')}>
-                        All
-                      </button>
+                    <div className={`${surfaceCardClass} p-5`}>
+                      <div className="grid gap-4 lg:grid-cols-[auto_auto_1fr] lg:items-end">
+                        <div>
+                          <p className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-700">Status Filter</p>
+                          <div className="flex flex-wrap gap-2">
+                            <button onClick={() => setReportStatusFilter('pending')} className={filterButtonClass(reportStatusFilter === 'pending')}>Pending</button>
+                            <button onClick={() => setReportStatusFilter('decided')} className={filterButtonClass(reportStatusFilter === 'decided')}>Decided</button>
+                            <button onClick={() => setReportStatusFilter('all')} className={filterButtonClass(reportStatusFilter === 'all')}>All</button>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="mb-2 block text-xs font-bold uppercase tracking-widest text-slate-700">Show Limit</label>
+                          <select
+                            value={reportLimit}
+                            onChange={(e) => setReportLimit(e.target.value)}
+                            className={`${compactSelectClass} min-w-[150px] appearance-none [&>option]:bg-slate-900`}
+                          >
+                            <option value="10">10 entries</option>
+                            <option value="20">20 entries</option>
+                            <option value="50">50 entries</option>
+                            <option value="all">All entries</option>
+                          </select>
+                        </div>
+                        <div className="flex flex-wrap gap-2 lg:justify-end">
+                          <button
+                            onClick={fetchReports}
+                            className={`${actionButtonClass} bg-white text-slate-950 hover:bg-cyan-100`}
+                          >
+                            <RefreshCw size={16} />
+                            Refresh Reports
+                          </button>
+                          <button
+                            onClick={() => {
+                              void Promise.all([...selectedReports].map((id) => updateReportStatus(id, 'approved')));
+                              setSelectedReports(new Set());
+                            }}
+                            disabled={selectedReports.size === 0}
+                            className={`${actionButtonClass} bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20`}
+                          >
+                            <CheckCircle2 size={16} />
+                            Approve Selected ({selectedReports.size})
+                          </button>
+                          <button
+                            onClick={() => {
+                              void Promise.all([...selectedReports].map((id) => updateReportStatus(id, 'rejected')));
+                              setSelectedReports(new Set());
+                            }}
+                            disabled={selectedReports.size === 0}
+                            className={`${actionButtonClass} bg-rose-500/10 text-rose-300 hover:bg-rose-500/20`}
+                          >
+                            <XCircle size={16} />
+                            Reject Selected ({selectedReports.size})
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <label className="text-xs uppercase tracking-[0.2em] text-slate-400">Show Limit</label>
-                    <select
-                      value={banLimit}
-                      onChange={(e) => setBanLimit(e.target.value)}
-                      className={`${inputClass} appearance-none bg-white/5 [&>option]:bg-slate-900 w-full lg:w-48`}
-                    >
-                      <option value="10">10 entries</option>
-                      <option value="20">20 entries</option>
-                      <option value="50">50 entries</option>
-                      <option value="all">All entries (Max)</option>
-                    </select>
-                  </div>
-                  <div className="flex flex-wrap gap-2 lg:ml-auto">
-                    <button
-                      onClick={fetchBans}
-                      className={`${actionButtonClass} bg-white text-slate-950 hover:bg-cyan-100`}
-                    >
-                      Refresh Bans
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="mt-6 flex flex-wrap gap-2">
-                  <button
-                    onClick={() => void fetchAccounts()}
-                    className={`${actionButtonClass} bg-white text-slate-950 hover:bg-cyan-100`}
-                  >
-                    Refresh Accounts
-                  </button>
-                </div>
-              )}
-            </section>
 
-            {currentTab === 'bans' && canCreateBans && (
-              <section className={`${surfaceCardClass} p-6`}>
-                <div className="mb-5">
-                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Manual Ban</p>
-                  <h2 className="mt-2 text-xl font-semibold text-white">Create a session or IP ban</h2>
-                </div>
+                    {reports.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-white/10 py-20">
+                        <div className="mb-4 rounded-full bg-white/5 p-4 text-slate-700">
+                          <CheckCircle2 size={40} />
+                        </div>
+                        <p className="text-lg font-medium text-slate-300">{reportStatusFilter === 'pending' ? 'Queue Clear' : 'No Reports Found'}</p>
+                        <p className="text-sm text-slate-700">
+                          {reportStatusFilter === 'pending' ? 'No pending reports at the moment.' : 'There are no reports for the selected filter.'}
+                        </p>
+                      </div>
+                    ) : (
+                      reports.map((report) => (
+                        <div key={report.id} className="surface-card rounded-[20px] overflow-hidden p-0 transition-all duration-300 hover:border-white/20">
+                          <div className="hud-bracket hud-bracket-tl" />
+                          <div className="hud-bracket-tr" />
+                          <div className="hud-bracket-bl" />
+                          <div className="hud-bracket-br" />
 
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 items-end">
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-300">Session ID</label>
-                    <input
-                      type="text"
-                      value={manualBanSessionId}
-                      onChange={(e) => setManualBanSessionId(e.target.value)}
-                      className={inputClass}
-                      placeholder="Paste a session ID"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-300">IP Address</label>
-                    <input
-                      type="text"
-                      value={manualBanIP}
-                      onChange={(e) => setManualBanIP(e.target.value)}
-                      className={inputClass}
-                      placeholder="Or block an IP"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-300">Reason</label>
-                    <input
-                      type="text"
-                      value={manualBanReason}
-                      onChange={(e) => setManualBanReason(e.target.value)}
-                      className={inputClass}
-                      placeholder="Explain why this user is being blocked"
-                      required
-                    />
-                  </div>
-                  <button
-                    onClick={() => {
-                      if (!manualBanSessionId && !manualBanIP) {
-                        alert('Please enter either Session ID or IP Address');
-                        return;
-                      }
-                      if (!manualBanReason) {
-                        alert('Please enter a reason');
-                        return;
-                      }
-                      openBanModal({
-                        sessionId: manualBanSessionId,
-                        ip: manualBanIP,
-                        target: manualBanSessionId ? 'session' : 'ip',
-                        reason: manualBanReason,
-                        clearManualInputsOnSubmit: true,
-                      });
-                    }}
-                    className={`${actionButtonClass} w-full bg-rose-500 text-white hover:bg-rose-400`}
-                  >
-                    Ban
-                  </button>
-                </div>
-              </section>
-            )}
+                          <div className="flex flex-col lg:grid lg:grid-cols-[56px_1fr_320px_200px] lg:items-stretch overflow-hidden">
+                            {/* Checkbox Column */}
+                            <div className="flex items-center justify-center py-4 lg:py-0 border-b lg:border-b-0 lg:border-r border-white/5 bg-white/[0.01]">
+                              <input
+                                type="checkbox"
+                                checked={selectedReports.has(report.id)}
+                                onChange={(e) => {
+                                  const next = new Set(selectedReports);
+                                  if (e.target.checked) next.add(report.id);
+                                  else next.delete(report.id);
+                                  setSelectedReports(next);
+                                }}
+                                className="h-5 w-5 rounded border-white/20 bg-transparent text-electric-cyan focus:ring-electric-cyan/40 cursor-pointer"
+                              />
+                            </div>
 
-            {currentTab === 'accounts' && canManageAccounts && (
-              <section className={`${surfaceCardClass} p-6`}>
-                <div className="mb-5">
-                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Account Management</p>
-                  <h2 className="mt-2 text-xl font-semibold text-white">Create admin and moderator accounts</h2>
-                </div>
-
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 items-end">
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-300">Username</label>
-                    <input
-                      type="text"
-                      value={accountUsername}
-                      onChange={(e) => setAccountUsername(e.target.value)}
-                      className={inputClass}
-                      placeholder="moderator_name"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-300">Password</label>
-                    <div className="relative">
-                      <input
-                        type={showCreateAccountPassword ? 'text' : 'password'}
-                        value={accountPassword}
-                        onChange={(e) => setAccountPassword(e.target.value)}
-                        className={`${inputClass} pr-24`}
-                        placeholder="Minimum 8 characters"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowCreateAccountPassword((current) => !current)}
-                        className="absolute inset-y-1.5 right-1.5 rounded-xl border border-white/10 bg-white/8 px-3 text-xs font-semibold uppercase tracking-[0.16em] text-slate-300 transition hover:bg-white/12"
-                      >
-                        {showCreateAccountPassword ? 'Hide' : 'Show'}
-                      </button>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-300">Role</label>
-                    <select
-                      value={accountRole}
-                      onChange={(e) => setAccountRole(e.target.value as AdminRole)}
-                      className={`${inputClass} appearance-none bg-white/5 [&>option]:bg-slate-900`}
-                    >
-                      <option value="moderator">Moderator</option>
-                      <option value="admin" disabled={role !== 'root'}>Admin</option>
-                      <option value="root" disabled={role !== 'root'}>Root</option>
-                    </select>
-                  </div>
-                  <button
-                    onClick={() => void createAccount()}
-                    disabled={submittingAccount}
-                    className={`${actionButtonClass} w-full bg-cyan-400 text-slate-950 hover:bg-cyan-300`}
-                  >
-                    {submittingAccount ? 'Creating...' : 'Create Account'}
-                  </button>
-                </div>
-              </section>
-            )}
-          </aside>
-
-          <main className={`${surfaceCardClass} overflow-hidden`}>
-            {currentTab === 'reports' && (
-              <div>
-                <div className="flex flex-col gap-2 border-b border-white/10 px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Reports Queue</p>
-                    <h2 className="mt-2 text-2xl font-semibold text-white">Recent reports</h2>
-                  </div>
-                  <label className="inline-flex items-center gap-3 rounded-full border border-white/10 bg-white/6 px-4 py-2 text-sm text-slate-300">
-                    <input
-                      type="checkbox"
-                      checked={reports.length > 0 && selectedReports.size === reports.length}
-                      onChange={(e) => {
-                        setSelectedReports(e.target.checked ? new Set(reports.map((report) => report.id)) : new Set());
-                      }}
-                      className="h-4 w-4 rounded border-white/20 bg-transparent text-cyan-300 focus:ring-cyan-300"
-                    />
-                    Select all
-                  </label>
-                </div>
-
-                <div className="space-y-4 p-4 sm:p-6">
-                  {reports.length === 0 && (
-                    <div className="rounded-[28px] border border-dashed border-white/10 bg-white/4 px-6 py-16 text-center text-slate-400">
-                      No reports found
-                    </div>
-                  )}
-
-                  {reports.map((report) => (
-                    <React.Fragment key={report.id}>
-                      <article className="rounded-[28px] border border-white/10 bg-white/5 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.2)]">
-                        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                          <div className="flex gap-4">
-                            <input
-                              type="checkbox"
-                              checked={selectedReports.has(report.id)}
-                              onChange={(e) => {
-                                const newSet = new Set(selectedReports);
-                                if (e.target.checked) {
-                                  newSet.add(report.id);
-                                } else {
-                                  newSet.delete(report.id);
-                                }
-                                setSelectedReports(newSet);
-                              }}
-                              className="mt-1 h-4 w-4 rounded border-white/20 bg-transparent text-cyan-300 focus:ring-cyan-300"
-                            />
-                            <div className="space-y-4">
-                              <div className="flex flex-wrap items-center gap-3">
-                                <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${reportStatusClass(report.status)}`}>
+                            {/* Content Column */}
+                            <div className="flex-1 flex flex-col p-5 sm:p-6 lg:p-7 min-w-0 overflow-hidden">
+                              {/* Top Bar */}
+                              <div className="flex items-center gap-4 mb-2">
+                                <span className={`rounded-lg px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${reportStatusClass(report.status)} text-slate-200`}>
                                   {report.status}
                                 </span>
-                                <span className="text-xs uppercase tracking-[0.18em] text-slate-500">{formatDate(report.created_at)}</span>
-                              </div>
-                              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                                <div className="min-w-0">
-                                  <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Report ID</p>
-                                  <p className="mt-1 break-all text-sm font-medium text-slate-200">{formatShort(report.id, 16)}</p>
-                                </div>
-                                <div className="min-w-0">
-                                  <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Reported Session</p>
-                                  <p className="mt-1 break-all text-sm font-medium text-slate-200">{formatShort(report.reported_session_id, 16)}</p>
-                                </div>
-                                <div className="min-w-0">
-                                  <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Reporter IP</p>
-                                  <p className="mt-1 break-all text-sm font-medium text-slate-200">{report.reporter_ip || 'N/A'}</p>
-                                </div>
-                                <div className="min-w-0">
-                                  <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Reported IP</p>
-                                  <p className="mt-1 break-all text-sm font-medium text-slate-200">{report.reported_ip || 'N/A'}</p>
+                                <div className="flex items-center gap-2 font-heading text-[11px] text-slate-700 font-bold uppercase tracking-[0.14em]">
+                                  <Clock size={12} className="text-slate-700" />
+                                  <span>{formatDate(report.created_at)}</span>
                                 </div>
                               </div>
-                              <div>
-                                <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Reason</p>
-                                <p className="mt-1 text-sm text-slate-200">{report.reason}</p>
+                              
+                              {/* Incident Reason (compact) */}
+                              <div className="mb-4">
+                                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Incident Reason</p>
+                                <p className="text-lg font-bold text-slate-200 leading-tight">{report.reason}</p>
                               </div>
-                              {report.description && (
-                                <div>
-                                  <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Additional Information</p>
-                                  <p className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-200">{report.description}</p>
+
+                              {/* Description Area */}
+                              <div className="flex-1 min-w-0">
+                                {report.description && (
+                                  <div className="group relative">
+                                    <p className="text-sm text-slate-400 font-medium leading-relaxed line-clamp-4 break-all whitespace-pre-wrap overflow-hidden">
+                                      {report.description}
+                                    </p>
+                                    {(report.description.length > 100) && (
+                                      <button 
+                                        onClick={() => setViewingDescription(report.id)}
+                                        className="mt-2 text-[10px] font-bold uppercase tracking-widest text-electric-cyan/70 hover:text-electric-cyan transition-colors flex items-center gap-1"
+                                      >
+                                        <Eye size={12} />
+                                        READ_FULL_DESCRIPTION
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Detailed Data Column */}
+                            <div className="flex flex-col gap-3 p-5 sm:p-6 lg:p-7 lg:justify-center border-t lg:border-t-0 lg:border-l border-white/5 bg-white/[0.01] min-w-0 overflow-hidden">
+                              <div className="bg-white/[0.02] border border-white/[0.04] rounded-xl overflow-hidden divide-y divide-white/[0.04] flex flex-col justify-center">
+                                <div className="flex flex-col justify-center px-5 min-h-[64px] py-3 gap-1">
+                                  <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Reported Identity</span>
+                                  <span className="font-mono text-sm text-slate-300 tabular-nums break-all leading-relaxed whitespace-pre-wrap">{report.reported_ip || 'N/A'}</span>
+                                </div>
+                                <div className="flex flex-col justify-center px-5 min-h-[64px] py-3 gap-1">
+                                  <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Session ID Reference</span>
+                                  <span className="font-mono text-sm text-slate-400 tabular-nums break-all leading-relaxed whitespace-pre-wrap">{report.reported_session_id}</span>
+                                </div>
+                                <div className="flex flex-col justify-center px-5 min-h-[64px] py-3 gap-1">
+                                  <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Reporter Context</span>
+                                  <span className="font-mono text-sm text-slate-400 tabular-nums break-all leading-relaxed whitespace-pre-wrap">{report.reporter_ip || 'N/A'}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Action Column */}
+                            <div className="flex flex-col gap-3 p-5 sm:p-6 lg:p-7 lg:justify-center border-t lg:border-t-0 lg:border-l border-white/5 bg-white/[0.01]">
+                              {report.chat_log.length > 0 && (
+                                <button
+                                  onClick={() => setExpandedReport(expandedReport === report.id ? null : report.id)}
+                                  className={`${actionButtonClass} w-full bg-white/[0.04] border border-white/10 text-slate-300 hover:bg-white/[0.08] hover:text-slate-300 transition-all`}
+                                >
+                                  <MessageSquare size={14} className="mr-0.5" />
+                                  Transcript
+                                </button>
+                              )}
+                              
+                              {report.status === 'pending' && (
+                                <div className="grid grid-cols-2 gap-3 lg:grid-cols-1">
+                                  <button
+                                    onClick={() => updateReportStatus(report.id, 'approved')}
+                                    className={`${actionButtonClass} w-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 shadow-[0_0_12px_rgba(52,211,153,0.1)]`}
+                                  >
+                                    <CheckCircle2 size={14} className="mr-0.5" />
+                                    Approve
+                                  </button>
+                                  <button
+                                    onClick={() => updateReportStatus(report.id, 'rejected')}
+                                    className={`${actionButtonClass} w-full bg-rose-500/10 border border-rose-500/20 text-rose-400 hover:bg-rose-500/20 shadow-[0_0_12px_rgba(244,63,94,0.1)]`}
+                                  >
+                                    <XCircle size={14} className="mr-0.5" />
+                                    Reject
+                                  </button>
                                 </div>
                               )}
-                              {report.status !== 'pending' && (
-                                <div className="grid gap-3 sm:grid-cols-2">
-                                  <div>
-                                    <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Reviewed By</p>
-                                    <p className="mt-1 text-sm text-slate-200">{report.reviewed_by_username || 'Unknown'}</p>
-                                  </div>
-                                  <div>
-                                    <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Reviewed At</p>
-                                    <p className="mt-1 text-sm text-slate-200">{formatDate(report.reviewed_at)}</p>
-                                  </div>
-                                </div>
+                              
+                              {canCreateBans && (
+                                <button
+                                  onClick={() => openBanModal({
+                                    sessionId: report.reported_session_id,
+                                    ip: report.reported_ip,
+                                    target: 'session',
+                                    reason: report.reason,
+                                  })}
+                                  className={`${actionButtonClass} w-full bg-danger-rose text-slate-300 shadow-[0_0_16px_rgba(244,63,94,0.25)] hover:bg-rose-600 hover:shadow-[0_0_24px_rgba(244,63,94,0.4)] transition-all`}
+                                >
+                                  <BanIcon size={14} className="mr-0.5" />
+                                  Ban User
+                                </button>
                               )}
                             </div>
                           </div>
 
-                          <div className="flex flex-wrap gap-2 xl:max-w-sm xl:justify-end">
-                            {report.chat_log && report.chat_log.length > 0 && (
-                              <button
-                                onClick={() => setExpandedReport(expandedReport === report.id ? null : report.id)}
-                                className={`${actionButtonClass} bg-cyan-300/12 text-cyan-100 hover:bg-cyan-300/20`}
+    
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+
+                {currentTab === 'bans' && (
+                  <div className="space-y-4">
+                    {/* Bans Metrics Row */}
+                    <div className="grid gap-4 sm:grid-cols-3">
+                      <div className={metricCardClass('active')}>
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-rose-500/10 text-rose-400 border border-rose-500/20 shadow-[inset_0_0_20px_rgba(244,63,94,0.05)]">
+                          <BanIcon size={20} />
+                          <div className="hud-bracket hud-bracket-tl" />
+                          <div className="hud-bracket-tr" />
+                          <div className="hud-bracket-bl" />
+                          <div className="hud-bracket-br" />
+                        </div>
+                        <div className="flex flex-col">
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700 mb-1">Active Bans</p>
+                          <p className="font-heading text-2xl font-bold text-slate-300 tracking-tight">{serverBanMetrics.active}</p>
+                        </div>
+                      </div>
+                      <div className={metricCardClass('inactive')}>
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-500/10 text-slate-400 border border-white/5">
+                          <Clock size={20} />
+                          <div className="hud-bracket hud-bracket-tl" />
+                          <div className="hud-bracket-tr" />
+                          <div className="hud-bracket-bl" />
+                          <div className="hud-bracket-br" />
+                        </div>
+                        <div className="flex flex-col">
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700 mb-1">Inactive Bans</p>
+                          <p className="font-heading text-2xl font-bold text-slate-300 tracking-tight">{serverBanMetrics.total - serverBanMetrics.active}</p>
+                        </div>
+                      </div>
+                      <div className={metricCardClass('total')}>
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[inset_0_0_20px_rgba(34,211,238,0.05)]">
+                          <Globe size={20} />
+                          <div className="hud-bracket hud-bracket-tl" />
+                          <div className="hud-bracket-tr" />
+                          <div className="hud-bracket-bl" />
+                          <div className="hud-bracket-br" />
+                        </div>
+                        <div className="flex flex-col">
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700 mb-1">Total Bans</p>
+                          <p className="font-heading text-2xl font-bold text-slate-300 tracking-tight">{serverBanMetrics.total}</p>
+                        </div>
+                      </div>
+                    </div>
+                    {/* Ban Controls Panel */}
+                    <div className="surface-card rounded-[20px] p-5">
+                      <div className="hud-bracket hud-bracket-tl" />
+                      <div className="hud-bracket-tr" />
+                      <div className="hud-bracket-bl" />
+                      <div className="hud-bracket-br" />
+                      
+                      <div className="flex flex-col gap-5">
+                        {/* Search & Filters Grid */}
+                        <div className="grid gap-4 lg:grid-cols-[1fr_auto_auto] lg:items-end">
+                          <div className="flex flex-col gap-2">
+                            <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Search Registry</label>
+                            <div className="relative">
+                              <Search className="absolute left-3 top-3 text-slate-700" size={16} />
+                              <input
+                                type="text"
+                                value={banSearch}
+                                onChange={(e) => setBanSearch(e.target.value)}
+                                className={`${inputClass} pl-10`}
+                                placeholder="ENTER IP ADDRESS..."
+                              />
+                            </div>
+                          </div>
+                          
+                          <div className="flex flex-col gap-2">
+                            <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Status Filter</label>
+                            <div className="flex items-center gap-2">
+                              <button onClick={() => setBanFilter('active')} className={filterButtonClass(banFilter === 'active', 'rose')}>Active</button>
+                              <button onClick={() => setBanFilter('inactive')} className={filterButtonClass(banFilter === 'inactive')}>Inactive</button>
+                              <button onClick={() => setBanFilter('all')} className={filterButtonClass(banFilter === 'all')}>All</button>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-3">
+                            <div className="flex-1 lg:w-[140px]">
+                              <label className="mb-2 block font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Show Limit</label>
+                              <select
+                                value={banLimit}
+                                onChange={(e) => setBanLimit(e.target.value)}
+                                className={`${compactSelectClass} [&>option]:bg-slate-900`}
                               >
-                                {expandedReport === report.id ? 'Hide Transcript' : `Transcript (${report.chat_log.length})`}
+                                <option value="10">10 ENTRIES</option>
+                                <option value="20">20 ENTRIES</option>
+                                <option value="50">50 ENTRIES</option>
+                                <option value="all">ALL ENTRIES</option>
+                              </select>
+                            </div>
+                            <div className="pt-[22px]">
+                              <button
+                                onClick={fetchBans}
+                                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/[0.07] bg-white/[0.04] text-slate-400 transition-all hover:bg-white/[0.08] hover:text-slate-300"
+                                title="Refresh Registry"
+                              >
+                                <RefreshCw size={16} />
                               </button>
-                            )}
-                            <div className="flex flex-col gap-2 min-w-[140px]">
-                              {canCreateBans && (
-                                <button
-                                  onClick={() =>
-                                    openBanModal({
-                                      sessionId: report.reported_session_id,
-                                      ip: report.reported_ip,
-                                      target: 'session',
-                                      reason: report.reason,
-                                    })
-                                  }
-                                  className={`${actionButtonClass} bg-rose-400/15 text-rose-100 hover:bg-rose-400/25`}
-                                >
-                                  Ban
-                                </button>
-                              )}
-                              {report.status === 'pending' && (
-                                <>
-                                  <button
-                                    onClick={() => updateReportStatus(report.id, 'rejected')}
-                                    className={`${actionButtonClass} bg-slate-400/15 text-slate-200 hover:bg-slate-400/25`}
-                                  >
-                                    Reject
-                                  </button>
-                                  <button
-                                    onClick={() => updateReportStatus(report.id, 'approved')}
-                                    className={`${actionButtonClass} bg-emerald-400/15 text-emerald-100 hover:bg-emerald-400/25`}
-                                  >
-                                    Approve
-                                  </button>
-                                </>
-                              )}
                             </div>
                           </div>
                         </div>
-                      </article>
+                      </div>
+                    </div>
 
-                      {expandedReport === report.id && report.chat_log && report.chat_log.length > 0 && (
-                        <div className="rounded-[28px] border border-white/10 bg-slate-950/70 p-5">
-                          <div className="mb-4 text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">
-                            Chat Transcript
+                    {/* Manual Enforcement Panel */}
+                    {canCreateBans && (
+                      <div className="surface-card rounded-[20px] p-5">
+                        <div className="hud-bracket hud-bracket-tl" />
+                        <div className="hud-bracket-tr" />
+                        <div className="hud-bracket-bl" />
+                        <div className="hud-bracket-br" />
+
+                        <div className="flex items-center gap-3 mb-6">
+                          <h3 className="section-prefix font-heading text-sm font-bold uppercase tracking-[0.14em] text-slate-300">Manual Enforcement</h3>
+                          <span className="ml-auto font-heading text-[10px] text-slate-700 tracking-wider font-bold uppercase tracking-[0.14em] whitespace-nowrap">// OPERATOR INPUT</span>
+                        </div>
+                        
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1.5fr_auto] lg:items-end">
+                          <div className="flex flex-col gap-2">
+                            <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Session Identifier</label>
+                            <input
+                              type="text"
+                              value={manualBanSessionId}
+                              onChange={(e) => setManualBanSessionId(e.target.value)}
+                              className={inputClass}
+                              placeholder="SESSION_ID"
+                            />
                           </div>
-                          <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
-                            {report.chat_log.map((msg) => (
-                              <div key={msg.id} className={`flex ${msg.sender === 'me' ? 'justify-end' : 'justify-start'}`}>
-                                <span
-                                  className={`max-w-[85%] rounded-full px-4 py-2 text-sm break-words ${
-                                    msg.sender === 'me'
-                                      ? 'bg-cyan-300/15 text-cyan-100'
-                                      : 'bg-white/8 text-slate-200'
-                                  }`}
-                                >
-                                  <span className="mr-1 font-semibold">{msg.sender === 'me' ? 'Reporter:' : 'Reported:'}</span>
-                                  {DOMPurify.sanitize(msg.text)}
-                                </span>
+                          <div className="flex flex-col gap-2">
+                            <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Network Address</label>
+                            <input
+                              type="text"
+                              value={manualBanIP}
+                              onChange={(e) => setManualBanIP(e.target.value)}
+                              className={inputClass}
+                              placeholder="192.168.X.X"
+                            />
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Reason for Restriction</label>
+                            <input
+                              type="text"
+                              value={manualBanReason}
+                              onChange={(e) => setManualBanReason(e.target.value)}
+                              className="h-11 w-full rounded-xl border border-white/[0.07] bg-white/[0.04] px-4 font-heading text-sm text-slate-300 placeholder:text-slate-700 outline-none transition-all duration-200 focus:border-electric-cyan/50 focus:ring-2 focus:ring-electric-cyan/15 focus:bg-white/[0.06] scanlines"
+                              placeholder="EXPLAIN INCIDENT..."
+                            />
+                          </div>
+                          <div className="pt-2 sm:pt-0">
+                            <button
+                              onClick={() => {
+                                if (!manualBanSessionId && !manualBanIP) {
+                                  alert('Please enter either Session ID or IP Address');
+                                  return;
+                                }
+                                if (!manualBanReason.trim()) {
+                                  alert('Please enter a reason');
+                                  return;
+                                }
+                                openBanModal({
+                                  sessionId: manualBanSessionId,
+                                  ip: manualBanIP,
+                                  target: manualBanSessionId ? 'session' : 'ip',
+                                  reason: manualBanReason,
+                                  clearManualInputsOnSubmit: true,
+                                });
+                              }}
+                              className={`${actionButtonClass} w-full lg:w-auto bg-danger-rose text-slate-300 hover:bg-rose-600 hover:shadow-[0_0_20px_rgba(244,63,94,0.35)]`}
+                            >
+                              <Plus size={16} />
+                              Apply Ban
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Bans List */}
+                    <div className="space-y-4">
+                      {bans.length === 0 ? (
+                        <div className="surface-card rounded-[20px] flex flex-col items-center justify-center px-8 py-16 text-center">
+                          <div className="hud-bracket hud-bracket-tl" />
+                          <div className="hud-bracket-tr" />
+                          <div className="hud-bracket-bl" />
+                          <div className="hud-bracket-br" />
+                          
+                          <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-[20px] border border-white/10 bg-white/[0.04]">
+                            <BanIcon size={28} className="text-slate-700" />
+                          </div>
+                          <h4 className="font-heading text-lg font-semibold text-slate-400 mb-2 font-heading tracking-wide">NO RESTRICTION RECORDS</h4>
+                          <p className="font-heading text-[11px] text-slate-700 uppercase tracking-[0.14em] font-bold">SYSTEM_REGISTRY_CLEAR // ALL FILTERS VALID</p>
+                        </div>
+                      ) : (
+                        <AnimatePresence mode="popLayout">
+                          {bans.map((ban, index) => (
+                            <motion.div
+                              key={ban.id}
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: -10 }}
+                              transition={{ delay: index * 0.03, duration: 0.2 }}
+                              className="surface-card group rounded-[20px] p-0 overflow-hidden transition-all duration-300 hover:border-white/20 hover:translate-y-[-1px] hover:shadow-[0_8px_32px_rgba(0,0,0,0.4)]"
+                            >
+                              <div className="hud-bracket hud-bracket-tl" />
+                              <div className="hud-bracket-tr" />
+                              <div className="hud-bracket-bl" />
+                              <div className="hud-bracket-br" />
+
+                              <div className="flex flex-col md:grid md:grid-cols-[4px_1fr_120px] md:items-stretch h-full">
+                                {/* Status Stripe */}
+                                <div className={`w-full h-1 md:w-1 md:h-auto shrink-0 ${
+                                  ban.is_active 
+                                    ? 'bg-gradient-to-b from-rose-500 to-rose-700 shadow-[2px_0_12px_rgba(244,63,94,0.2)]' 
+                                    : 'bg-white/[0.08]'
+                                }`} />
+                                
+                                <div className="flex flex-1 flex-col px-4 py-4 md:px-5 md:py-4">
+                                  {/* Meta Row */}
+                                  <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+                                    <div className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${
+                                      ban.is_active 
+                                        ? 'border border-rose-500/20 bg-rose-500/10 text-rose-300' 
+                                        : 'border border-white/10 bg-white/5 text-slate-700'
+                                    }`}>
+                                      <div className={`h-1.5 w-1.5 rounded-full ${ban.is_active ? 'bg-rose-400 animate-pulse' : 'bg-slate-600'}`} />
+                                      {ban.is_active ? 'Active' : 'Inactive'}
+                                    </div>
+                                    <div className="flex items-center gap-1.5 font-heading text-[11px] text-slate-700 font-bold uppercase tracking-[0.14em]">
+                                      <Clock size={12} className="text-slate-700" />
+                                      <span>{formatDate(ban.created_at)}</span>
+                                    </div>
+                                  </div>
+
+                                  {/* Data Panel */}
+                                  <div className="bg-white/[0.02] border border-white/[0.04] rounded-xl px-4 py-3 md:px-5">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-4">
+                                      <div className="flex flex-col">
+                                        <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Network Address</p>
+                                        <p className="font-mono text-sm font-medium text-slate-100 tabular-nums break-all">{ban.ip_address || 'UNAVAILABLE'}</p>
+                                      </div>
+                                      <div className="flex flex-col">
+                                        <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Incident Reason</p>
+                                        <p className="text-sm font-medium text-slate-300 leading-5 line-clamp-2" title={ban.reason}>{ban.reason}</p>
+                                      </div>
+                                      <div className="flex flex-col sm:col-span-2 lg:col-span-1">
+                                        <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Restriction Expiry</p>
+                                        <div className="flex items-center gap-2 text-sm font-medium">
+                                          {!ban.expires_at ? (
+                                            <span className="text-slate-700 font-bold uppercase tracking-wider text-[11px]">∞ PERMANENT_CELL</span>
+                                          ) : (
+                                            <div className="flex items-center gap-2 text-amber-400/90">
+                                              <Clock size={13} />
+                                              <span className="font-mono tabular-nums">{formatDate(ban.expires_at)}</span>
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Action Area */}
+                                <div className="flex items-center justify-start md:justify-center px-4 pb-4 md:pb-0 md:px-4 border-t border-white/[0.05] md:border-t-0 md:border-l md:border-white/[0.05]">
+                                  {ban.is_active && canManageBans ? (
+                                    <button
+                                      onClick={() => unban(ban.id)}
+                                      className="inline-flex h-9 min-w-[92px] items-center justify-center gap-1.5 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 font-heading text-[11px] font-bold uppercase tracking-wide text-emerald-400 transition-all hover:bg-emerald-500/20 hover:border-emerald-500/40 hover:shadow-[0_0_16px_rgba(52,211,153,0.2)] active:scale-95"
+                                    >
+                                      <RefreshCw size={13} />
+                                      Unban
+                                    </button>
+                                  ) : (
+                                    <div className="h-9 w-[92px]" />
+                                  )}
+                                </div>
                               </div>
-                            ))}
+                            </motion.div>
+                          ))}
+                        </AnimatePresence>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {currentTab === 'accounts' && canManageAccounts && (
+                  <div className="space-y-6">
+                    <div className={`${surfaceCardClass} p-6`}>
+                      <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
+                        <div className="relative">
+                          <Search className="absolute top-3.5 left-4 text-slate-700" size={18} />
+                          <input
+                            type="text"
+                            value={accountSearch}
+                            onChange={(e) => setAccountSearch(e.target.value)}
+                            className={`${inputClass} pl-12`}
+                            placeholder="Search username..."
+                          />
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={() => {
+                              setAccountPage(1);
+                              fetchAccounts();
+                            }}
+                            className={`${actionButtonClass} bg-slate-300 text-slate-950 hover:bg-cyan-100 whitespace-nowrap`}
+                          >
+                            <RefreshCw size={16} />
+                            Refresh Accounts
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Create Account */}
+                    <div className={`${surfaceCardClass} p-6`}>
+                      <h3 className="mb-6 text-lg font-bold text-slate-300">Add Team Member</h3>
+                      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                        <input
+                          type="text"
+                          value={accountUsername}
+                          onChange={(e) => setAccountUsername(e.target.value)}
+                          className={inputClass}
+                          placeholder="Username"
+                        />
+                        <div className="relative">
+                          <input
+                            type={showCreateAccountPassword ? 'text' : 'password'}
+                            value={accountPassword}
+                            onChange={(e) => setAccountPassword(e.target.value)}
+                            className={inputClass}
+                            placeholder="Password"
+                          />
+                          <button
+                            onClick={() => setShowCreateAccountPassword(!showCreateAccountPassword)}
+                            className="absolute top-3.5 right-4 text-slate-700 hover:text-slate-300"
+                          >
+                            {showCreateAccountPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                          </button>
+                        </div>
+                        <select
+                          value={accountRole}
+                          onChange={(e) => setAccountRole(e.target.value as AdminRole)}
+                          className={`${compactSelectClass} [&>option]:bg-slate-900`}
+                        >
+                          <option value="moderator">Moderator</option>
+                          <option value="admin">Admin</option>
+                          <option value="root">Root</option>
+                        </select>
+                        <button
+                          onClick={createAccount}
+                          disabled={submittingAccount}
+                          className={`${actionButtonClass} bg-cyan-400 text-slate-950 hover:bg-cyan-300`}
+                        >
+                          <UserPlus size={18} />
+                          Add Member
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Accounts List */}
+                    <div className="space-y-4">
+                      {accounts.length === 0 && (
+                        <div className="rounded-3xl border border-dashed border-white/10 py-20 text-center">
+                          <p className="text-slate-700">No admin accounts found.</p>
+                        </div>
+                      )}
+                      {accounts.map((account) => (
+                        <div key={account.id} className={`${surfaceCardClass} p-6`}>
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/5 text-cyan-400">
+                                <Users size={24} />
+                              </div>
+                              <div>
+                                <h4 className="font-bold text-slate-300">{account.username}</h4>
+                                <div className="mt-1 flex items-center gap-3">
+                                  <span className="text-[10px] font-bold uppercase tracking-widest text-cyan-400">{account.role}</span>
+                                  <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider ${account.is_active ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
+                                    {account.is_active ? 'Active' : 'Inactive'}
+                                  </span>
+                                  <span className="text-[10px] text-slate-700">Added {formatDate(account.created_at)}</span>
+                                </div>
+                              </div>
+                            </div>
+                            {account.username !== currentAdminUsername && (
+                              <button
+                                onClick={() => deleteAccount(account.username)}
+                                className="rounded-xl p-2 text-slate-700 transition-colors hover:bg-rose-500/10 hover:text-rose-500"
+                              >
+                                <Trash2 size={20} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                      {accountTotalPages > 1 && (
+                        <div className={`${surfaceCardClass} flex items-center justify-between p-4`}>
+                          <p className="text-sm text-slate-400">
+                            Page {accountPage} of {accountTotalPages}
+                          </p>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => setAccountPage((page) => Math.max(1, page - 1))}
+                              disabled={accountPage <= 1}
+                              className={`${actionButtonClass} bg-white/5 text-slate-200 hover:bg-white/10`}
+                            >
+                              Previous
+                            </button>
+                            <button
+                              onClick={() => setAccountPage((page) => Math.min(accountTotalPages, page + 1))}
+                              disabled={accountPage >= accountTotalPages}
+                              className={`${actionButtonClass} bg-white/5 text-slate-200 hover:bg-white/10`}
+                            >
+                              Next
+                            </button>
                           </div>
                         </div>
                       )}
-                    </React.Fragment>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {currentTab === 'bans' && (
-              <div>
-                <div className="flex flex-col gap-2 border-b border-white/10 px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Ban Registry</p>
-                    <h2 className="mt-2 text-2xl font-semibold text-white">Current and historical bans</h2>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button onClick={() => setBanFilter('active')} className={filterButtonClass(banFilter === 'active')}>
-                      Active
-                    </button>
-                    <button onClick={() => setBanFilter('inactive')} className={filterButtonClass(banFilter === 'inactive')}>
-                      Inactive
-                    </button>
-                    <button onClick={() => setBanFilter('all')} className={filterButtonClass(banFilter === 'all')}>
-                      All
-                    </button>
-                  </div>
-                </div>
-
-                <div className="space-y-4 p-4 sm:p-6">
-                  <div className="flex flex-col gap-2">
-                    <label className="text-xs uppercase tracking-[0.2em] text-slate-400">Search IP Address</label>
-                    <input
-                      type="text"
-                      value={banSearch}
-                      onChange={(e) => setBanSearch(e.target.value)}
-                      className={`${inputClass} max-w-md`}
-                      placeholder="Search bans by IP"
-                      maxLength={64}
-                    />
-                  </div>
-
-                  {bans.length === 0 && (
-                    <div className="rounded-[28px] border border-dashed border-white/10 bg-white/4 px-6 py-16 text-center text-slate-400">
-                      No bans found for this filter
-                    </div>
-                  )}
-
-                  {permanentBans.length > 0 && (
-                    <section className="space-y-4">
-                      <div className="flex items-center justify-between rounded-[24px] border border-white/10 bg-white/4 px-5 py-4">
-                        <div>
-                          <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Permanent Bans</p>
-                          <h3 className="mt-2 text-lg font-semibold text-white">Manual removal required</h3>
-                        </div>
-                        <div className="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-sm font-semibold text-slate-200">
-                          {permanentBans.length}
-                        </div>
-                      </div>
-                      {permanentBans.map(renderBanCard)}
-                    </section>
-                  )}
-
-                  {temporaryBans.length > 0 && (
-                    <section className="space-y-4">
-                      <div className="flex items-center justify-between rounded-[24px] border border-white/10 bg-white/4 px-5 py-4">
-                        <div>
-                          <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Temporary Bans</p>
-                          <h3 className="mt-2 text-lg font-semibold text-white">Expire automatically</h3>
-                        </div>
-                        <div className="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-sm font-semibold text-slate-200">
-                          {temporaryBans.length}
-                        </div>
-                      </div>
-                      {temporaryBans.map(renderBanCard)}
-                    </section>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {currentTab === 'accounts' && canManageAccounts && (
-              <div>
-                <div className="flex flex-col gap-2 border-b border-white/10 px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Admin Accounts</p>
-                    <h2 className="mt-2 text-2xl font-semibold text-white">Moderation operators</h2>
-                  </div>
-                </div>
-
-                <div className="space-y-4 p-4 sm:p-6">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                    <div className="w-full max-w-md">
-                      <label className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-400">Search Username</label>
-                      <input
-                        type="text"
-                        value={accountSearch}
-                        onChange={(e) => {
-                          setAccountSearch(e.target.value);
-                          setAccountPage(1);
-                        }}
-                        maxLength={50}
-                        className={inputClass}
-                        placeholder="Filter operators by username"
-                      />
-                    </div>
-                    <div className="text-sm text-slate-400">
-                      Showing {accountRangeStart}-{accountRangeEnd} of {accountTotal}
                     </div>
                   </div>
-
-                  {accounts.length === 0 && (
-                    <div className="rounded-[28px] border border-dashed border-white/10 bg-white/4 px-6 py-16 text-center text-slate-400">
-                      No admin accounts found
-                    </div>
-                  )}
-
-                  {accounts.map((account) => (
-                    <article key={account.id} className="rounded-[28px] border border-white/10 bg-white/5 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.2)]">
-                      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                          <div>
-                            <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Username</p>
-                            <p className="mt-1 break-all text-sm font-medium text-slate-200">{account.username}</p>
-                          </div>
-                          <div>
-                            <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Role</p>
-                            <p className="mt-1 text-sm font-medium text-slate-200">{account.role}</p>
-                          </div>
-                          <div>
-                            <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Created By</p>
-                            <p className="mt-1 text-sm font-medium text-slate-200">{account.created_by_username || 'system'}</p>
-                          </div>
-                          <div>
-                            <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Created At</p>
-                            <p className="mt-1 text-sm font-medium text-slate-200">{formatDate(account.created_at)}</p>
-                          </div>
-                        </div>
-
-                        <div className="flex flex-wrap gap-2">
-                          {account.username !== currentAdminUsername && (
-                            <button
-                              onClick={() => void deleteAccount(account.username)}
-                              disabled={role !== 'root' && (account.role === 'admin' || account.role === 'root')}
-                              className={`${actionButtonClass} bg-rose-400/15 text-rose-100 hover:bg-rose-400/25`}
-                            >
-                              Delete
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </article>
-                  ))}
-
-                  {accountTotal > accountPageSize && (
-                    <div className="flex flex-col gap-3 border-t border-white/10 pt-4 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="text-sm text-slate-400">
-                        Page {accountPage} of {accountPageCount}
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => setAccountPage((current) => Math.max(1, current - 1))}
-                          disabled={accountPage <= 1}
-                          className={filterButtonClass(false)}
-                        >
-                          Previous
-                        </button>
-                        <button
-                          onClick={() => setAccountPage((current) => Math.min(accountPageCount, current + 1))}
-                          disabled={accountPage >= accountPageCount}
-                          className={filterButtonClass(false)}
-                        >
-                          Next
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </main>
-        </div>
+                )}
+              </motion.div>
+            </AnimatePresence>
+          </div>
+        </main>
       </div>
 
-      {banModal.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-[30px] border border-white/10 bg-slate-950/95 p-6 shadow-[0_30px_120px_rgba(8,15,30,0.75)]">
-            <div className="mb-6 flex items-start justify-between gap-4">
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Ban User</p>
-                <h2 className="mt-2 text-2xl font-semibold text-white">Choose ban type</h2>
-                <p className="mt-2 text-sm text-slate-400">
-                  Permanent bans stay active until you manually unban them. Temporary bans expire automatically after the duration you choose.
-                </p>
-              </div>
-              <button
-                onClick={closeBanModal}
-                className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-slate-300 transition hover:bg-white/10"
-              >
-                Close
-              </button>
-            </div>
+      {/* Ban Modal */}
+      <AnimatePresence>
+        {banModal.open && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={closeBanModal}
+              className="absolute inset-0 bg-slate-950/90 backdrop-blur-sm"
+            />
+            
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ type: 'spring', stiffness: 350, damping: 30 }}
+              className="relative flex flex-col w-full max-w-[560px] max-h-[min(85vh,760px)] rounded-[20px] border border-white/[0.08] bg-[#050816] shadow-[0_32px_128px_rgba(0,0,0,0.8)] overflow-hidden"
+            >
+              <div className="hud-bracket hud-bracket-tl opacity-20" />
+              <div className="hud-bracket-tr opacity-20" />
+              <div className="hud-bracket-bl opacity-20" />
+              <div className="hud-bracket-br opacity-20" />
 
-            {(banModal.sessionId || banModal.ip) && (
-              <div className="mb-5 rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300">
-                {banModal.sessionId && <p>Session: <span className="break-all text-white">{banModal.sessionId}</span></p>}
-                {banModal.ip && <p className={banModal.sessionId ? 'mt-2' : ''}>IP: <span className="break-all text-white">{banModal.ip}</span></p>}
-              </div>
-            )}
-
-            {banModal.sessionId && banModal.ip && (
-              <div className="mb-5">
-                <p className="mb-2 text-sm font-medium text-slate-300">Ban target</p>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setBanModal((current) => ({ ...current, target: 'session' }))}
-                    className={tabButtonClass(banModal.target === 'session')}
-                  >
-                    Session Ban
-                  </button>
-                  <button
-                    onClick={() => setBanModal((current) => ({ ...current, target: 'ip' }))}
-                    className={tabButtonClass(banModal.target === 'ip')}
-                  >
-                    IP Ban
-                  </button>
+              {/* Header */}
+              <div className="px-6 py-5 sm:px-8 sm:py-6 border-b border-white/[0.06] flex items-start gap-5">
+                <div className="w-12 h-12 rounded-xl bg-danger-rose/10 border border-danger-rose/20 flex items-center justify-center shrink-0 shadow-[0_0_20px_rgba(244,63,94,0.15)]">
+                  <BanIcon size={22} className="text-danger-rose" />
+                </div>
+                <div className="flex flex-col">
+                  <h3 className="font-heading text-lg font-bold text-slate-300 tracking-wide uppercase">CONFIRM_RESTRICTION</h3>
+                  <p className="font-heading text-sm text-slate-500 font-medium tracking-normal mt-0.5">Initialize security enforcement protocols for the target below.</p>
                 </div>
               </div>
-            )}
 
-            <div className="mb-5">
-              <p className="mb-2 text-sm font-medium text-slate-300">Ban length</p>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setBanModal((current) => ({ ...current, mode: 'permanent' }))}
-                  className={tabButtonClass(banModal.mode === 'permanent')}
-                >
-                  Permanent Ban
-                </button>
-                <button
-                  onClick={() => setBanModal((current) => ({ ...current, mode: 'temporary' }))}
-                  className={tabButtonClass(banModal.mode === 'temporary')}
-                >
-                  Temporary Ban
-                </button>
-              </div>
-            </div>
+              {/* Body */}
+              <div className="flex-1 overflow-y-auto px-6 py-6 sm:px-8 space-y-6">
+                {/* Target Details */}
+                <div className="rounded-xl border border-white/8 bg-white/[0.02] px-5 py-4">
+                  <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500 mb-3">TARGET_IDENTITY_DATA</p>
+                  <div className="space-y-2 text-left">
+                    {banModal.sessionId && (
+                      <div className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-4">
+                        <span className="sm:w-[72px] shrink-0 font-heading text-[10px] font-bold tracking-wider text-slate-700 uppercase">SESSION</span>
+                        <span className="font-mono text-xs text-slate-300 break-all leading-relaxed">{banModal.sessionId}</span>
+                      </div>
+                    )}
+                    {banModal.ip && (
+                      <div className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-4">
+                        <span className="sm:w-[72px] shrink-0 font-heading text-[10px] font-bold tracking-wider text-slate-700 uppercase">NETWORK</span>
+                        <span className="font-mono text-xs text-slate-300 break-all leading-relaxed">{banModal.ip}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
 
-            {banModal.mode === 'temporary' && (
-              <div className="mb-5 grid gap-3 sm:grid-cols-[1fr_auto]">
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-300">Duration</label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={banModal.durationValue}
-                    onChange={(e) => setBanModal((current) => ({ ...current, durationValue: e.target.value }))}
-                    className={inputClass}
+                {/* Ban Type Selector */}
+                <div className="flex flex-col gap-3">
+                  <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">ENFORCEMENT_MODE</p>
+                  <div className="flex gap-1.5 rounded-xl bg-white/[0.04] p-1.5 border border-white/[0.06]">
+                    <button
+                      onClick={() => setBanModal({ ...banModal, mode: 'permanent' })}
+                      className={segmentedToggleButtonClass(banModal.mode === 'permanent')}
+                    >
+                      PERMANENT_BAN
+                    </button>
+                    <button
+                      onClick={() => setBanModal({ ...banModal, mode: 'temporary' })}
+                      className={segmentedToggleButtonClass(banModal.mode === 'temporary')}
+                    >
+                      TEMPORARY_BAN
+                    </button>
+                  </div>
+                </div>
+
+                {/* Duration Configuration */}
+                <AnimatePresence initial={false}>
+                  {banModal.mode === 'temporary' && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.25, ease: "easeOut" }}
+                      className="overflow-hidden"
+                    >
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pb-2">
+                        <div className="flex flex-col gap-2">
+                          <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">DURATION_VALUE</label>
+                          <input
+                            type="number"
+                            min="1"
+                            value={banModal.durationValue}
+                            onChange={(e) => setBanModal({ ...banModal, durationValue: e.target.value })}
+                            className={inputClass}
+                            placeholder="AMOUNT"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-2">
+                          <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">TEMPORAL_UNIT</label>
+                          <select
+                            value={banModal.durationUnit}
+                            onChange={(e) => setBanModal({ ...banModal, durationUnit: e.target.value as 'hours' | 'days' })}
+                            className={compactSelectClass}
+                          >
+                            <option value="hours">HOURS (H)</option>
+                            <option value="days">DAYS (D)</option>
+                          </select>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* Incident Justification */}
+                <div className="flex flex-col gap-3">
+                  <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">INCIDENT_JUSTIFICATION</p>
+                  <textarea
+                    value={banModal.reason}
+                    onChange={(e) => setBanModal({ ...banModal, reason: e.target.value })}
+                    className="w-full min-h-[120px] max-h-[200px] resize-y rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-4 font-heading text-sm text-slate-300 placeholder-slate-600 outline-none transition-all duration-200 focus:border-electric-cyan/50 focus:ring-2 focus:ring-electric-cyan/15 scanlines"
+                    placeholder="PROVIDE DETAILED LOGS OR REASONING..."
                   />
                 </div>
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-300">Unit</label>
-                  <select
-                    value={banModal.durationUnit}
-                    onChange={(e) =>
-                      setBanModal((current) => ({
-                        ...current,
-                        durationUnit: e.target.value as 'hours' | 'days',
-                      }))
-                    }
-                    className={inputClass}
-                  >
-                    <option value="hours">Hours</option>
-                    <option value="days">Days</option>
-                  </select>
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 py-5 sm:px-8 sm:py-6 border-t border-white/[0.06] bg-white/[0.02] flex flex-col sm:flex-row gap-3">
+                <button
+                  onClick={closeBanModal}
+                  className="flex-1 h-11 rounded-xl bg-white/[0.04] border border-white/[0.1] text-xs font-bold text-slate-300 uppercase tracking-widest hover:bg-white/[0.08] hover:text-slate-300 transition-all active:scale-[0.98]"
+                >
+                  CANCEL_OPERATION
+                </button>
+                <button
+                  onClick={submitBanModal}
+                  disabled={submittingBan}
+                  className="flex-1 h-11 rounded-xl bg-danger-rose text-slate-300 text-xs font-bold uppercase tracking-widest hover:bg-rose-600 shadow-[0_0_24px_rgba(244,63,94,0.25)] hover:shadow-[0_0_32px_rgba(244,63,94,0.4)] transition-all active:scale-[0.98] disabled:opacity-70 disabled:cursor-not-allowed"
+                >
+                  {submittingBan ? 'PROCESSING...' : 'CONFIRM_ENFORCEMENT'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Transcript Modal */}
+      <AnimatePresence>
+        {expandedReport && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setExpandedReport(null)}
+              className="absolute inset-0 bg-slate-950/90 backdrop-blur-md"
+            />
+            
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ type: 'spring', stiffness: 350, damping: 30 }}
+              className="relative flex flex-col w-full max-w-[640px] max-h-[85vh] rounded-[24px] border border-white/[0.08] bg-[#050816] shadow-[0_32px_128px_rgba(0,0,0,0.8)] overflow-hidden"
+            >
+              <div className="hud-bracket hud-bracket-tl opacity-20" />
+              <div className="hud-bracket-tr opacity-20" />
+              <div className="hud-bracket-bl opacity-20" />
+              <div className="hud-bracket-br opacity-20" />
+
+              {/* Header */}
+              <div className="px-6 py-5 sm:px-8 sm:py-6 border-b border-white/[0.06] flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-xl bg-electric-cyan/10 border border-electric-cyan/20 flex items-center justify-center shrink-0 shadow-[0_0_15px_rgba(34,211,238,0.1)]">
+                    <MessageSquare size={18} className="text-electric-cyan" />
+                  </div>
+                  <div className="flex flex-col">
+                    <h3 className="font-heading text-lg font-bold text-slate-300 tracking-wide uppercase">TRANSCRIPT_VIEW</h3>
+                    <p className="font-heading text-[10px] text-slate-500 font-bold tracking-widest uppercase mt-0.5">
+                      Session: {reports.find(r => r.id === expandedReport)?.reported_session_id.substring(0, 8)}...
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setExpandedReport(null)}
+                  className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/10 text-slate-400 flex items-center justify-center hover:text-slate-300 hover:bg-white/[0.08] transition-all"
+                >
+                  <XCircle size={18} />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="flex-1 overflow-y-auto px-6 py-6 sm:px-8 bg-slate-950/20">
+                <div className="space-y-4">
+                  {reports.find(r => r.id === expandedReport)?.chat_log.map((msg, idx) => (
+                    <div key={idx} className={`flex ${msg.sender === 'me' ? 'justify-end' : msg.sender === 'system' ? 'justify-center' : 'justify-start'}`}>
+                      <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm ${
+                        msg.sender === 'me' 
+                          ? 'bg-cyan-500/10 text-cyan-100 border border-cyan-500/20' 
+                          : msg.sender === 'system'
+                            ? 'bg-slate-800/40 text-slate-400 border border-white/5 text-center text-[11px] px-6 py-1.5'
+                            : 'bg-white/5 text-slate-300 border border-white/5'
+                      }`}>
+                        {msg.sender !== 'system' && (
+                          <p className="text-[10px] font-bold uppercase tracking-wider opacity-40 mb-1.5">
+                            {msg.sender === 'me' ? 'Reporter' : 'Peer'}
+                          </p>
+                        )}
+                        <div className="leading-relaxed">
+                          {DOMPurify.sanitize(msg.text)}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  
+                  {(!reports.find(r => r.id === expandedReport)?.chat_log || reports.find(r => r.id === expandedReport)?.chat_log.length === 0) && (
+                    <div className="flex flex-col items-center justify-center py-12 text-slate-700 italic">
+                      <MessageSquare size={48} className="opacity-10 mb-4" />
+                      <p>No messages available for this session.</p>
+                    </div>
+                  )}
                 </div>
               </div>
-            )}
 
-            <div className="mb-6">
-              <label className="mb-2 block text-sm font-medium text-slate-300">Reason</label>
-              <textarea
-                value={banModal.reason}
-                onChange={(e) => setBanModal((current) => ({ ...current, reason: e.target.value }))}
-                rows={3}
-                className={inputClass}
-                placeholder="Document why this ban is being applied"
-              />
-            </div>
-
-            <div className="flex gap-3">
-              <button
-                onClick={submitBanModal}
-                disabled={submittingBan}
-                className={`${actionButtonClass} flex-1 bg-rose-500 text-white hover:bg-rose-400`}
-              >
-                {submittingBan ? 'Applying...' : 'Confirm Ban'}
-              </button>
-              <button
-                onClick={closeBanModal}
-                disabled={submittingBan}
-                className={`${actionButtonClass} flex-1 bg-white/8 text-slate-200 hover:bg-white/12`}
-              >
-                Cancel
-              </button>
-            </div>
+              {/* Footer */}
+              <div className="px-6 py-4 sm:px-8 border-t border-white/[0.06] bg-white/[0.02]">
+                <button
+                  onClick={() => setExpandedReport(null)}
+                  className="w-full h-11 rounded-xl bg-white/[0.04] border border-white/[0.1] text-xs font-bold text-slate-300 uppercase tracking-widest hover:bg-white/[0.08] hover:text-slate-300 transition-all active:scale-[0.98]"
+                >
+                  DISMISS_VIEW
+                </button>
+              </div>
+            </motion.div>
           </div>
-        </div>
-      )}
+        )}
+      </AnimatePresence>
+      {/* Description Modal */}
+      <AnimatePresence>
+        {viewingDescription && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setViewingDescription(null)}
+              className="absolute inset-0 bg-slate-950/90 backdrop-blur-md"
+            />
+            
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ type: 'spring', stiffness: 350, damping: 30 }}
+              className="relative flex flex-col w-full max-w-[640px] max-h-[80vh] rounded-[24px] border border-white/[0.08] bg-[#050816] shadow-[0_32px_128px_rgba(0,0,0,0.8)] overflow-hidden"
+            >
+              <div className="hud-bracket hud-bracket-tl opacity-20" />
+              <div className="hud-bracket-tr opacity-20" />
+              <div className="hud-bracket-bl opacity-20" />
+              <div className="hud-bracket-br opacity-20" />
+
+              {/* Header */}
+              <div className="px-6 py-5 sm:px-8 sm:py-6 border-b border-white/[0.06] flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-xl bg-electric-cyan/10 border border-electric-cyan/20 flex items-center justify-center shrink-0 shadow-[0_0_15px_rgba(34,211,238,0.1)]">
+                    <Shield size={18} className="text-electric-cyan" />
+                  </div>
+                  <div className="flex flex-col">
+                    <h3 className="font-heading text-lg font-bold text-white tracking-wide uppercase">INCIDENT_DESCRIPTION</h3>
+                    <p className="font-heading text-[10px] text-slate-500 font-bold tracking-widest uppercase mt-0.5">
+                      Report Ref: {reports.find(r => r.id === viewingDescription)?.id.substring(0, 8)}...
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setViewingDescription(null)}
+                  className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/10 text-slate-400 flex items-center justify-center hover:text-white hover:bg-white/[0.08] transition-all"
+                >
+                  <XCircle size={18} />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="flex-1 overflow-y-auto px-6 py-8 sm:px-8 bg-slate-950/20">
+                <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-6 scanlines">
+                  <p className="text-base text-slate-300 leading-relaxed break-words whitespace-pre-wrap font-medium">
+                    {reports.find(r => r.id === viewingDescription)?.description}
+                  </p>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 py-4 sm:px-8 border-t border-white/[0.06] bg-white/[0.02]">
+                <button
+                  onClick={() => setViewingDescription(null)}
+                  className="w-full h-11 rounded-xl bg-white/[0.04] border border-white/[0.1] text-xs font-bold text-slate-300 uppercase tracking-widest hover:bg-white/[0.08] hover:text-white transition-all active:scale-[0.98]"
+                >
+                  CLOSE_ENTRY
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
