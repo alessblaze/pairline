@@ -220,7 +220,7 @@ func UpdateReportHandlerGin(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 	reviewedAt := time.Now()
-	tx := db.GetDB().WithContext(ctx).Model(&storage.Report{}).Where("id = ?", id).Updates(map[string]interface{}{
+	tx := db.GetDB().WithContext(ctx).Model(&storage.Report{}).Where("id = ? AND status = ?", id, "pending").Updates(map[string]interface{}{
 		"status":               req.Status,
 		"reviewed_by_username": username,
 		"reviewed_at":          reviewedAt,
@@ -232,6 +232,16 @@ func UpdateReportHandlerGin(c *gin.Context) {
 	}
 
 	if tx.RowsAffected == 0 {
+		var existingCount int64
+		if err := db.GetDB().WithContext(ctx).Model(&storage.Report{}).Where("id = ?", id).Count(&existingCount).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update report"})
+			return
+		}
+		if existingCount > 0 {
+			c.JSON(http.StatusConflict, gin.H{"error": "Report has already been reviewed"})
+			return
+		}
+
 		c.JSON(http.StatusNotFound, gin.H{"error": "Report not found"})
 		return
 	}
@@ -783,14 +793,52 @@ func DeleteBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 }
 
 func ListAdminAccountsHandlerGin(c *gin.Context) {
+	limit := 25
+	if limitStr := strings.TrimSpace(c.Query("limit")); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			if parsed > 100 {
+				limit = 100
+			} else {
+				limit = parsed
+			}
+		}
+	}
+
+	page := 1
+	if pageStr := strings.TrimSpace(c.Query("page")); pageStr != "" {
+		if parsed, err := strconv.Atoi(pageStr); err == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+
+	searchQuery := strings.TrimSpace(c.Query("q"))
+	if len(searchQuery) > 50 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "search query too long"})
+		return
+	}
+
 	db := storage.NewDatabase()
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 
+	query := db.GetDB().WithContext(ctx).Model(&storage.AdminAccount{})
+	if searchQuery != "" {
+		query = query.Where("LOWER(username) LIKE ?", "%"+strings.ToLower(searchQuery)+"%")
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count admin accounts"})
+		return
+	}
+
 	var accounts []storage.AdminAccount
-	if err := db.GetDB().WithContext(ctx).
+	offset := (page - 1) * limit
+	if err := query.
 		Select("id", "username", "role", "created_at", "created_by_username", "is_active").
 		Order("created_at DESC").
+		Limit(limit).
+		Offset(offset).
 		Find(&accounts).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch admin accounts"})
 		return
@@ -798,6 +846,9 @@ func ListAdminAccountsHandlerGin(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"accounts": accounts,
+		"total":    total,
+		"page":     page,
+		"limit":    limit,
 	})
 }
 

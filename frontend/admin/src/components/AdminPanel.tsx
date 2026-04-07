@@ -157,6 +157,10 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
   const [accountPassword, setAccountPassword] = useState('');
   const [showCreateAccountPassword, setShowCreateAccountPassword] = useState(false);
   const [accountRole, setAccountRole] = useState<AdminRole>('moderator');
+  const [accountSearch, setAccountSearch] = useState('');
+  const [accountPage, setAccountPage] = useState(1);
+  const [accountPageSize] = useState(25);
+  const [accountTotal, setAccountTotal] = useState(0);
   const [submittingAccount, setSubmittingAccount] = useState(false);
   const [submittingBan, setSubmittingBan] = useState(false);
   const [banModal, setBanModal] = useState<BanModalState>({
@@ -174,6 +178,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
   const canManageBans = role === 'admin' || role === 'root';
   const canManageAccounts = role === 'admin' || role === 'root';
   const deferredBanSearch = useDeferredValue(banSearch);
+  const deferredAccountSearch = useDeferredValue(accountSearch);
 
   useEffect(() => {
     if (authReady && isAuthenticated) {
@@ -191,7 +196,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
     if (authReady && isAuthenticated && canManageAccounts) {
       void fetchAccounts();
     }
-  }, [authReady, isAuthenticated, canManageAccounts]);
+  }, [authReady, isAuthenticated, canManageAccounts, accountPage, accountPageSize, deferredAccountSearch]);
 
   useEffect(() => {
     const bootstrapAuth = async () => {
@@ -380,9 +385,20 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
       if (response.ok) {
         await storeCSRFFromResponse(response);
         fetchReports();
+        return;
       }
+
+      const data = await response.json().catch(() => ({}));
+      if (response.status === 409) {
+        alert(data.error || 'This report was already reviewed by another moderator');
+        fetchReports();
+        return;
+      }
+
+      alert(data.error || 'Failed to update report');
     } catch (error) {
       console.error('Failed to update report:', error);
+      alert('Failed to update report');
     }
   };
 
@@ -565,12 +581,31 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
     if (!canManageAccounts) return;
 
     try {
-      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/accounts`);
+      const params = new URLSearchParams({
+        page: String(accountPage),
+        limit: String(accountPageSize),
+      });
+
+      const normalizedAccountSearch = deferredAccountSearch.trim();
+      if (normalizedAccountSearch) {
+        params.set('q', normalizedAccountSearch);
+      }
+
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/accounts?${params.toString()}`);
       if (response.status === 401) return logout();
       if (!response.ok) return;
 
       const data = await response.json();
-      setAccounts(data.accounts || []);
+      const nextAccounts = data.accounts || [];
+      const nextTotal = Number(data.total || 0);
+
+      if (nextAccounts.length === 0 && nextTotal > 0 && accountPage > 1) {
+        setAccountPage((current) => Math.max(1, current - 1));
+        return;
+      }
+
+      setAccounts(nextAccounts);
+      setAccountTotal(nextTotal);
     } catch (error) {
       console.error('Failed to fetch admin accounts:', error);
     }
@@ -741,6 +776,9 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
     currentTab === 'reports' ? 'Review Controls' : currentTab === 'bans' ? 'Ban Controls' : 'Account Controls';
   const permanentBans = bans.filter((ban) => !ban.expires_at);
   const temporaryBans = bans.filter((ban) => Boolean(ban.expires_at));
+  const accountPageCount = Math.max(1, Math.ceil(accountTotal / accountPageSize));
+  const accountRangeStart = accountTotal === 0 ? 0 : (accountPage - 1) * accountPageSize + 1;
+  const accountRangeEnd = accountTotal === 0 ? 0 : Math.min(accountTotal, accountPage * accountPageSize);
 
   const renderBanCard = (ban: Ban) => (
     <article
@@ -1194,6 +1232,18 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                                 <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Reason</p>
                                 <p className="mt-1 text-sm text-slate-200">{report.reason}</p>
                               </div>
+                              {report.status !== 'pending' && (
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                  <div>
+                                    <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Reviewed By</p>
+                                    <p className="mt-1 text-sm text-slate-200">{report.reviewed_by_username || 'Unknown'}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Reviewed At</p>
+                                    <p className="mt-1 text-sm text-slate-200">{formatDate(report.reviewed_at)}</p>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           </div>
 
@@ -1354,6 +1404,26 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                 </div>
 
                 <div className="space-y-4 p-4 sm:p-6">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                    <div className="w-full max-w-md">
+                      <label className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-400">Search Username</label>
+                      <input
+                        type="text"
+                        value={accountSearch}
+                        onChange={(e) => {
+                          setAccountSearch(e.target.value);
+                          setAccountPage(1);
+                        }}
+                        maxLength={50}
+                        className={inputClass}
+                        placeholder="Filter operators by username"
+                      />
+                    </div>
+                    <div className="text-sm text-slate-400">
+                      Showing {accountRangeStart}-{accountRangeEnd} of {accountTotal}
+                    </div>
+                  </div>
+
                   {accounts.length === 0 && (
                     <div className="rounded-[28px] border border-dashed border-white/10 bg-white/4 px-6 py-16 text-center text-slate-400">
                       No admin accounts found
@@ -1396,6 +1466,30 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                       </div>
                     </article>
                   ))}
+
+                  {accountTotal > accountPageSize && (
+                    <div className="flex flex-col gap-3 border-t border-white/10 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="text-sm text-slate-400">
+                        Page {accountPage} of {accountPageCount}
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setAccountPage((current) => Math.max(1, current - 1))}
+                          disabled={accountPage <= 1}
+                          className={filterButtonClass(false)}
+                        >
+                          Previous
+                        </button>
+                        <button
+                          onClick={() => setAccountPage((current) => Math.min(accountPageCount, current + 1))}
+                          disabled={accountPage >= accountPageCount}
+                          className={filterButtonClass(false)}
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

@@ -49,7 +49,7 @@ export interface Report {
   chat_log: ChatMessage[];
   status: 'pending' | 'approved' | 'rejected';
   created_at: string;
-  reviewed_by?: string;
+  reviewed_by_username?: string;
   reviewed_at?: string;
 }
 
