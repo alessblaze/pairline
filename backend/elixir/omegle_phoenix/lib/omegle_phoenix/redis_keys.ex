@@ -6,6 +6,7 @@ defmodule OmeglePhoenix.RedisKeys do
 
   def active_sessions_key, do: "sessions:active"
   def session_locator_key(session_id), do: "session:locator:" <> session_id
+  def session_report_locator_key(session_id), do: "session:report_locator:" <> session_id
   def session_ip_locator_key(session_id), do: "session:ip_locator:" <> session_id
   def ip_sessions_key(ip), do: "ip:" <> ip
 

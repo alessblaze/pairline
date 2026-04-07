@@ -276,7 +276,7 @@ defmodule OmeglePhoenix.RedisState do
 
       with {:ok, _} <- delete_result do
         {locator_result, locator_us} =
-          timed_us(fn -> cleanup_locators_for_report_grace(session_id, report_grace_ttl) end)
+          timed_us(fn -> cleanup_locators_for_report_grace(session_id, route, report_grace_ttl) end)
 
         with :ok <- locator_result do
           case Keyword.get(opts, :index_cleanup, :sync) do
@@ -706,6 +706,7 @@ defmodule OmeglePhoenix.RedisState do
   defp cleanup_locators(session_id) do
     commands = [
       ["DEL", OmeglePhoenix.RedisKeys.session_locator_key(session_id)],
+      ["DEL", OmeglePhoenix.RedisKeys.session_report_locator_key(session_id)],
       ["DEL", OmeglePhoenix.RedisKeys.session_ip_locator_key(session_id)]
     ]
 
@@ -716,8 +717,14 @@ defmodule OmeglePhoenix.RedisState do
     end
   end
 
-  defp cleanup_locators_for_report_grace(session_id, report_grace_ttl) do
+  defp cleanup_locators_for_report_grace(session_id, route, report_grace_ttl) do
     commands = [
+      [
+        "SETEX",
+        OmeglePhoenix.RedisKeys.session_report_locator_key(session_id),
+        report_grace_ttl,
+        OmeglePhoenix.RedisKeys.encode_locator(route)
+      ],
       ["DEL", OmeglePhoenix.RedisKeys.session_locator_key(session_id)],
       ["EXPIRE", OmeglePhoenix.RedisKeys.session_ip_locator_key(session_id), report_grace_ttl]
     ]
@@ -799,6 +806,7 @@ defmodule OmeglePhoenix.RedisState do
     commands = [
       ["SREM", OmeglePhoenix.RedisKeys.active_sessions_key(), session_id],
       ["DEL", OmeglePhoenix.RedisKeys.session_locator_key(session_id)],
+      ["DEL", OmeglePhoenix.RedisKeys.session_report_locator_key(session_id)],
       ["DEL", OmeglePhoenix.RedisKeys.session_ip_locator_key(session_id)]
     ] ++ ip_commands
 

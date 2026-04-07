@@ -289,8 +289,8 @@ func CreateReportHandlerGin(redisClient redis.UniversalClient) gin.HandlerFunc {
 			return
 		}
 
-		reporterRoute, reporterRouteErr := appredis.ResolveSessionRoute(ctx, redisClient, req.ReporterSessionID)
-		reportedRoute, reportedRouteErr := appredis.ResolveSessionRoute(ctx, redisClient, req.ReportedSessionID)
+		reporterRoute, reporterRouteErr := appredis.ResolveSessionRouteForReport(ctx, redisClient, req.ReporterSessionID)
+		reportedRoute, reportedRouteErr := appredis.ResolveSessionRouteForReport(ctx, redisClient, req.ReportedSessionID)
 
 		rawReporterIP := ""
 		if reporterRouteErr == nil {
@@ -1065,7 +1065,7 @@ func canCreateAdminRole(currentRole, targetRole string) bool {
 }
 
 func verifySessionToken(ctx context.Context, redisClient redis.UniversalClient, sessionID, providedToken string) bool {
-	route, err := appredis.ResolveSessionRoute(ctx, redisClient, sessionID)
+	route, err := appredis.ResolveSessionRouteForReport(ctx, redisClient, sessionID)
 	if err != nil {
 		return false
 	}
@@ -1082,7 +1082,7 @@ func verifySessionToken(ctx context.Context, redisClient redis.UniversalClient, 
 }
 
 func sessionCanReportPeer(ctx context.Context, redisClient redis.UniversalClient, reporterSessionID, reportedSessionID string) bool {
-	route, err := appredis.ResolveSessionRoute(ctx, redisClient, reporterSessionID)
+	route, err := appredis.ResolveSessionRouteForReport(ctx, redisClient, reporterSessionID)
 	if err != nil {
 		return false
 	}

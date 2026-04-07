@@ -26,6 +26,10 @@ func SessionIPLocatorKey(sessionID string) string {
 	return "session:ip_locator:" + sessionID
 }
 
+func SessionReportLocatorKey(sessionID string) string {
+	return "session:report_locator:" + sessionID
+}
+
 func BanIndexKey() string {
 	return "bans:index"
 }
@@ -45,6 +49,23 @@ func ResolveSessionRoute(ctx context.Context, client goredis.UniversalClient, se
 			return SessionRoute{}, ErrSessionRouteNotFound
 		}
 		return SessionRoute{}, err
+	}
+
+	return DecodeSessionRoute(locator)
+}
+
+func ResolveSessionRouteForReport(ctx context.Context, client goredis.UniversalClient, sessionID string) (SessionRoute, error) {
+	route, err := ResolveSessionRoute(ctx, client, sessionID)
+	if err == nil || !errors.Is(err, ErrSessionRouteNotFound) {
+		return route, err
+	}
+
+	locator, fallbackErr := client.Get(ctx, SessionReportLocatorKey(sessionID)).Result()
+	if fallbackErr != nil {
+		if errors.Is(fallbackErr, goredis.Nil) {
+			return SessionRoute{}, ErrSessionRouteNotFound
+		}
+		return SessionRoute{}, fallbackErr
 	}
 
 	return DecodeSessionRoute(locator)

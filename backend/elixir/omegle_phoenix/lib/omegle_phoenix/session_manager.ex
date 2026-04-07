@@ -34,8 +34,7 @@ defmodule OmeglePhoenix.SessionManager do
         {:ok, nil} ->
           _ =
             OmeglePhoenix.Redis.pipeline([
-              ["DEL", OmeglePhoenix.RedisKeys.session_locator_key(session_id)],
-              ["DEL", OmeglePhoenix.RedisKeys.session_ip_locator_key(session_id)]
+              ["DEL", OmeglePhoenix.RedisKeys.session_locator_key(session_id)]
             ])
 
           {:error, :not_found}
