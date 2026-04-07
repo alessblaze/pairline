@@ -46,7 +46,7 @@ interface BanModalState {
 
 // Design Constants
 const tabButtonClass = (active: boolean) =>
-  `relative flex h-11 w-full items-center justify-start gap-3 rounded-xl px-5 text-sm font-bold uppercase tracking-[0.14em] transition-all duration-200 ${
+  `relative flex h-11 w-full items-center justify-start gap-3 rounded-none px-5 text-sm font-bold uppercase tracking-[0.14em] transition-all duration-200 ${
     active
       ? 'border border-electric-cyan/40 bg-electric-cyan/10 text-electric-cyan shadow-[0_0_12px_rgba(34,211,238,0.12)]'
       : 'text-slate-400 hover:bg-white/5 hover:text-white font-medium'
@@ -57,7 +57,7 @@ const filterButtonClass = (active: boolean, type: 'cyan' | 'rose' = 'cyan') => {
     ? 'border-danger-rose/40 bg-danger-rose/[0.08] text-danger-rose shadow-[0_0_12px_rgba(244,63,94,0.12)]'
     : 'border-electric-cyan/40 bg-electric-cyan/[0.08] text-electric-cyan shadow-[0_0_12px_rgba(34,211,238,0.12)]';
   
-  return `inline-flex h-11 items-center justify-center rounded-xl border px-4 text-[10px] font-bold uppercase tracking-[0.14em] transition-all duration-200 ${
+  return `inline-flex h-11 items-center justify-center rounded-none border px-4 text-[10px] font-bold uppercase tracking-[0.14em] transition-all duration-200 ${
     active ? activeStyles : 'border-white/[0.07] bg-white/[0.04] text-slate-400 hover:text-slate-200 hover:bg-white/[0.07]'
   }`;
 };
@@ -69,26 +69,26 @@ const metricCardClass = (type: 'active' | 'inactive' | 'total' | 'pending' | 'ap
     type === 'approved' ? 'shadow-[inset_0_0_20px_rgba(52,211,153,0.05)] border-success-emerald/20' :
     'border-white/[0.07]';
   
-  return `surface-card rounded-[20px] flex flex-row items-center gap-4 p-5 transition-all duration-300 hover:border-white/20 ${glowShadow}`;
+  return `surface-card rounded-none flex flex-row items-center gap-4 p-5 transition-all duration-300 hover:border-white/20 ${glowShadow}`;
 };
 
-const surfaceCardClass = 'surface-card rounded-[20px] p-5';
+const surfaceCardClass = 'surface-card rounded-none p-5';
 
 const inputClass =
-  'h-11 w-full rounded-xl border border-white/[0.07] bg-white/[0.04] px-4 font-mono text-sm text-white placeholder:text-slate-500 outline-none transition-all duration-200 focus:border-electric-cyan/50 focus:ring-2 focus:ring-electric-cyan/15 focus:bg-white/[0.06] scanlines';
+  'h-11 w-full rounded-none border border-white/[0.07] bg-white/[0.04] px-4 font-mono text-sm text-white placeholder:text-slate-500 outline-none transition-all duration-200 focus:border-electric-cyan/50 focus:ring-2 focus:ring-electric-cyan/15 focus:bg-white/[0.06] scanlines';
 
 const compactSelectClass =
-  'h-11 w-full rounded-xl border border-white/[0.07] bg-white/[0.04] px-3 font-semibold uppercase tracking-wider text-sm text-white outline-none transition-all duration-200 focus:border-electric-cyan/50 focus:ring-2 focus:ring-electric-cyan/15';
+  'h-11 w-full rounded-none border border-white/[0.07] bg-white/[0.04] px-3 font-semibold uppercase tracking-wider text-sm text-white outline-none transition-all duration-200 focus:border-electric-cyan/50 focus:ring-2 focus:ring-electric-cyan/15';
 
 const segmentedToggleButtonClass = (active: boolean) =>
-  `flex h-10 flex-1 items-center justify-center rounded-lg px-4 text-[10px] font-bold uppercase tracking-[0.14em] transition-all duration-200 ${
+  `flex h-10 flex-1 items-center justify-center rounded-none px-4 text-[10px] font-bold uppercase tracking-[0.14em] transition-all duration-200 ${
     active
       ? 'bg-white text-navy-black shadow-[0_0_14px_rgba(255,255,255,0.1)]'
       : 'text-slate-500 hover:bg-white/[0.05] hover:text-slate-200'
   }`;
 
 const actionButtonClass =
-  'flex h-11 items-center justify-center gap-2 rounded-xl px-4 text-xs font-bold uppercase tracking-wide transition-all duration-100 disabled:cursor-not-allowed disabled:opacity-50 active:scale-[0.97]';
+  'flex h-11 items-center justify-center gap-2 rounded-none px-4 text-xs font-bold uppercase tracking-wide transition-all duration-100 disabled:cursor-not-allowed disabled:opacity-50 active:scale-[0.97]';
 
 // Helper Functions
 function buildAdminHeaders(includeJSON = false) {
@@ -144,10 +144,10 @@ interface AdminPanelProps {
 
 export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
   const navigate = useNavigate();
-  const [isAuthenticated, setIsAuthenticated] = useState(localStorage.getItem('admin_auth') === 'true');
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authReady, setAuthReady] = useState(false);
-  const [role, setRole] = useState<AdminRole | null>((localStorage.getItem('admin_role') as AdminRole | null) || null);
-  const [currentAdminUsername, setCurrentAdminUsername] = useState(localStorage.getItem('admin_username') || '');
+  const [role, setRole] = useState<AdminRole | null>(null);
+  const [currentAdminUsername, setCurrentAdminUsername] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showLoginPassword, setShowLoginPassword] = useState(false);
@@ -175,8 +175,8 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
   const [showCreateAccountPassword, setShowCreateAccountPassword] = useState(false);
   const [accountRole, setAccountRole] = useState<AdminRole>('moderator');
   const [accountSearch, setAccountSearch] = useState('');
+  const [accountLimit, setAccountLimit] = useState<string>('25');
   const [accountPage, setAccountPage] = useState(1);
-  const accountPageSize = 25;
   const [accountTotal, setAccountTotal] = useState(0);
   const [submittingAccount, setSubmittingAccount] = useState(false);
   const [submittingBan, setSubmittingBan] = useState(false);
@@ -196,6 +196,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
   const canManageAccounts = role === 'admin' || role === 'root';
   const deferredBanSearch = useDeferredValue(banSearch);
   const deferredAccountSearch = useDeferredValue(accountSearch);
+  const accountPageSize = accountLimit === 'all' ? Math.max(accountTotal, accounts.length, 1) : Number(accountLimit);
   const accountTotalPages = Math.max(1, Math.ceil(accountTotal / accountPageSize));
 
   // Authentication Logic
@@ -204,6 +205,10 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
       const rememberedAuth = localStorage.getItem('admin_auth') === 'true';
       const csrfToken = sessionStorage.getItem('admin_csrf');
       if (!rememberedAuth || !csrfToken) {
+        clearAdminSession();
+        setIsAuthenticated(false);
+        setRole(null);
+        setCurrentAdminUsername('');
         setAuthReady(true);
         return;
       }
@@ -212,6 +217,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
         clearAdminSession();
         setIsAuthenticated(false);
         setRole(null);
+        setCurrentAdminUsername('');
       }
       setAuthReady(true);
     };
@@ -274,7 +280,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
       const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username: username.trim(), password }),
         credentials: 'include',
       });
       if (response.ok) {
@@ -334,7 +340,15 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
         }
         const normalized = (data.reports || []).map((r: any) => ({
           ...r,
-          chat_log: typeof r.chat_log === 'string' ? JSON.parse(r.chat_log) : (r.chat_log || []),
+          chat_log: (() => {
+            if (typeof r.chat_log !== 'string') return r.chat_log || [];
+            try {
+              return JSON.parse(r.chat_log);
+            } catch (error) {
+              console.warn('Failed to parse report chat_log', r.id, error);
+              return [];
+            }
+          })(),
         }));
         setReports(normalized);
         setSelectedReports((current) => {
@@ -372,7 +386,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
   const fetchAccounts = async () => {
     if (!canManageAccounts) return;
     try {
-      const params = new URLSearchParams({ page: String(accountPage), limit: String(accountPageSize) });
+      const params = new URLSearchParams({ page: String(accountPage), limit: accountLimit });
       if (deferredAccountSearch.trim()) params.set('q', deferredAccountSearch.trim());
       const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/accounts?${params.toString()}`);
       if (response.status === 401) return logout();
@@ -517,10 +531,10 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
       reason: banModal.reason.trim(),
     };
     if (banModal.target === 'session') {
-      request.session_id = banModal.sessionId;
-      if (banModal.ip) request.ip = banModal.ip;
+      request.session_id = banModal.sessionId.trim();
+      if (banModal.ip) request.ip = banModal.ip.trim();
     } else {
-      request.ip = banModal.ip;
+      request.ip = banModal.ip.trim();
     }
     if (banModal.mode === 'temporary') {
       const expiryDate = buildExpiryDate(banModal.durationValue, banModal.durationUnit);
@@ -548,6 +562,10 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
     setAccountPage(1);
   }, [deferredAccountSearch]);
 
+  useEffect(() => {
+    setAccountPage(1);
+  }, [accountLimit]);
+
   useEffect(() => { if (authReady && isAuthenticated) fetchReports(); }, [authReady, isAuthenticated, reportStatusFilter, reportLimit]);
   useEffect(() => { if (authReady && isAuthenticated) fetchBans(); }, [authReady, isAuthenticated, banFilter, banLimit, deferredBanSearch]);
   useEffect(() => { if (authReady && isAuthenticated && canManageAccounts) fetchAccounts(); }, [authReady, isAuthenticated, canManageAccounts, accountPage, deferredAccountSearch]);
@@ -560,7 +578,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
           animate={{ opacity: 1 }}
           className="flex flex-col items-center gap-4"
         >
-          <div className="h-12 w-12 animate-spin rounded-full border-4 border-cyan-400/20 border-t-cyan-400" />
+          <div className="h-12 w-12 animate-spin rounded-none border-4 border-cyan-400/20 border-t-cyan-400" />
           <p className="text-sm font-medium text-slate-400">Initializing Pairline Console...</p>
         </motion.div>
       </div>
@@ -582,7 +600,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
           className="relative z-10 w-full max-w-md px-6"
         >
           <div className="mb-8 text-center">
-            <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-white text-slate-950 shadow-[0_0_30px_rgba(255,255,255,0.2)]">
+            <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-none bg-white text-slate-950 shadow-[0_0_30px_rgba(255,255,255,0.2)]">
               <Shield size={32} />
             </div>
             <h1 className="text-4xl font-bold tracking-tight text-slate-300">Pairline</h1>
@@ -630,7 +648,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
 
               <button
                 type="submit"
-                className="group relative w-full overflow-hidden rounded-xl bg-white py-3.5 text-sm font-bold text-slate-950 transition-all hover:scale-[1.02] active:scale-[0.98]"
+                className="group relative w-full overflow-hidden rounded-none bg-white py-3.5 text-sm font-bold text-slate-950 transition-all hover:scale-[1.02] active:scale-[0.98]"
               >
                 <div className="absolute inset-0 bg-gradient-to-r from-cyan-400/0 via-cyan-400/20 to-cyan-400/0 opacity-0 transition-opacity group-hover:opacity-100" />
                 Sign In to Console
@@ -657,14 +675,14 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
       {/* Mobile Top Bar */}
       <div className="relative z-40 flex h-16 shrink-0 items-center justify-between border-b border-white/5 bg-slate-950/50 px-6 backdrop-blur-xl lg:hidden">
         <div className="flex items-center gap-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white text-slate-950">
+          <div className="flex h-8 w-8 items-center justify-center rounded-none bg-white text-slate-950">
             <Shield size={16} />
           </div>
           <h2 className="text-base font-bold text-slate-300">Pairline</h2>
         </div>
         <button
           onClick={() => setIsMobileMenuOpen(true)}
-          className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/5 text-slate-400 hover:text-white"
+          className="flex h-10 w-10 items-center justify-center rounded-none bg-white/5 text-slate-400 hover:text-white"
         >
           <Menu size={20} />
         </button>
@@ -690,7 +708,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
             >
               <div className="mb-10 flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-slate-950">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-none bg-white text-slate-950">
                     <Shield size={20} />
                   </div>
                   <div>
@@ -700,7 +718,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                 </div>
                 <button
                   onClick={() => setIsMobileMenuOpen(false)}
-                  className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/5 text-slate-400 hover:text-white"
+                  className="flex h-10 w-10 items-center justify-center rounded-none bg-white/5 text-slate-400 hover:text-white"
                 >
                   <X size={20} />
                 </button>
@@ -749,7 +767,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
               <div className="mt-auto pt-6 border-t border-white/5">
                 <div className="flex flex-col gap-4">
                   <div className="flex items-center gap-3 px-2">
-                    <div className="h-10 w-10 rounded-full bg-gradient-to-br from-cyan-400 to-blue-500 shadow-lg" />
+                    <div className="h-10 w-10 rounded-none bg-gradient-to-br from-cyan-400 to-blue-500 shadow-lg" />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-bold text-slate-300">{currentAdminUsername}</p>
                       <p className="text-[10px] font-bold uppercase tracking-widest text-slate-700 leading-none mt-1">{role}</p>
@@ -757,7 +775,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                   </div>
                   <button
                     onClick={logout}
-                    className="flex w-full items-center gap-3 rounded-xl bg-rose-500/10 px-4 py-3 text-sm font-bold uppercase tracking-[0.14em] text-rose-400 transition-all hover:bg-rose-500/20 active:scale-[0.98]"
+                    className="flex w-full items-center gap-3 rounded-none bg-rose-500/10 px-4 py-3 text-sm font-bold uppercase tracking-[0.14em] text-rose-400 transition-all hover:bg-rose-500/20 active:scale-[0.98]"
                   >
                     <LogOut size={16} />
                     Sign Out
@@ -774,7 +792,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
         <aside className="hidden w-72 border-r border-white/5 bg-slate-950/20 backdrop-blur-xl lg:block">
           <div className="flex h-full flex-col p-6">
             <div className="mb-10 flex items-center gap-3 px-2">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-slate-950">
+              <div className="flex h-10 w-10 items-center justify-center rounded-none bg-white text-slate-950">
                 <Shield size={20} />
               </div>
               <div>
@@ -812,7 +830,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                     initial={{ opacity: 0, scale: 0.95, y: 10 }}
                     animate={{ opacity: 1, scale: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                    className="absolute bottom-full left-0 mb-4 w-full rounded-2xl border border-white/10 bg-slate-900/90 p-2 shadow-2xl backdrop-blur-xl"
+                    className="absolute bottom-full left-0 mb-4 w-full rounded-none border border-white/10 bg-slate-900/90 p-2 shadow-2xl backdrop-blur-xl"
                   >
                     <div className="mb-2 border-b border-white/5 px-4 py-3">
                       <p className="truncate text-xs font-bold text-slate-300 tracking-wide uppercase">{currentAdminUsername}</p>
@@ -823,7 +841,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                         e.stopPropagation();
                         logout();
                       }}
-                      className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-bold uppercase tracking-[0.14em] text-rose-400 transition-all hover:bg-rose-500/10 active:scale-[0.98]"
+                      className="flex w-full items-center gap-3 rounded-none px-4 py-3 text-sm font-bold uppercase tracking-[0.14em] text-rose-400 transition-all hover:bg-rose-500/10 active:scale-[0.98]"
                     >
                       <LogOut size={16} />
                       Sign Out
@@ -834,15 +852,15 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
 
               <button
                 onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                className={`group flex w-full items-center gap-3 rounded-2xl border p-4 transition-all duration-300 ${
+                className={`group flex w-full items-center gap-3 rounded-none border p-4 transition-all duration-300 ${
                   isUserMenuOpen 
                     ? 'border-electric-cyan/40 bg-electric-cyan/10 shadow-[0_0_15px_rgba(34,211,238,0.1)]' 
                     : 'border-white/5 bg-white/5 hover:border-white/10 hover:bg-white/[0.07]'
                 }`}
               >
                 <div className="relative">
-                  <div className="h-10 w-10 rounded-full bg-gradient-to-br from-cyan-400 to-blue-500 shadow-lg" />
-                  <div className={`absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-slate-950 bg-emerald-500 transition-transform ${isUserMenuOpen ? 'scale-110' : 'scale-100'}`} />
+                  <div className="h-10 w-10 rounded-none bg-gradient-to-br from-cyan-400 to-blue-500 shadow-lg" />
+                  <div className={`absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-none border-2 border-slate-950 bg-emerald-500 transition-transform ${isUserMenuOpen ? 'scale-110' : 'scale-100'}`} />
                 </div>
                 <div className="min-w-0 flex-1 text-left">
                   <p className="truncate text-sm font-bold text-slate-300">{currentAdminUsername}</p>
@@ -885,9 +903,9 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                 {currentTab === 'reports' && (
                   <div className="space-y-6">
                     {/* Reports Metrics */}
-                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                       <div className={metricCardClass('pending')}>
-                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-danger-rose/10 text-danger-rose border border-danger-rose/20 shadow-[inset_0_0_20px_rgba(244,63,94,0.05)]">
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-danger-rose/10 text-danger-rose border border-danger-rose/20 shadow-[inset_0_0_20px_rgba(244,63,94,0.05)]">
                           <Activity size={20} />
                           <div className="hud-bracket hud-bracket-tl" />
                           <div className="hud-bracket-br" />
@@ -898,7 +916,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                         </div>
                       </div>
                       <div className={metricCardClass('approved')}>
-                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-success-emerald/10 text-success-emerald border border-success-emerald/20 shadow-[inset_0_0_20px_rgba(52,211,153,0.05)]">
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-success-emerald/10 text-success-emerald border border-success-emerald/20 shadow-[inset_0_0_20px_rgba(52,211,153,0.05)]">
                           <CheckCircle2 size={20} />
                           <div className="hud-bracket hud-bracket-tl" />
                           <div className="hud-bracket-br" />
@@ -906,6 +924,17 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                         <div className="flex flex-col">
                           <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-slate-700 mb-0.5">Approved Actions</p>
                           <p className="font-heading text-2xl font-bold text-slate-300">{serverReportMetrics.approved}</p>
+                        </div>
+                      </div>
+                      <div className={metricCardClass('inactive')}>
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-amber-500/10 text-amber-400 border border-amber-500/20 shadow-[inset_0_0_20px_rgba(245,158,11,0.05)]">
+                          <XCircle size={20} />
+                          <div className="hud-bracket hud-bracket-tl" />
+                          <div className="hud-bracket-br" />
+                        </div>
+                        <div className="flex flex-col">
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-slate-700 mb-0.5">Rejected Actions</p>
+                          <p className="font-heading text-2xl font-bold text-slate-300">{serverReportMetrics.rejected}</p>
                         </div>
                       </div>
                     </div>
@@ -967,7 +996,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                     </div>
 
                     {reports.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-white/10 py-20">
+                      <div className="flex flex-col items-center justify-center rounded-none border border-dashed border-white/10 py-20">
                         <div className="mb-4 rounded-full bg-white/5 p-4 text-slate-700">
                           <CheckCircle2 size={40} />
                         </div>
@@ -978,7 +1007,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                       </div>
                     ) : (
                       reports.map((report) => (
-                        <div key={report.id} className="surface-card rounded-[20px] overflow-hidden p-0 transition-all duration-300 hover:border-white/20">
+                        <div key={report.id} className="surface-card rounded-none overflow-hidden p-0 transition-all duration-300 hover:border-white/20">
                           <div className="hud-bracket hud-bracket-tl" />
                           <div className="hud-bracket-tr" />
                           <div className="hud-bracket-bl" />
@@ -1004,7 +1033,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                             <div className="flex-1 flex flex-col p-5 sm:p-6 lg:p-7 min-w-0 overflow-hidden">
                               {/* Top Bar */}
                               <div className="flex items-center gap-4 mb-2">
-                                <span className={`rounded-lg px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${reportStatusClass(report.status)} text-slate-200`}>
+                                <span className={`rounded-none px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${reportStatusClass(report.status)} text-slate-200`}>
                                   {report.status}
                                 </span>
                                 <div className="flex items-center gap-2 font-heading text-[11px] text-slate-700 font-bold uppercase tracking-[0.14em]">
@@ -1042,7 +1071,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
 
                             {/* Detailed Data Column */}
                             <div className="flex flex-col gap-3 p-5 sm:p-6 lg:p-7 lg:justify-center border-t lg:border-t-0 lg:border-l border-white/5 bg-white/[0.01] min-w-0 overflow-hidden">
-                              <div className="bg-white/[0.02] border border-white/[0.04] rounded-xl overflow-hidden divide-y divide-white/[0.04] flex flex-col justify-center">
+                              <div className="bg-white/[0.02] border border-white/[0.04] rounded-none overflow-hidden divide-y divide-white/[0.04] flex flex-col justify-center">
                                 <div className="flex flex-col justify-center px-5 min-h-[64px] py-3 gap-1">
                                   <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Reported Identity</span>
                                   <span className="font-mono text-sm text-slate-300 tabular-nums break-all leading-relaxed whitespace-pre-wrap">{report.reported_ip || 'N/A'}</span>
@@ -1094,7 +1123,6 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                                   onClick={() => openBanModal({
                                     sessionId: report.reported_session_id,
                                     ip: report.reported_ip,
-                                    target: 'session',
                                     reason: report.reason,
                                   })}
                                   className={`${actionButtonClass} w-full bg-danger-rose text-slate-300 shadow-[0_0_16px_rgba(244,63,94,0.25)] hover:bg-rose-600 hover:shadow-[0_0_24px_rgba(244,63,94,0.4)] transition-all`}
@@ -1118,7 +1146,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                     {/* Bans Metrics Row */}
                     <div className="grid gap-4 sm:grid-cols-3">
                       <div className={metricCardClass('active')}>
-                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-rose-500/10 text-rose-400 border border-rose-500/20 shadow-[inset_0_0_20px_rgba(244,63,94,0.05)]">
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-rose-500/10 text-rose-400 border border-rose-500/20 shadow-[inset_0_0_20px_rgba(244,63,94,0.05)]">
                           <BanIcon size={20} />
                           <div className="hud-bracket hud-bracket-tl" />
                           <div className="hud-bracket-tr" />
@@ -1131,7 +1159,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                         </div>
                       </div>
                       <div className={metricCardClass('inactive')}>
-                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-500/10 text-slate-400 border border-white/5">
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-slate-500/10 text-slate-400 border border-white/5">
                           <Clock size={20} />
                           <div className="hud-bracket hud-bracket-tl" />
                           <div className="hud-bracket-tr" />
@@ -1144,7 +1172,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                         </div>
                       </div>
                       <div className={metricCardClass('total')}>
-                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[inset_0_0_20px_rgba(34,211,238,0.05)]">
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[inset_0_0_20px_rgba(34,211,238,0.05)]">
                           <Globe size={20} />
                           <div className="hud-bracket hud-bracket-tl" />
                           <div className="hud-bracket-tr" />
@@ -1158,7 +1186,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                       </div>
                     </div>
                     {/* Ban Controls Panel */}
-                    <div className="surface-card rounded-[20px] p-5">
+                    <div className="surface-card rounded-none p-5">
                       <div className="hud-bracket hud-bracket-tl" />
                       <div className="hud-bracket-tr" />
                       <div className="hud-bracket-bl" />
@@ -1207,7 +1235,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                             <div className="pt-[22px]">
                               <button
                                 onClick={fetchBans}
-                                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/[0.07] bg-white/[0.04] text-slate-400 transition-all hover:bg-white/[0.08] hover:text-slate-300"
+                                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-none border border-white/[0.07] bg-white/[0.04] text-slate-400 transition-all hover:bg-white/[0.08] hover:text-slate-300"
                                 title="Refresh Registry"
                               >
                                 <RefreshCw size={16} />
@@ -1220,7 +1248,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
 
                     {/* Manual Enforcement Panel */}
                     {canCreateBans && (
-                      <div className="surface-card rounded-[20px] p-5">
+                      <div className="surface-card rounded-none p-5">
                         <div className="hud-bracket hud-bracket-tl" />
                         <div className="hud-bracket-tr" />
                         <div className="hud-bracket-bl" />
@@ -1258,7 +1286,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                               type="text"
                               value={manualBanReason}
                               onChange={(e) => setManualBanReason(e.target.value)}
-                              className="h-11 w-full rounded-xl border border-white/[0.07] bg-white/[0.04] px-4 font-heading text-sm text-slate-300 placeholder:text-slate-700 outline-none transition-all duration-200 focus:border-electric-cyan/50 focus:ring-2 focus:ring-electric-cyan/15 focus:bg-white/[0.06] scanlines"
+                              className="h-11 w-full rounded-none border border-white/[0.07] bg-white/[0.04] px-4 font-heading text-sm text-slate-300 placeholder:text-slate-700 outline-none transition-all duration-200 focus:border-electric-cyan/50 focus:ring-2 focus:ring-electric-cyan/15 focus:bg-white/[0.06] scanlines"
                               placeholder="EXPLAIN INCIDENT..."
                             />
                           </div>
@@ -1294,13 +1322,13 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                     {/* Bans List */}
                     <div className="space-y-4">
                       {bans.length === 0 ? (
-                        <div className="surface-card rounded-[20px] flex flex-col items-center justify-center px-8 py-16 text-center">
+                        <div className="surface-card rounded-none flex flex-col items-center justify-center px-8 py-16 text-center">
                           <div className="hud-bracket hud-bracket-tl" />
                           <div className="hud-bracket-tr" />
                           <div className="hud-bracket-bl" />
                           <div className="hud-bracket-br" />
                           
-                          <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-[20px] border border-white/10 bg-white/[0.04]">
+                          <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-none border border-white/10 bg-white/[0.04]">
                             <BanIcon size={28} className="text-slate-700" />
                           </div>
                           <h4 className="font-heading text-lg font-semibold text-slate-400 mb-2 font-heading tracking-wide">NO RESTRICTION RECORDS</h4>
@@ -1315,7 +1343,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                               animate={{ opacity: 1, y: 0 }}
                               exit={{ opacity: 0, y: -10 }}
                               transition={{ delay: index * 0.03, duration: 0.2 }}
-                              className="surface-card group rounded-[20px] p-0 overflow-hidden transition-all duration-300 hover:border-white/20 hover:translate-y-[-1px] hover:shadow-[0_8px_32px_rgba(0,0,0,0.4)]"
+                              className="surface-card group rounded-none p-0 overflow-hidden transition-all duration-300 hover:border-white/20 hover:translate-y-[-1px] hover:shadow-[0_8px_32px_rgba(0,0,0,0.4)]"
                             >
                               <div className="hud-bracket hud-bracket-tl" />
                               <div className="hud-bracket-tr" />
@@ -1333,12 +1361,12 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                                 <div className="flex flex-1 flex-col px-4 py-4 md:px-5 md:py-4">
                                   {/* Meta Row */}
                                   <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
-                                    <div className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${
+                                    <div className={`inline-flex items-center gap-1.5 rounded-none px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${
                                       ban.is_active 
                                         ? 'border border-rose-500/20 bg-rose-500/10 text-rose-300' 
                                         : 'border border-white/10 bg-white/5 text-slate-700'
                                     }`}>
-                                      <div className={`h-1.5 w-1.5 rounded-full ${ban.is_active ? 'bg-rose-400 animate-pulse' : 'bg-slate-600'}`} />
+                                      <div className={`h-1.5 w-1.5 rounded-none ${ban.is_active ? 'bg-rose-400 animate-pulse' : 'bg-slate-600'}`} />
                                       {ban.is_active ? 'Active' : 'Inactive'}
                                     </div>
                                     <div className="flex items-center gap-1.5 font-heading text-[11px] text-slate-700 font-bold uppercase tracking-[0.14em]">
@@ -1348,7 +1376,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                                   </div>
 
                                   {/* Data Panel */}
-                                  <div className="bg-white/[0.02] border border-white/[0.04] rounded-xl px-4 py-3 md:px-5">
+                                  <div className="bg-white/[0.02] border border-white/[0.04] rounded-none px-4 py-3 md:px-5">
                                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-4">
                                       <div className="flex flex-col">
                                         <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Network Address</p>
@@ -1380,7 +1408,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                                   {ban.is_active && canManageBans ? (
                                     <button
                                       onClick={() => unban(ban.id)}
-                                      className="inline-flex h-9 min-w-[92px] items-center justify-center gap-1.5 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 font-heading text-[11px] font-bold uppercase tracking-wide text-emerald-400 transition-all hover:bg-emerald-500/20 hover:border-emerald-500/40 hover:shadow-[0_0_16px_rgba(52,211,153,0.2)] active:scale-95"
+                                      className="inline-flex h-9 min-w-[92px] items-center justify-center gap-1.5 rounded-none border border-emerald-500/20 bg-emerald-500/10 px-4 font-heading text-[11px] font-bold uppercase tracking-wide text-emerald-400 transition-all hover:bg-emerald-500/20 hover:border-emerald-500/40 hover:shadow-[0_0_16px_rgba(52,211,153,0.2)] active:scale-95"
                                     >
                                       <RefreshCw size={13} />
                                       Unban
@@ -1401,16 +1429,32 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                 {currentTab === 'accounts' && canManageAccounts && (
                   <div className="space-y-6">
                     <div className={`${surfaceCardClass} p-6`}>
-                      <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
-                        <div className="relative">
-                          <Search className="absolute top-3.5 left-4 text-slate-700" size={18} />
-                          <input
-                            type="text"
-                            value={accountSearch}
-                            onChange={(e) => setAccountSearch(e.target.value)}
-                            className={`${inputClass} pl-12`}
-                            placeholder="Search username..."
-                          />
+                      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto_auto] lg:items-end">
+                        <div>
+                          <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-700">Search Username</label>
+                          <div className="relative">
+                            <Search className="absolute top-3.5 left-4 text-slate-700" size={18} />
+                            <input
+                              type="text"
+                              value={accountSearch}
+                              onChange={(e) => setAccountSearch(e.target.value)}
+                              className={`${inputClass} pl-12`}
+                              placeholder="Search username..."
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-700">Show Limit</label>
+                          <select
+                            value={accountLimit}
+                            onChange={(e) => setAccountLimit(e.target.value)}
+                            className={`${compactSelectClass} min-w-[150px] appearance-none [&>option]:bg-slate-900`}
+                          >
+                            <option value="10">10 entries</option>
+                            <option value="25">25 entries</option>
+                            <option value="50">50 entries</option>
+                            <option value="all">All entries</option>
+                          </select>
                         </div>
                         <div className="flex items-center gap-3">
                           <button
@@ -1476,7 +1520,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                     {/* Accounts List */}
                     <div className="space-y-4">
                       {accounts.length === 0 && (
-                        <div className="rounded-3xl border border-dashed border-white/10 py-20 text-center">
+                        <div className="rounded-none border border-dashed border-white/10 py-20 text-center">
                           <p className="text-slate-700">No admin accounts found.</p>
                         </div>
                       )}
@@ -1484,7 +1528,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                         <div key={account.id} className={`${surfaceCardClass} p-6`}>
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-4">
-                              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/5 text-cyan-400">
+                              <div className="flex h-12 w-12 items-center justify-center rounded-none bg-white/5 text-cyan-400">
                                 <Users size={24} />
                               </div>
                               <div>
@@ -1501,7 +1545,8 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                             {account.username !== currentAdminUsername && (
                               <button
                                 onClick={() => deleteAccount(account.username)}
-                                className="rounded-xl p-2 text-slate-700 transition-colors hover:bg-rose-500/10 hover:text-rose-500"
+                                disabled={role !== 'root' && (account.role === 'admin' || account.role === 'root')}
+                                className="rounded-none p-2 text-slate-700 transition-colors hover:bg-rose-500/10 hover:text-rose-500 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-slate-700"
                               >
                                 <Trash2 size={20} />
                               </button>
@@ -1509,7 +1554,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                           </div>
                         </div>
                       ))}
-                      {accountTotalPages > 1 && (
+                      {accountLimit !== 'all' && accountTotalPages > 1 && (
                         <div className={`${surfaceCardClass} flex items-center justify-between p-4`}>
                           <p className="text-sm text-slate-400">
                             Page {accountPage} of {accountTotalPages}
@@ -1558,7 +1603,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
               transition={{ type: 'spring', stiffness: 350, damping: 30 }}
-              className="relative flex flex-col w-full max-w-[560px] max-h-[min(85vh,760px)] rounded-[20px] border border-white/[0.08] bg-[#050816] shadow-[0_32px_128px_rgba(0,0,0,0.8)] overflow-hidden"
+              className="relative flex flex-col w-full max-w-[560px] max-h-[min(85vh,760px)] rounded-none border border-white/[0.08] bg-[#050816] shadow-[0_32px_128px_rgba(0,0,0,0.8)] overflow-hidden"
             >
               <div className="hud-bracket hud-bracket-tl opacity-20" />
               <div className="hud-bracket-tr opacity-20" />
@@ -1567,19 +1612,19 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
 
               {/* Header */}
               <div className="px-6 py-5 sm:px-8 sm:py-6 border-b border-white/[0.06] flex items-start gap-5">
-                <div className="w-12 h-12 rounded-xl bg-danger-rose/10 border border-danger-rose/20 flex items-center justify-center shrink-0 shadow-[0_0_20px_rgba(244,63,94,0.15)]">
+                <div className="w-12 h-12 rounded-none bg-danger-rose/10 border border-danger-rose/20 flex items-center justify-center shrink-0 shadow-[0_0_20px_rgba(244,63,94,0.15)]">
                   <BanIcon size={22} className="text-danger-rose" />
                 </div>
                 <div className="flex flex-col">
                   <h3 className="font-heading text-lg font-bold text-slate-300 tracking-wide uppercase">CONFIRM_RESTRICTION</h3>
-                  <p className="font-heading text-sm text-slate-500 font-medium tracking-normal mt-0.5">Initialize security enforcement protocols for the target below.</p>
+                  <p className="font-heading text-sm text-slate-500 font-medium tracking-normal mt-0.5">Session-targeted enforcement also carries the linked IP when it is available.</p>
                 </div>
               </div>
 
               {/* Body */}
               <div className="flex-1 overflow-y-auto px-6 py-6 sm:px-8 space-y-6">
                 {/* Target Details */}
-                <div className="rounded-xl border border-white/8 bg-white/[0.02] px-5 py-4">
+                <div className="rounded-none border border-white/8 bg-white/[0.02] px-5 py-4">
                   <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500 mb-3">TARGET_IDENTITY_DATA</p>
                   <div className="space-y-2 text-left">
                     {banModal.sessionId && (
@@ -1599,8 +1644,27 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
 
                 {/* Ban Type Selector */}
                 <div className="flex flex-col gap-3">
+                  {banModal.sessionId && banModal.ip && (
+                    <div className="flex flex-col gap-3">
+                      <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">TARGET_SCOPE</p>
+                      <div className="flex gap-1.5 rounded-none bg-white/[0.04] p-1.5 border border-white/[0.06]">
+                        <button
+                          onClick={() => setBanModal({ ...banModal, target: 'session' })}
+                          className={segmentedToggleButtonClass(banModal.target === 'session')}
+                        >
+                          SESSION_PLUS_IP
+                        </button>
+                        <button
+                          onClick={() => setBanModal({ ...banModal, target: 'ip' })}
+                          className={segmentedToggleButtonClass(banModal.target === 'ip')}
+                        >
+                          IP_ONLY
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">ENFORCEMENT_MODE</p>
-                  <div className="flex gap-1.5 rounded-xl bg-white/[0.04] p-1.5 border border-white/[0.06]">
+                  <div className="flex gap-1.5 rounded-none bg-white/[0.04] p-1.5 border border-white/[0.06]">
                     <button
                       onClick={() => setBanModal({ ...banModal, mode: 'permanent' })}
                       className={segmentedToggleButtonClass(banModal.mode === 'permanent')}
@@ -1660,7 +1724,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                   <textarea
                     value={banModal.reason}
                     onChange={(e) => setBanModal({ ...banModal, reason: e.target.value })}
-                    className="w-full min-h-[120px] max-h-[200px] resize-y rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-4 font-heading text-sm text-slate-300 placeholder-slate-600 outline-none transition-all duration-200 focus:border-electric-cyan/50 focus:ring-2 focus:ring-electric-cyan/15 scanlines"
+                    className="w-full min-h-[120px] max-h-[200px] resize-y rounded-none border border-white/[0.08] bg-white/[0.04] px-4 py-4 font-heading text-sm text-slate-300 placeholder-slate-600 outline-none transition-all duration-200 focus:border-electric-cyan/50 focus:ring-2 focus:ring-electric-cyan/15 scanlines"
                     placeholder="PROVIDE DETAILED LOGS OR REASONING..."
                   />
                 </div>
@@ -1670,14 +1734,14 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
               <div className="px-6 py-5 sm:px-8 sm:py-6 border-t border-white/[0.06] bg-white/[0.02] flex flex-col sm:flex-row gap-3">
                 <button
                   onClick={closeBanModal}
-                  className="flex-1 h-11 rounded-xl bg-white/[0.04] border border-white/[0.1] text-xs font-bold text-slate-300 uppercase tracking-widest hover:bg-white/[0.08] hover:text-slate-300 transition-all active:scale-[0.98]"
+                  className="flex-1 h-11 rounded-none bg-white/[0.04] border border-white/[0.1] text-xs font-bold text-slate-300 uppercase tracking-widest hover:bg-white/[0.08] hover:text-slate-300 transition-all active:scale-[0.98]"
                 >
                   CANCEL_OPERATION
                 </button>
                 <button
                   onClick={submitBanModal}
                   disabled={submittingBan}
-                  className="flex-1 h-11 rounded-xl bg-danger-rose text-slate-300 text-xs font-bold uppercase tracking-widest hover:bg-rose-600 shadow-[0_0_24px_rgba(244,63,94,0.25)] hover:shadow-[0_0_32px_rgba(244,63,94,0.4)] transition-all active:scale-[0.98] disabled:opacity-70 disabled:cursor-not-allowed"
+                  className="flex-1 h-11 rounded-none bg-danger-rose text-slate-300 text-xs font-bold uppercase tracking-widest hover:bg-rose-600 shadow-[0_0_24px_rgba(244,63,94,0.25)] hover:shadow-[0_0_32px_rgba(244,63,94,0.4)] transition-all active:scale-[0.98] disabled:opacity-70 disabled:cursor-not-allowed"
                 >
                   {submittingBan ? 'PROCESSING...' : 'CONFIRM_ENFORCEMENT'}
                 </button>
@@ -1714,7 +1778,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
               {/* Header */}
               <div className="px-6 py-5 sm:px-8 sm:py-6 border-b border-white/[0.06] flex items-center justify-between">
                 <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-xl bg-electric-cyan/10 border border-electric-cyan/20 flex items-center justify-center shrink-0 shadow-[0_0_15px_rgba(34,211,238,0.1)]">
+                  <div className="w-10 h-10 rounded-none bg-electric-cyan/10 border border-electric-cyan/20 flex items-center justify-center shrink-0 shadow-[0_0_15px_rgba(34,211,238,0.1)]">
                     <MessageSquare size={18} className="text-electric-cyan" />
                   </div>
                   <div className="flex flex-col">
@@ -1726,7 +1790,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                 </div>
                 <button
                   onClick={() => setExpandedReport(null)}
-                  className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/10 text-slate-400 flex items-center justify-center hover:text-slate-300 hover:bg-white/[0.08] transition-all"
+                  className="w-10 h-10 rounded-none bg-white/[0.04] border border-white/10 text-slate-400 flex items-center justify-center hover:text-slate-300 hover:bg-white/[0.08] transition-all"
                 >
                   <XCircle size={18} />
                 </button>
@@ -1737,7 +1801,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                 <div className="space-y-4">
                   {reports.find(r => r.id === expandedReport)?.chat_log.map((msg, idx) => (
                     <div key={idx} className={`flex ${msg.sender === 'me' ? 'justify-end' : msg.sender === 'system' ? 'justify-center' : 'justify-start'}`}>
-                      <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm ${
+                      <div className={`max-w-[85%] rounded-none px-4 py-3 text-sm shadow-sm ${
                         msg.sender === 'me' 
                           ? 'bg-cyan-500/10 text-cyan-100 border border-cyan-500/20' 
                           : msg.sender === 'system'
@@ -1769,7 +1833,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
               <div className="px-6 py-4 sm:px-8 border-t border-white/[0.06] bg-white/[0.02]">
                 <button
                   onClick={() => setExpandedReport(null)}
-                  className="w-full h-11 rounded-xl bg-white/[0.04] border border-white/[0.1] text-xs font-bold text-slate-300 uppercase tracking-widest hover:bg-white/[0.08] hover:text-slate-300 transition-all active:scale-[0.98]"
+                  className="w-full h-11 rounded-none bg-white/[0.04] border border-white/[0.1] text-xs font-bold text-slate-300 uppercase tracking-widest hover:bg-white/[0.08] hover:text-slate-300 transition-all active:scale-[0.98]"
                 >
                   DISMISS_VIEW
                 </button>
@@ -1805,7 +1869,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
               {/* Header */}
               <div className="px-6 py-5 sm:px-8 sm:py-6 border-b border-white/[0.06] flex items-center justify-between">
                 <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-xl bg-electric-cyan/10 border border-electric-cyan/20 flex items-center justify-center shrink-0 shadow-[0_0_15px_rgba(34,211,238,0.1)]">
+                  <div className="w-10 h-10 rounded-none bg-electric-cyan/10 border border-electric-cyan/20 flex items-center justify-center shrink-0 shadow-[0_0_15px_rgba(34,211,238,0.1)]">
                     <Shield size={18} className="text-electric-cyan" />
                   </div>
                   <div className="flex flex-col">
@@ -1817,7 +1881,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                 </div>
                 <button
                   onClick={() => setViewingDescription(null)}
-                  className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/10 text-slate-400 flex items-center justify-center hover:text-white hover:bg-white/[0.08] transition-all"
+                  className="w-10 h-10 rounded-none bg-white/[0.04] border border-white/10 text-slate-400 flex items-center justify-center hover:text-white hover:bg-white/[0.08] transition-all"
                 >
                   <XCircle size={18} />
                 </button>
@@ -1825,7 +1889,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
 
               {/* Body */}
               <div className="flex-1 overflow-y-auto px-6 py-8 sm:px-8 bg-slate-950/20">
-                <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-6 scanlines">
+                <div className="rounded-none border border-white/5 bg-white/[0.02] p-6 scanlines">
                   <p className="text-base text-slate-300 leading-relaxed break-words whitespace-pre-wrap font-medium">
                     {reports.find(r => r.id === viewingDescription)?.description}
                   </p>
@@ -1836,7 +1900,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
               <div className="px-6 py-4 sm:px-8 border-t border-white/[0.06] bg-white/[0.02]">
                 <button
                   onClick={() => setViewingDescription(null)}
-                  className="w-full h-11 rounded-xl bg-white/[0.04] border border-white/[0.1] text-xs font-bold text-slate-300 uppercase tracking-widest hover:bg-white/[0.08] hover:text-white transition-all active:scale-[0.98]"
+                  className="w-full h-11 rounded-none bg-white/[0.04] border border-white/[0.1] text-xs font-bold text-slate-300 uppercase tracking-widest hover:bg-white/[0.08] hover:text-white transition-all active:scale-[0.98]"
                 >
                   CLOSE_ENTRY
                 </button>
