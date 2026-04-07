@@ -119,6 +119,22 @@ else
       assert_receive {:router_message, %{type: "message", from: "restart-test"}}, 1_000
     end
 
+    test "refresh_owner does not let a client recreate the ownership ets table when router is down",
+         %{
+           session_id: session_id,
+           owner_key: owner_key
+         } do
+      assert :ok = OmeglePhoenix.Router.register(session_id, self())
+      assert :ok = stop_supervised(OmeglePhoenix.Router)
+      assert :undefined == :ets.whereis(:omegle_phoenix_router_owners)
+
+      assert :ok = OmeglePhoenix.Router.refresh_owner(session_id, self())
+      assert :undefined == :ets.whereis(:omegle_phoenix_router_owners)
+
+      assert {:ok, encoded_owner} = OmeglePhoenix.Redis.command(["GET", owner_key])
+      assert is_binary(encoded_owner)
+    end
+
     defp wait_until(fun, attempts \\ 40)
 
     defp wait_until(fun, attempts) when attempts > 0 do

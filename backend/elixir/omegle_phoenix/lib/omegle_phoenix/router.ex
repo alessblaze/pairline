@@ -323,8 +323,14 @@ defmodule OmeglePhoenix.Router do
   end
 
   defp track_local_owner(session_id, pid, token) do
-    _ = ensure_owner_table()
-    :ets.insert(@owner_table, {session_id, pid, token})
+    if :ets.whereis(@owner_table) != :undefined do
+      try do
+        :ets.insert(@owner_table, {session_id, pid, token})
+      rescue
+        ArgumentError -> :ok
+      end
+    end
+
     GenServer.cast(__MODULE__, {:track_owner, session_id, pid, token})
     :ok
   end
