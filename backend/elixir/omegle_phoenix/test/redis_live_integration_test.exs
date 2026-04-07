@@ -313,6 +313,131 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
     end)
   end
 
+  test "automatic matchmaking pairs queued users and clears queue membership", %{
+    session_id: session_id,
+    peer_session_id: peer_session_id,
+    ip: ip,
+    peer_ip: peer_ip
+  } do
+    preferences = %{"mode" => "text", "interests" => "auto,match"}
+
+    assert {:ok, _session_1} =
+             OmeglePhoenix.SessionManager.create_session(session_id, ip, preferences)
+
+    assert {:ok, _session_2} =
+             OmeglePhoenix.SessionManager.create_session(peer_session_id, peer_ip, preferences)
+
+    assert {:ok, session_1} = OmeglePhoenix.SessionManager.get_session(session_id)
+
+    assert {:ok, _moved_session_2} =
+             OmeglePhoenix.SessionManager.move_session_shard(
+               peer_session_id,
+               session_1.redis_shard
+             )
+
+    assert :ok = OmeglePhoenix.Matchmaker.join_queue(session_id, preferences)
+    assert :ok = OmeglePhoenix.Matchmaker.join_queue(peer_session_id, preferences)
+
+    assert {:ok, route_1} = OmeglePhoenix.SessionManager.get_session_route(session_id)
+    assert {:ok, route_2} = OmeglePhoenix.SessionManager.get_session_route(peer_session_id)
+
+    membership_key_1 = OmeglePhoenix.RedisKeys.session_queue_key(session_id, route_1)
+    membership_key_2 = OmeglePhoenix.RedisKeys.session_queue_key(peer_session_id, route_2)
+
+    assert_eventually(fn ->
+      with {:ok, queue_keys_1} <- OmeglePhoenix.Redis.command(["SMEMBERS", membership_key_1]),
+           {:ok, queue_keys_2} <- OmeglePhoenix.Redis.command(["SMEMBERS", membership_key_2]) do
+        queue_keys_1 != [] and queue_keys_2 != []
+      else
+        _ -> false
+      end
+    end)
+
+    assert {:ok, queue_keys} = OmeglePhoenix.Redis.command(["SMEMBERS", membership_key_1])
+    GenServer.cast(OmeglePhoenix.Matchmaker, {:schedule_local_match_attempts, queue_keys})
+
+    assert_eventually(fn ->
+      with {:ok, matched_1} <- OmeglePhoenix.SessionManager.get_session(session_id),
+           {:ok, matched_2} <- OmeglePhoenix.SessionManager.get_session(peer_session_id) do
+        matched_1.status == :matched and matched_1.partner_id == peer_session_id and
+          matched_2.status == :matched and matched_2.partner_id == session_id
+      else
+        _ -> false
+      end
+    end)
+
+    assert_eventually(fn ->
+      OmeglePhoenix.Redis.command(["SMEMBERS", membership_key_1]) == {:ok, []} and
+        OmeglePhoenix.Redis.command(["SMEMBERS", membership_key_2]) == {:ok, []}
+    end)
+  end
+
+  test "pairing crash before session write leaves waiting users queued", %{
+    session_id: session_id,
+    peer_session_id: peer_session_id,
+    ip: ip,
+    peer_ip: peer_ip
+  } do
+    preferences = %{"mode" => "text", "interests" => "crash,window"}
+    hook_ref = make_ref()
+
+    original_hook = Application.get_env(:omegle_phoenix, :matchmaker_pairing_test_hook)
+    Application.put_env(:omegle_phoenix, :matchmaker_pairing_test_hook, {self(), hook_ref, :once})
+
+    on_exit(fn ->
+      if original_hook do
+        Application.put_env(:omegle_phoenix, :matchmaker_pairing_test_hook, original_hook)
+      else
+        Application.delete_env(:omegle_phoenix, :matchmaker_pairing_test_hook)
+      end
+    end)
+
+    assert {:ok, _session_1} =
+             OmeglePhoenix.SessionManager.create_session(session_id, ip, preferences)
+
+    assert {:ok, _session_2} =
+             OmeglePhoenix.SessionManager.create_session(peer_session_id, peer_ip, preferences)
+
+    assert {:ok, session_1} = OmeglePhoenix.SessionManager.get_session(session_id)
+
+    assert {:ok, _moved_session_2} =
+             OmeglePhoenix.SessionManager.move_session_shard(
+               peer_session_id,
+               session_1.redis_shard
+             )
+
+    assert :ok = OmeglePhoenix.Matchmaker.join_queue(session_id, preferences)
+    assert :ok = OmeglePhoenix.Matchmaker.join_queue(peer_session_id, preferences)
+
+    assert {:ok, route_1} = OmeglePhoenix.SessionManager.get_session_route(session_id)
+    assert {:ok, route_2} = OmeglePhoenix.SessionManager.get_session_route(peer_session_id)
+
+    membership_key_1 = OmeglePhoenix.RedisKeys.session_queue_key(session_id, route_1)
+    membership_key_2 = OmeglePhoenix.RedisKeys.session_queue_key(peer_session_id, route_2)
+
+    assert_receive(
+      {:matchmaker_pairing_hook, ^hook_ref, :before_pair_sessions, first_id, second_id, task_pid},
+      5_000
+    )
+
+    assert Enum.sort([first_id, second_id]) == Enum.sort([session_id, peer_session_id])
+
+    send(task_pid, {:matchmaker_pairing_hook_reply, hook_ref, {:exit, :injected_pairing_crash}})
+
+    assert_eventually(fn ->
+      with {:ok, waiting_1} <- OmeglePhoenix.SessionManager.get_session(session_id),
+           {:ok, waiting_2} <- OmeglePhoenix.SessionManager.get_session(peer_session_id),
+           {:ok, queue_keys_1} <- OmeglePhoenix.Redis.command(["SMEMBERS", membership_key_1]),
+           {:ok, queue_keys_2} <- OmeglePhoenix.Redis.command(["SMEMBERS", membership_key_2]) do
+        waiting_1.status == :waiting and is_nil(waiting_1.partner_id) and
+          waiting_2.status == :waiting and is_nil(waiting_2.partner_id) and
+          queue_keys_1 != [] and queue_keys_2 != []
+      else
+        _ -> false
+      end
+    end)
+  end
+
   test "router delivers directly to a remote owner across connected phoenix nodes", %{
     session_id: session_id,
     ip: ip
@@ -523,6 +648,7 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
 
   defp ensure_distributed_test_node! do
     if not Node.alive?() do
+      ensure_epmd_started!()
       unique_name = :"redis_live_test_#{System.unique_integer([:positive])}"
 
       case Node.start(unique_name, :shortnames) do
@@ -545,6 +671,16 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
 
     true = Node.set_cookie(cookie)
     :ok
+  end
+
+  defp ensure_epmd_started! do
+    case System.cmd("epmd", ["-daemon"], stderr_to_stdout: true) do
+      {_output, 0} ->
+        :ok
+
+      {output, status} ->
+        raise "Failed to start epmd for distributed live Redis tests (status #{status}): #{String.trim(output)}"
+    end
   end
 
   defp ensure_cluster_connected! do
