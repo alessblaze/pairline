@@ -15,6 +15,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+var turnHTTPClient = &http.Client{Timeout: 5 * time.Second}
+
 type cloudflareCredentialsRequest struct {
 	TTL int `json:"ttl"`
 }
@@ -70,6 +72,13 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 			return
 		}
 
+		// Cache TURN credentials briefly to reduce Cloudflare API QPS during reconnect storms.
+		cacheKey := "webrtc:turn:cache:" + sessionID
+		if cached, err := redisClient.GetClient().Get(ctx, cacheKey).Result(); err == nil && cached != "" {
+			c.Data(http.StatusOK, "application/json", []byte(cached))
+			return
+		}
+
 		keyID := os.Getenv("CLOUDFLARE_TURN_KEY_ID")
 		apiToken := os.Getenv("CLOUDFLARE_TURN_API_TOKEN")
 
@@ -90,7 +99,6 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 		// Request short-lived credentials to reduce abuse impact.
 		reqBody, _ := json.Marshal(cloudflareCredentialsRequest{TTL: 3600})
 
-		httpClient := &http.Client{Timeout: 5 * time.Second}
 		cfReq, err := http.NewRequestWithContext(c.Request.Context(), "POST", cfURL, bytes.NewReader(reqBody))
 		if err != nil {
 			log.Printf("Failed to build Cloudflare TURN request: %v", err)
@@ -100,7 +108,7 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 		cfReq.Header.Set("Authorization", "Bearer "+apiToken)
 		cfReq.Header.Set("Content-Type", "application/json")
 
-		resp, err := httpClient.Do(cfReq)
+		resp, err := turnHTTPClient.Do(cfReq)
 		if err != nil {
 			log.Printf("Failed to reach Cloudflare TURN API: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to contact Cloudflare TURN API"})
@@ -128,8 +136,8 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 			return
 		}
 
-		// Return structured iceServers array that RTCPeerConnection expects directly
-		c.JSON(http.StatusOK, gin.H{
+		// Return structured iceServers array that RTCPeerConnection expects directly.
+		responseBody, _ := json.Marshal(gin.H{
 			"iceServers": []gin.H{
 				{"urls": []string{"stun:stun.cloudflare.com:3478"}},
 				{
@@ -139,5 +147,12 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 				},
 			},
 		})
+
+		if len(responseBody) > 0 {
+			// Cache for 10 minutes (shorter than CF TTL) to reduce load while limiting reuse window.
+			_ = redisClient.GetClient().Set(ctx, cacheKey, string(responseBody), 10*time.Minute).Err()
+		}
+
+		c.Data(http.StatusOK, "application/json", responseBody)
 	}
 }

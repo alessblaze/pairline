@@ -1,12 +1,9 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
-	"fmt"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -116,7 +113,10 @@ func TestDispatchLocalQueuesOutboundMessage(t *testing.T) {
 	client := newSignalingClient(nil)
 	payload := []byte(`{"type":"offer"}`)
 
-	hub.Clients["session-1"] = client
+	cs := hub.clientShard("session-1")
+	cs.mu.Lock()
+	cs.items["session-1"] = &sessionEntry{client: client}
+	cs.mu.Unlock()
 
 	if ok := hub.dispatchLocal("session-1", payload); !ok {
 		t.Fatal("dispatchLocal should queue an outbound message for a local client")
@@ -138,7 +138,10 @@ func TestDispatchLocalQueuesOutboundMessage(t *testing.T) {
 func TestDispatchLocalDoesNotBlockOnBackedUpClient(t *testing.T) {
 	hub := NewRedisSignalingHub()
 	client := newSignalingClient(nil)
-	hub.Clients["session-1"] = client
+	cs := hub.clientShard("session-1")
+	cs.mu.Lock()
+	cs.items["session-1"] = &sessionEntry{client: client}
+	cs.mu.Unlock()
 
 	for i := 0; i < cap(client.send); i++ {
 		client.send <- outboundMessage{messageType: websocket.TextMessage, data: []byte("queued")}
@@ -164,50 +167,6 @@ func TestDispatchLocalDoesNotBlockOnBackedUpClient(t *testing.T) {
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
-	}
-}
-
-func TestRunOwnerRefreshOnceRefreshesClientsInParallel(t *testing.T) {
-	hub := NewRedisSignalingHub()
-
-	for i := 0; i < 8; i++ {
-		hub.Clients[fmt.Sprintf("session-%d", i)] = newSignalingClient(nil)
-	}
-
-	var mu sync.Mutex
-	inFlight := 0
-	maxInFlight := 0
-	calls := 0
-
-	hub.refreshOwnerFunc = func(ctx context.Context, sessionID string) error {
-		mu.Lock()
-		inFlight++
-		calls++
-		if inFlight > maxInFlight {
-			maxInFlight = inFlight
-		}
-		mu.Unlock()
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(20 * time.Millisecond):
-		}
-
-		mu.Lock()
-		inFlight--
-		mu.Unlock()
-		return nil
-	}
-
-	hub.runOwnerRefreshOnce()
-
-	if calls != 8 {
-		t.Fatalf("refreshOwnerFunc called %d times, want 8", calls)
-	}
-
-	if maxInFlight < 2 {
-		t.Fatalf("runOwnerRefreshOnce max parallelism = %d, want at least 2", maxInFlight)
 	}
 }
 

@@ -21,5 +21,5 @@ config :omegle_phoenix, OmeglePhoenixWeb.Endpoint,
 
 config :omegle_phoenix, OmeglePhoenix.PubSub, adapter: Phoenix.PubSub.PG
 config :phoenix, :json_library, Jason
-#config :logger, level: :info
-config :logger, :console, format: "[$level] $message\n"
+config :logger, level: :info
+# config :logger, :console, format: "[$level] $message\n"
