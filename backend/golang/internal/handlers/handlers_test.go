@@ -1,14 +1,18 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/anish/omegle/backend/golang/internal/middleware"
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 )
 
 func TestCanCreateAdminRole(t *testing.T) {
@@ -104,5 +108,130 @@ func TestResolveBanIPAddressFallsBackToRequestedIP(t *testing.T) {
 	ip := resolveBanIPAddress(t.Context(), nil, "4f9a0eb6-59fd-4a6f-a10d-c3b91e782a97", "203.0.113.24")
 	if ip != "203.0.113.24" {
 		t.Fatalf("resolveBanIPAddress() = %q, want %q", ip, "203.0.113.24")
+	}
+}
+
+func TestDispatchLocalQueuesOutboundMessage(t *testing.T) {
+	hub := NewRedisSignalingHub()
+	client := newSignalingClient(nil)
+	payload := []byte(`{"type":"offer"}`)
+
+	hub.Clients["session-1"] = client
+
+	if ok := hub.dispatchLocal("session-1", payload); !ok {
+		t.Fatal("dispatchLocal should queue an outbound message for a local client")
+	}
+
+	select {
+	case message := <-client.send:
+		if message.messageType != websocket.TextMessage {
+			t.Fatalf("queued message type = %d, want %d", message.messageType, websocket.TextMessage)
+		}
+		if string(message.data) != string(payload) {
+			t.Fatalf("queued payload = %s, want %s", message.data, payload)
+		}
+	default:
+		t.Fatal("dispatchLocal did not enqueue a message")
+	}
+}
+
+func TestDispatchLocalDoesNotBlockOnBackedUpClient(t *testing.T) {
+	hub := NewRedisSignalingHub()
+	client := newSignalingClient(nil)
+	hub.Clients["session-1"] = client
+
+	for i := 0; i < cap(client.send); i++ {
+		client.send <- outboundMessage{messageType: websocket.TextMessage, data: []byte("queued")}
+	}
+
+	start := time.Now()
+	if ok := hub.dispatchLocal("session-1", []byte("overflow")); ok {
+		t.Fatal("dispatchLocal should reject writes when the client queue is full")
+	}
+
+	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
+		t.Fatalf("dispatchLocal took %v with a full client queue, want a fast failure", elapsed)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		select {
+		case <-client.done:
+			return
+		default:
+			if time.Now().After(deadline) {
+				t.Fatal("expected backed-up client to be closed")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+func TestRunOwnerRefreshOnceRefreshesClientsInParallel(t *testing.T) {
+	hub := NewRedisSignalingHub()
+
+	for i := 0; i < 8; i++ {
+		hub.Clients[fmt.Sprintf("session-%d", i)] = newSignalingClient(nil)
+	}
+
+	var mu sync.Mutex
+	inFlight := 0
+	maxInFlight := 0
+	calls := 0
+
+	hub.refreshOwnerFunc = func(ctx context.Context, sessionID string) error {
+		mu.Lock()
+		inFlight++
+		calls++
+		if inFlight > maxInFlight {
+			maxInFlight = inFlight
+		}
+		mu.Unlock()
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(20 * time.Millisecond):
+		}
+
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+		return nil
+	}
+
+	hub.runOwnerRefreshOnce()
+
+	if calls != 8 {
+		t.Fatalf("refreshOwnerFunc called %d times, want 8", calls)
+	}
+
+	if maxInFlight < 2 {
+		t.Fatalf("runOwnerRefreshOnce max parallelism = %d, want at least 2", maxInFlight)
+	}
+}
+
+func TestSignalRateLimiterBlocksMessageFloods(t *testing.T) {
+	limiter := newSignalRateLimiter(time.Unix(0, 0))
+
+	allowed := 0
+	for i := 0; i < int(signalBurstLimit); i++ {
+		if !limiter.allow(time.Unix(0, 0)) {
+			t.Fatalf("allow() rejected burst message %d unexpectedly", i)
+		}
+		allowed++
+	}
+
+	if limiter.allow(time.Unix(0, 0)) {
+		t.Fatal("allow() should reject a burst above the configured limit")
+	}
+
+	refillAt := time.Unix(0, 0).Add(50 * time.Millisecond)
+	if !limiter.allow(refillAt) {
+		t.Fatal("allow() should permit a message once tokens have refilled")
+	}
+
+	if allowed != int(signalBurstLimit) {
+		t.Fatalf("allowed burst = %d, want %d", allowed, int(signalBurstLimit))
 	}
 }

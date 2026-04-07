@@ -39,6 +39,9 @@ const (
 	pendingSignalTTL  = 30 * time.Second
 	readySignalTTL    = 60 * time.Second
 	ownerRefreshEvery = 20 * time.Second
+	ownerRefreshBatch = 32
+	signalRateLimit   = 20.0
+	signalBurstLimit  = 40.0
 )
 
 var upgrader = websocket.Upgrader{
@@ -67,17 +70,113 @@ var upgrader = websocket.Upgrader{
 }
 
 type SignalingClient struct {
-	Conn *websocket.Conn
-	mu   sync.Mutex
+	Conn      *websocket.Conn
+	send      chan outboundMessage
+	closeOnce sync.Once
+	done      chan struct{}
 }
 
-func (c *SignalingClient) WriteMessage(messageType int, data []byte) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+type outboundMessage struct {
+	messageType int
+	data        []byte
+}
+
+type signalRateLimiter struct {
+	tokens     float64
+	lastRefill time.Time
+}
+
+func newSignalRateLimiter(now time.Time) *signalRateLimiter {
+	return &signalRateLimiter{
+		tokens:     signalBurstLimit,
+		lastRefill: now,
+	}
+}
+
+func (l *signalRateLimiter) allow(now time.Time) bool {
+	elapsedSeconds := now.Sub(l.lastRefill).Seconds()
+	l.lastRefill = now
+	l.tokens += elapsedSeconds * signalRateLimit
+	if l.tokens > signalBurstLimit {
+		l.tokens = signalBurstLimit
+	}
+
+	if l.tokens < 1 {
+		return false
+	}
+
+	l.tokens--
+	return true
+}
+
+func newSignalingClient(conn *websocket.Conn) *SignalingClient {
+	return &SignalingClient{
+		Conn: conn,
+		send: make(chan outboundMessage, maxPendingMsgs),
+		done: make(chan struct{}),
+	}
+}
+
+func (c *SignalingClient) enqueue(messageType int, data []byte) bool {
+	message := outboundMessage{
+		messageType: messageType,
+		data:        append([]byte(nil), data...),
+	}
+
+	select {
+	case <-c.done:
+		return false
+	default:
+	}
+
+	select {
+	case c.send <- message:
+		return true
+	case <-c.done:
+		return false
+	default:
+		return false
+	}
+}
+
+func (c *SignalingClient) close() {
+	c.closeOnce.Do(func() {
+		close(c.done)
+		if c.Conn != nil {
+			_ = c.Conn.Close()
+		}
+	})
+}
+
+func (c *SignalingClient) writeMessage(messageType int, data []byte) error {
 	if err := c.Conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
 		return err
 	}
 	return c.Conn.WriteMessage(messageType, data)
+}
+
+func (c *SignalingClient) writePump() {
+	ticker := time.NewTicker(pingPeriod)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.done:
+			return
+		case outbound := <-c.send:
+			if err := c.writeMessage(outbound.messageType, outbound.data); err != nil {
+				log.Printf("WebRTC WS write failed: %v", err)
+				_ = c.Conn.Close()
+				return
+			}
+		case <-ticker.C:
+			if err := c.writeMessage(websocket.PingMessage, nil); err != nil {
+				log.Printf("WebRTC WS ping failed: %v", err)
+				_ = c.Conn.Close()
+				return
+			}
+		}
+	}
 }
 
 type redisSignalEnvelope struct {
@@ -87,11 +186,12 @@ type redisSignalEnvelope struct {
 
 type RedisSignalingHub struct {
 	sync.RWMutex
-	Clients      map[string]*SignalingClient
-	claiming     map[string]struct{}
-	redis        *appredis.Client
-	instanceID   string
-	startOnce    sync.Once
+	Clients          map[string]*SignalingClient
+	claiming         map[string]struct{}
+	redis            *appredis.Client
+	instanceID       string
+	startOnce        sync.Once
+	refreshOwnerFunc func(context.Context, string) error
 }
 
 var Signaling = NewRedisSignalingHub()
@@ -120,7 +220,7 @@ func (h *RedisSignalingHub) Start(redisClient *appredis.Client) {
 }
 
 func (h *RedisSignalingHub) Register(sessionID string, conn *websocket.Conn) (*SignalingClient, [][]byte, error) {
-	client := &SignalingClient{Conn: conn}
+	client := newSignalingClient(conn)
 
 	h.Lock()
 	if _, exists := h.Clients[sessionID]; exists {
@@ -154,9 +254,16 @@ func (h *RedisSignalingHub) Register(sessionID string, conn *websocket.Conn) (*S
 }
 
 func (h *RedisSignalingHub) Unregister(sessionID string) {
+	var client *SignalingClient
+
 	h.Lock()
+	client = h.Clients[sessionID]
 	delete(h.Clients, sessionID)
 	h.Unlock()
+
+	if client != nil {
+		client.close()
+	}
 
 	if h.redis == nil {
 		return
@@ -282,28 +389,7 @@ func (h *RedisSignalingHub) runOwnerRefresh() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		if h.redis == nil {
-			continue
-		}
-
-		h.RLock()
-		sessionIDs := make([]string, 0, len(h.Clients))
-		for sessionID := range h.Clients {
-			sessionIDs = append(sessionIDs, sessionID)
-		}
-		h.RUnlock()
-
-		if len(sessionIDs) == 0 {
-			continue
-		}
-
-		for _, sessionID := range sessionIDs {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			if err := h.refreshOwner(ctx, sessionID); err != nil {
-				log.Printf("Failed refreshing Redis signaling ownership for %s: %v", sessionID, err)
-			}
-			cancel()
-		}
+		h.runOwnerRefreshOnce()
 	}
 }
 
@@ -316,12 +402,64 @@ func (h *RedisSignalingHub) dispatchLocal(targetSessionID string, payload []byte
 		return false
 	}
 
-	if err := client.WriteMessage(websocket.TextMessage, payload); err != nil {
-		log.Printf("Failed to deliver WS signal to %s: %v", targetSessionID, err)
+	if !client.enqueue(websocket.TextMessage, payload) {
+		log.Printf("Dropping backed-up WS signal to %s and closing slow client", targetSessionID)
+		go h.Unregister(targetSessionID)
 		return false
 	}
 
 	return true
+}
+
+func (h *RedisSignalingHub) runOwnerRefreshOnce() {
+	if h.redis == nil && h.refreshOwnerFunc == nil {
+		return
+	}
+
+	h.RLock()
+	sessionIDs := make([]string, 0, len(h.Clients))
+	for sessionID := range h.Clients {
+		sessionIDs = append(sessionIDs, sessionID)
+	}
+	h.RUnlock()
+
+	if len(sessionIDs) == 0 {
+		return
+	}
+
+	workers := ownerRefreshBatch
+	if workers > len(sessionIDs) {
+		workers = len(sessionIDs)
+	}
+	if workers < 1 {
+		workers = 1
+	}
+
+	jobs := make(chan string)
+	var wg sync.WaitGroup
+
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			for sessionID := range jobs {
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				err := h.refreshOwnerSession(ctx, sessionID)
+				cancel()
+				if err != nil {
+					log.Printf("Failed refreshing Redis signaling ownership for %s: %v", sessionID, err)
+				}
+			}
+		}()
+	}
+
+	for _, sessionID := range sessionIDs {
+		jobs <- sessionID
+	}
+
+	close(jobs)
+	wg.Wait()
 }
 
 func (h *RedisSignalingHub) claimSession(sessionID string) ([][]byte, error) {
@@ -469,6 +607,14 @@ return 0
 	return nil
 }
 
+func (h *RedisSignalingHub) refreshOwnerSession(ctx context.Context, sessionID string) error {
+	if h.refreshOwnerFunc != nil {
+		return h.refreshOwnerFunc(ctx, sessionID)
+	}
+
+	return h.refreshOwner(ctx, sessionID)
+}
+
 func (h *RedisSignalingHub) claimPreconditions(ctx context.Context, sessionID string) (string, bool, error) {
 	route, err := appredis.ResolveSessionRoute(ctx, h.redis.GetClient(), sessionID)
 	if err != nil {
@@ -576,37 +722,24 @@ func WebRTCWebSocketHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 
 		log.Printf("WebRTC WS registered for session: %s", sessionID)
 
-		done := make(chan struct{})
-		defer close(done)
-
-		go func() {
-			defer func() {
-				if r := recover(); r != nil {
-					log.Printf("CRITICAL: WebRTC WS ping goroutine panic for session %s: %v", sessionID, r)
-				}
-			}()
-			ticker := time.NewTicker(pingPeriod)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-ticker.C:
-					if err := client.WriteMessage(websocket.PingMessage, nil); err != nil {
-						log.Printf("WebRTC WS ping failed for session %s: %v", sessionID, err)
-						return
-					}
-				case <-done:
-					return
-				}
-			}
-		}()
+		go client.writePump()
 
 		for _, pendingMessage := range pendingMessages {
-			if err := client.WriteMessage(websocket.TextMessage, pendingMessage); err != nil {
-				log.Printf("Failed delivering queued WS signal to %s: %v", sessionID, err)
+			if !client.enqueue(websocket.TextMessage, pendingMessage) {
+				log.Printf("Failed queueing pending WS signal to %s", sessionID)
 				break
 			}
 		}
+
+		sessionRouteCtx, sessionRouteCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		sessionRoute, routeErr := appredis.ResolveSessionRoute(sessionRouteCtx, redisClient.GetClient(), sessionID)
+		sessionRouteCancel()
+		if routeErr != nil {
+			log.Printf("WebRTC WS missing session route for %s: %v", sessionID, routeErr)
+			return
+		}
+
+		limiter := newSignalRateLimiter(time.Now())
 
 		for {
 			_, messageData, err := conn.ReadMessage()
@@ -617,22 +750,15 @@ func WebRTCWebSocketHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 				break
 			}
 
+			if !limiter.allow(time.Now()) {
+				log.Printf("WebRTC WS dropping spammy signaling client for session: %s", sessionID)
+				break
+			}
+
 			var msg SignalingMessage
 			if err := json.Unmarshal(messageData, &msg); err != nil {
 				log.Printf("Invalid WebRTC WS payload from %s: %v", sessionID, err)
 				continue
-			}
-
-			ownershipCtx, ownershipCancel := context.WithTimeout(context.Background(), 2*time.Second)
-			if err := Signaling.refreshOwner(ownershipCtx, sessionID); err != nil {
-				ownershipCancel()
-				if errors.Is(err, errSessionAlreadyOwned) {
-					log.Printf("WebRTC WS closing stale signaling owner for session %s", sessionID)
-					break
-				}
-				log.Printf("WebRTC WS could not refresh signaling ownership for %s: %v", sessionID, err)
-			} else {
-				ownershipCancel()
 			}
 
 			if err := validateSignalingMessage(msg); err != nil {
@@ -641,14 +767,7 @@ func WebRTCWebSocketHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			route, routeErr := appredis.ResolveSessionRoute(ctx, redisClient.GetClient(), sessionID)
-			if routeErr != nil {
-				cancel()
-				log.Printf("WebRTC WS missing session route for %s: %v", sessionID, routeErr)
-				continue
-			}
-
-			matchedPartner, err := redisClient.GetClient().Get(ctx, appredis.MatchKey(sessionID, route)).Result()
+			matchedPartner, err := redisClient.GetClient().Get(ctx, appredis.MatchKey(sessionID, sessionRoute)).Result()
 			cancel()
 
 			if err != nil || matchedPartner != msg.ToSessionID {
