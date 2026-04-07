@@ -184,6 +184,73 @@ else
       send(blocker, :release_sweep_registry)
     end
 
+    test "busy local match attempts do not immediately reschedule the same queue" do
+      queue_key = OmeglePhoenix.RedisKeys.random_queue_key("text", 0)
+      expected_lock_key = "matchmaking:leader:#{queue_key}"
+      {:ok, counter} = Agent.start_link(fn -> 0 end)
+
+      EredisClusterStub.put(:q, fn
+        :omegle_phoenix_redis_cluster, ["XGROUP", "CREATE", _stream, _group, "$", "MKSTREAM"] ->
+          {:ok, "OK"}
+
+        :omegle_phoenix_redis_cluster,
+        ["XAUTOCLAIM", _stream, _group, _consumer, "30000", _start_id, "COUNT", "100"] ->
+          {:ok, ["0-0", []]}
+
+        :omegle_phoenix_redis_cluster, ["XINFO", "CONSUMERS", _stream, _group] ->
+          {:ok, []}
+
+        :omegle_phoenix_redis_cluster,
+        [
+          "XREADGROUP",
+          "GROUP",
+          _group,
+          _consumer,
+          "COUNT",
+          _count,
+          "BLOCK",
+          _block_ms,
+          "STREAMS",
+          _stream,
+          _stream_id
+        ] ->
+          {:ok, nil}
+
+        :omegle_phoenix_redis_cluster, ["SET", lock_key, _lock_token, "PX", _ttl_ms, "NX"] ->
+          if lock_key == expected_lock_key do
+            Agent.update(counter, &(&1 + 1))
+            {:ok, nil}
+          else
+            raise "unexpected lock key in busy reschedule test: #{inspect(lock_key)}"
+          end
+
+        :omegle_phoenix_redis_cluster, ["SMEMBERS", _key] ->
+          {:ok, []}
+      end)
+
+      EredisClusterStub.put(:qmn, fn _cluster, commands ->
+        raise "unexpected qmn call in busy reschedule test: #{inspect(commands)}"
+      end)
+
+      EredisClusterStub.put(:qk, fn _cluster, command, route_key ->
+        raise "unexpected qk call in busy reschedule test: #{inspect({command, route_key})}"
+      end)
+
+      start_supervised!({Task.Supervisor, name: OmeglePhoenix.TaskSupervisor})
+      start_supervised!(OmeglePhoenix.Matchmaker)
+
+      GenServer.cast(OmeglePhoenix.Matchmaker, {:schedule_local_match_attempts, [queue_key]})
+
+      assert_eventually(fn -> Agent.get(counter, & &1) >= 1 end)
+      Process.sleep(100)
+
+      assert Agent.get(counter, & &1) == 1
+
+      state = :sys.get_state(OmeglePhoenix.Matchmaker)
+      assert state.pending_local_match_keys == MapSet.new()
+      assert is_nil(state.local_match_batch_ref)
+    end
+
     defp assert_eventually(fun, attempts \\ 20)
 
     defp assert_eventually(fun, attempts) when attempts > 0 do

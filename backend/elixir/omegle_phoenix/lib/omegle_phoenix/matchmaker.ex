@@ -1340,11 +1340,8 @@ defmodule OmeglePhoenix.Matchmaker do
   defp run_local_match_attempt(queue_key) do
     try do
       case do_matching(queue_key) do
-        :busy ->
-          schedule_local_match_attempts([queue_key])
-
-        _ ->
-          :ok
+        :busy -> :ok
+        _ -> :ok
       end
     rescue
       error ->

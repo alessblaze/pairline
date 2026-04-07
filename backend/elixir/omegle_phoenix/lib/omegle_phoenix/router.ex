@@ -47,6 +47,9 @@ defmodule OmeglePhoenix.Router do
         {^pid, token} ->
           persist_owner(session_id, build_local_owner_record(token))
 
+        nil ->
+          restore_owner(session_id, pid)
+
         _ ->
           {:error, :not_owner}
       end
@@ -294,10 +297,12 @@ defmodule OmeglePhoenix.Router do
       {:ok, nil} ->
         maybe_cleanup_stale_session(session_id)
 
-      {:ok, %{node: owner_node} = owner} when owner_node == current_node ->
-        Logger.warning("Router cleared stale local owner for #{session_id}")
-        compare_and_delete_owner(session_id, owner)
-        maybe_cleanup_stale_session(session_id)
+      {:ok, %{node: owner_node}} when owner_node == current_node ->
+        Logger.warning(
+          "Router could not find local owner for #{session_id} but Redis still points at this node; delivering via session topic"
+        )
+
+        dispatch_via_topic(session_id, message)
 
       {:ok, owner} ->
         dispatch_remote(session_id, owner, message)
@@ -312,11 +317,30 @@ defmodule OmeglePhoenix.Router do
     dispatch_local(session_id, message)
   end
 
+  defp dispatch_via_topic(session_id, message) do
+    Phoenix.PubSub.broadcast(OmeglePhoenix.PubSub, topic(session_id), message)
+    :ok
+  end
+
   defp track_local_owner(session_id, pid, token) do
     _ = ensure_owner_table()
     :ets.insert(@owner_table, {session_id, pid, token})
     GenServer.cast(__MODULE__, {:track_owner, session_id, pid, token})
     :ok
+  end
+
+  defp restore_owner(session_id, pid) do
+    token = owner_token()
+    track_local_owner(session_id, pid, token)
+
+    case persist_owner(session_id, build_local_owner_record(token)) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        untrack_local_owner(session_id, pid)
+        {:error, reason}
+    end
   end
 
   defp untrack_local_owner(session_id, pid) do
