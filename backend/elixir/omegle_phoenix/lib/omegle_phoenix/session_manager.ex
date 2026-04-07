@@ -19,6 +19,17 @@ defmodule OmeglePhoenix.SessionManager do
     :ban_reason
   ]
   @allowed_statuses [:waiting, :matched, :disconnecting]
+  @active_session_scan_count 250
+  @partial_update_fields [
+    :status,
+    :partner_id,
+    :last_partner_id,
+    :signaling_ready,
+    :webrtc_started,
+    :ban_status,
+    :ban_reason,
+    :match_generation
+  ]
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -29,7 +40,8 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   def get_session(session_id) when is_binary(session_id) do
-    with {:ok, route} <- OmeglePhoenix.RedisKeys.resolve_session_route(session_id, verify_exists: false) do
+    with {:ok, route} <-
+           OmeglePhoenix.RedisKeys.resolve_session_route(session_id, verify_exists: false) do
       case OmeglePhoenix.Redis.command(["GET", session_key(session_id, route)]) do
         {:ok, nil} ->
           _ =
@@ -39,8 +51,11 @@ defmodule OmeglePhoenix.SessionManager do
 
           {:error, :not_found}
 
-        {:ok, payload} -> decode_session(payload)
-        _ -> {:error, :not_found}
+        {:ok, payload} ->
+          decode_session(payload)
+
+        _ ->
+          {:error, :not_found}
       end
     end
   end
@@ -142,18 +157,36 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   def get_all_sessions do
-    sessions =
-      case OmeglePhoenix.Redis.command(["SMEMBERS", OmeglePhoenix.RedisKeys.active_sessions_key()]) do
-        {:ok, session_ids} when is_list(session_ids) ->
-          {:ok, batched_sessions} = get_sessions(session_ids)
-          _ = prune_stale_session_ids(OmeglePhoenix.RedisKeys.active_sessions_key(), session_ids, batched_sessions)
+    collect_active_sessions("0", %{})
+  end
+
+  def get_active_sessions_page(opts \\ []) do
+    cursor = normalize_scan_cursor(Keyword.get(opts, :cursor, "0"))
+    limit = normalize_scan_limit(Keyword.get(opts, :limit, @active_session_scan_count))
+
+    with {:ok, next_cursor, session_ids} <-
+           scan_session_ids(
+             OmeglePhoenix.RedisKeys.active_sessions_key(),
+             cursor,
+             limit
+           ),
+         {:ok, batched_sessions} <- get_sessions(session_ids) do
+      _ =
+        prune_stale_session_ids(
+          OmeglePhoenix.RedisKeys.active_sessions_key(),
+          session_ids,
           batched_sessions
+        )
 
-        _ ->
-          %{}
-      end
+      ordered_sessions =
+        session_ids
+        |> Enum.map(&Map.get(batched_sessions, &1))
+        |> Enum.reject(&is_nil/1)
 
-    {:ok, sessions}
+      {:ok, %{sessions: ordered_sessions, next_cursor: next_cursor}}
+    else
+      _ -> {:ok, %{sessions: [], next_cursor: "0"}}
+    end
   end
 
   def get_sessions_by_ip(ip) when is_binary(ip) do
@@ -174,14 +207,10 @@ defmodule OmeglePhoenix.SessionManager do
   def get_sessions_by_ip(_ip), do: {:ok, []}
 
   def count_active_sessions do
-    case OmeglePhoenix.Redis.command(["SMEMBERS", OmeglePhoenix.RedisKeys.active_sessions_key()]) do
-      {:ok, session_ids} when is_list(session_ids) ->
-        {:ok, batched_sessions} = get_sessions(session_ids)
-        _ = prune_stale_session_ids(OmeglePhoenix.RedisKeys.active_sessions_key(), session_ids, batched_sessions)
-        map_size(batched_sessions)
-
-      _ ->
-        0
+    case OmeglePhoenix.Redis.command(["SCARD", OmeglePhoenix.RedisKeys.active_sessions_key()]) do
+      {:ok, count} when is_integer(count) -> count
+      {:ok, count} when is_binary(count) -> parse_non_negative_integer(count, 0)
+      _ -> 0
     end
   end
 
@@ -189,6 +218,7 @@ defmodule OmeglePhoenix.SessionManager do
     session_token = generate_session_token()
     now = System.system_time(:second)
     normalized_preferences = normalize_preferences(preferences)
+
     redis_shard =
       OmeglePhoenix.RedisKeys.initial_shard(
         Map.get(normalized_preferences, "mode", "text"),
@@ -224,14 +254,36 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   def update_session(session_id, updates) do
-    with {:ok, session} <- get_session(session_id) do
-      normalized_updates = normalize_updates(updates)
-      updated_session = Map.merge(session, normalized_updates) |> touch_last_activity()
+    normalized_updates = normalize_updates(updates)
 
-      case persist_session(updated_session) do
-        :ok -> {:ok, updated_session}
-        {:error, reason} -> {:error, reason}
-      end
+    cond do
+      normalized_updates == %{} ->
+        with {:ok, _session_id} <- refresh_session(session_id),
+             {:ok, refreshed_session} <- get_session(session_id) do
+          {:ok, refreshed_session}
+        end
+
+      partial_update_supported?(normalized_updates) ->
+        case OmeglePhoenix.RedisState.update_session_fields(
+               session_id,
+               normalized_updates,
+               ttl_seconds()
+             ) do
+          {:ok, "not_found"} -> {:error, :not_found}
+          {:ok, payload} -> decode_session(payload)
+          {:error, reason} -> {:error, reason}
+          _ -> {:error, :not_found}
+        end
+
+      true ->
+        with {:ok, session} <- get_session(session_id) do
+          updated_session = Map.merge(session, normalized_updates) |> touch_last_activity()
+
+          case persist_session(updated_session) do
+            :ok -> {:ok, updated_session}
+            {:error, reason} -> {:error, reason}
+          end
+        end
     end
   end
 
@@ -424,7 +476,8 @@ defmodule OmeglePhoenix.SessionManager do
     end
   end
 
-  def move_session_shard(session_id, new_shard) when is_binary(session_id) and is_integer(new_shard) do
+  def move_session_shard(session_id, new_shard)
+      when is_binary(session_id) and is_integer(new_shard) do
     with {:ok, session} <- get_session(session_id) do
       current_mode = OmeglePhoenix.RedisKeys.mode(session.preferences)
       normalized_shard = rem(max(new_shard, 0), OmeglePhoenix.Config.get_match_shard_count())
@@ -519,6 +572,10 @@ defmodule OmeglePhoenix.SessionManager do
     Map.put(session, :last_activity, System.system_time(:second))
   end
 
+  defp partial_update_supported?(updates) when is_map(updates) do
+    Enum.all?(Map.keys(updates), &(&1 in @partial_update_fields))
+  end
+
   defp disconnect_known_partner(nil, _origin_session_id), do: :ok
 
   defp disconnect_known_partner(partner_id, origin_session_id) do
@@ -562,7 +619,9 @@ defmodule OmeglePhoenix.SessionManager do
 
   defp migrate_owner_record(session_id, old_route, new_mode, new_shard) do
     old_owner_key = OmeglePhoenix.RedisKeys.session_owner_key(session_id, old_route)
-    new_owner_key = OmeglePhoenix.RedisKeys.session_owner_key(session_id, %{mode: new_mode, shard: new_shard})
+
+    new_owner_key =
+      OmeglePhoenix.RedisKeys.session_owner_key(session_id, %{mode: new_mode, shard: new_shard})
 
     case OmeglePhoenix.Redis.command(["GET", old_owner_key]) do
       {:ok, owner_value} when is_binary(owner_value) ->
@@ -791,8 +850,88 @@ defmodule OmeglePhoenix.SessionManager do
     end
   end
 
+  defp collect_active_sessions(cursor, acc) when is_binary(cursor) and is_map(acc) do
+    with {:ok, next_cursor, session_ids} <-
+           scan_session_ids(
+             OmeglePhoenix.RedisKeys.active_sessions_key(),
+             cursor,
+             @active_session_scan_count
+           ),
+         {:ok, batched_sessions} <- get_sessions(session_ids) do
+      _ =
+        prune_stale_session_ids(
+          OmeglePhoenix.RedisKeys.active_sessions_key(),
+          session_ids,
+          batched_sessions
+        )
+
+      merged =
+        Enum.reduce(session_ids, acc, fn session_id, sessions_acc ->
+          case Map.fetch(batched_sessions, session_id) do
+            {:ok, session} -> Map.put(sessions_acc, session_id, session)
+            :error -> sessions_acc
+          end
+        end)
+
+      if next_cursor == "0" do
+        {:ok, merged}
+      else
+        collect_active_sessions(next_cursor, merged)
+      end
+    else
+      _ -> {:ok, acc}
+    end
+  end
+
+  defp scan_session_ids(index_key, cursor, count)
+       when is_binary(index_key) and is_binary(cursor) and is_integer(count) do
+    case OmeglePhoenix.Redis.command([
+           "SSCAN",
+           index_key,
+           cursor,
+           "COUNT",
+           Integer.to_string(count)
+         ]) do
+      {:ok, [next_cursor, session_ids]} when is_binary(next_cursor) and is_list(session_ids) ->
+        {:ok, next_cursor, session_ids}
+
+      _ ->
+        {:error, :scan_failed}
+    end
+  end
+
+  defp normalize_scan_cursor(cursor) when is_binary(cursor), do: cursor
+
+  defp normalize_scan_cursor(cursor) when is_integer(cursor) and cursor >= 0,
+    do: Integer.to_string(cursor)
+
+  defp normalize_scan_cursor(_cursor), do: "0"
+
+  defp normalize_scan_limit(limit) when is_integer(limit) and limit > 0, do: min(limit, 1_000)
+
+  defp normalize_scan_limit(limit) when is_binary(limit) do
+    limit
+    |> parse_non_negative_integer(@active_session_scan_count)
+    |> max(1)
+    |> min(1_000)
+  end
+
+  defp normalize_scan_limit(_limit), do: @active_session_scan_count
+
+  defp parse_non_negative_integer(value, default) when is_binary(value) do
+    case Integer.parse(value) do
+      {parsed, ""} when parsed >= 0 -> parsed
+      _ -> default
+    end
+  end
+
+  defp parse_non_negative_integer(_value, default), do: default
+
   defp session_key(session_id, route), do: OmeglePhoenix.RedisKeys.session_key(session_id, route)
-  defp queue_meta_key(session_id, route), do: OmeglePhoenix.RedisKeys.queue_meta_key(session_id, route)
+
+  defp queue_meta_key(session_id, route),
+    do: OmeglePhoenix.RedisKeys.queue_meta_key(session_id, route)
+
   defp ip_sessions_key(ip), do: "ip:#{ip}"
   defp ip_ban_key(ip), do: "ban:ip:#{ip}"
 end

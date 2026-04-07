@@ -98,6 +98,57 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
     end)
   end
 
+  test "count_active_sessions uses the active session index cardinality", %{
+    session_id: session_id,
+    peer_session_id: peer_session_id,
+    ip: ip,
+    peer_ip: peer_ip
+  } do
+    baseline = OmeglePhoenix.SessionManager.count_active_sessions()
+
+    assert {:ok, _created} =
+             OmeglePhoenix.SessionManager.create_session(session_id, ip, %{"mode" => "text"})
+
+    assert {:ok, _created} =
+             OmeglePhoenix.SessionManager.create_session(peer_session_id, peer_ip, %{
+               "mode" => "video"
+             })
+
+    assert_eventually(fn ->
+      OmeglePhoenix.SessionManager.count_active_sessions() >= baseline + 2
+    end)
+  end
+
+  test "update_session applies hot field updates without losing queue metadata", %{
+    session_id: session_id,
+    ip: ip
+  } do
+    preferences = %{"mode" => "video", "interests" => "music,games"}
+
+    assert {:ok, _created} =
+             OmeglePhoenix.SessionManager.create_session(session_id, ip, preferences)
+
+    assert {:ok, route} = OmeglePhoenix.SessionManager.get_session_route(session_id)
+
+    assert {:ok, updated} =
+             OmeglePhoenix.SessionManager.update_session(session_id, %{
+               status: :disconnecting,
+               signaling_ready: true,
+               webrtc_started: true
+             })
+
+    assert updated.status == :disconnecting
+    assert updated.signaling_ready == true
+    assert updated.webrtc_started == true
+
+    queue_meta_key = OmeglePhoenix.RedisKeys.queue_meta_key(session_id, route)
+    assert {:ok, queue_meta_payload} = OmeglePhoenix.Redis.command(["GET", queue_meta_key])
+    assert {:ok, queue_meta} = Jason.decode(queue_meta_payload)
+    assert queue_meta["status"] == "disconnecting"
+    assert queue_meta["mode"] == "video"
+    assert queue_meta["interest_buckets"] != []
+  end
+
   test "delete_session preserves report-grace locators and session token", %{
     session_id: session_id,
     ip: ip
@@ -116,7 +167,10 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
     ip_locator_key = OmeglePhoenix.RedisKeys.session_ip_locator_key(session_id)
     token_key = OmeglePhoenix.RedisKeys.session_token_key(session_id, route)
 
-    assert OmeglePhoenix.Redis.command(["GET", OmeglePhoenix.RedisKeys.session_locator_key(session_id)]) ==
+    assert OmeglePhoenix.Redis.command([
+             "GET",
+             OmeglePhoenix.RedisKeys.session_locator_key(session_id)
+           ]) ==
              {:ok, nil}
 
     assert OmeglePhoenix.Redis.command(["GET", report_locator_key]) == {:ok, encoded_route}
