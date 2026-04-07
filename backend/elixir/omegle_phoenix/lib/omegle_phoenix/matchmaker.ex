@@ -102,7 +102,15 @@ defmodule OmeglePhoenix.Matchmaker do
           error
       end
     else
-      _ -> cleanup_unknown_queue_membership(session_id)
+      {:error, :not_found} ->
+        cleanup_unknown_queue_membership(session_id)
+
+      {:error, reason} = error ->
+        Logger.warning("Failed to resolve queue route for #{session_id}: #{inspect(reason)}")
+        error
+
+      _ ->
+        {:error, :unexpected_queue_route_lookup}
     end
   end
 
@@ -333,16 +341,29 @@ defmodule OmeglePhoenix.Matchmaker do
            ]) do
         {:ok, expired_sessions} ->
           Enum.each(expired_sessions, fn session_id ->
-            leave_queue(session_id)
-
             case OmeglePhoenix.SessionManager.get_session(session_id) do
               {:ok, session} when session.status == :waiting ->
-                OmeglePhoenix.SessionManager.update_session(session_id, %{status: :disconnecting})
-                OmeglePhoenix.Router.notify_timeout(session_id)
+                with :ok <- leave_queue(session_id),
+                     {:ok, _updated_session} <-
+                       OmeglePhoenix.SessionManager.update_session(session_id, %{
+                         status: :disconnecting
+                       }) do
+                  OmeglePhoenix.Router.notify_timeout(session_id)
 
-                :telemetry.execute([:omegle_phoenix, :matchmaking, :timeout], %{count: 1}, %{
-                  session_id: session_id
-                })
+                  :telemetry.execute([:omegle_phoenix, :matchmaking, :timeout], %{count: 1}, %{
+                    session_id: session_id
+                  })
+                else
+                  {:error, reason} ->
+                    Logger.warning(
+                      "Failed to time out matchmaking session #{session_id}: #{inspect(reason)}"
+                    )
+                end
+
+              {:error, reason} ->
+                Logger.warning(
+                  "Skipped timeout cleanup for #{session_id} because session lookup failed: #{inspect(reason)}"
+                )
 
               _ ->
                 :ok
@@ -371,7 +392,21 @@ defmodule OmeglePhoenix.Matchmaker do
             []
 
           {:ok, session_ids_with_scores} when is_list(session_ids_with_scores) ->
-            build_session_pool(session_ids_with_scores, now)
+            case build_session_pool(session_ids_with_scores, now) do
+              {:ok, pool} ->
+                pool
+
+              {:error, reason} ->
+                Logger.warning(
+                  "Skipped matching for queue #{queue_key} because session pool loading failed: #{inspect(reason)}"
+                )
+
+                []
+            end
+
+          {:error, reason} ->
+            Logger.warning("Failed to load queue candidates for #{queue_key}: #{inspect(reason)}")
+            []
 
           _ ->
             []
@@ -778,43 +813,32 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   defp cleanup_unknown_queue_membership(session_id) do
-    registry_entries =
-      OmeglePhoenix.RedisKeys.queue_registry_keys()
-      |> Enum.flat_map(fn registry_key ->
-        case OmeglePhoenix.Redis.command(["SMEMBERS", registry_key]) do
-          {:ok, queue_keys} when is_list(queue_keys) ->
-            Enum.map(queue_keys, &{registry_key, &1})
+    with {:ok, registry_entries} <- load_registry_entries() do
+      queue_keys =
+        registry_entries
+        |> Enum.map(fn {_registry_key, queue_key} -> queue_key end)
+        |> Enum.uniq()
 
-          _ ->
-            []
+      if queue_keys == [] do
+        :ok
+      else
+        commands = Enum.map(queue_keys, &["ZREM", &1, session_id])
+
+        case OmeglePhoenix.Redis.pipeline(commands) do
+          {:ok, _results} ->
+            Enum.each(registry_entries, fn {registry_key, queue_key} ->
+              prune_queue_if_empty(queue_key, registry_key)
+            end)
+
+            :ok
+
+          {:error, reason} = error ->
+            Logger.warning(
+              "Failed to remove stale queue membership for #{session_id}: #{inspect(reason)}"
+            )
+
+            error
         end
-      end)
-      |> Enum.uniq()
-
-    queue_keys =
-      registry_entries
-      |> Enum.map(fn {_registry_key, queue_key} -> queue_key end)
-      |> Enum.uniq()
-
-    if queue_keys == [] do
-      :ok
-    else
-      commands = Enum.map(queue_keys, &["ZREM", &1, session_id])
-
-      case OmeglePhoenix.Redis.pipeline(commands) do
-        {:ok, _results} ->
-          Enum.each(registry_entries, fn {registry_key, queue_key} ->
-            prune_queue_if_empty(queue_key, registry_key)
-          end)
-
-          :ok
-
-        {:error, reason} = error ->
-          Logger.warning(
-            "Failed to remove stale queue membership for #{session_id}: #{inspect(reason)}"
-          )
-
-          error
       end
     end
   end
@@ -962,34 +986,57 @@ defmodule OmeglePhoenix.Matchmaker do
     entries = Enum.chunk_every(session_ids_with_scores, 2)
     session_ids = Enum.map(entries, fn [sid, _score_str] -> sid end)
 
-    sessions_by_id =
-      case OmeglePhoenix.SessionManager.get_queue_ready_sessions(session_ids) do
-        {:ok, map} -> map
-        _ -> %{}
-      end
+    with {:ok, sessions_by_id} <-
+           OmeglePhoenix.SessionManager.get_queue_ready_sessions(session_ids) do
+      pool =
+        entries
+        |> Enum.reduce([], fn
+          [sid, score_str], acc ->
+            case Map.get(sessions_by_id, sid) do
+              nil ->
+                acc
 
-    entries
-    |> Enum.reduce([], fn
-      [sid, score_str], acc ->
-        case Map.get(sessions_by_id, sid) do
-          nil ->
+              session ->
+                join_time =
+                  case Float.parse(score_str) do
+                    {f, _} -> trunc(f)
+                    :error -> now_ms
+                  end
+
+                [{sid, session, now_ms - join_time} | acc]
+            end
+
+          _entry, acc ->
             acc
+        end)
+        |> Enum.reverse()
+        |> Enum.filter(fn {_sid, session, _wait} -> queue_ready_session?(session) end)
 
-          session ->
-            join_time =
-              case Float.parse(score_str) do
-                {f, _} -> trunc(f)
-                :error -> now_ms
-              end
+      {:ok, pool}
+    end
+  end
 
-            [{sid, session, now_ms - join_time} | acc]
-        end
+  defp load_registry_entries do
+    OmeglePhoenix.RedisKeys.queue_registry_keys()
+    |> Enum.reduce_while({:ok, []}, fn registry_key, {:ok, acc} ->
+      case OmeglePhoenix.Redis.command(["SMEMBERS", registry_key]) do
+        {:ok, queue_keys} when is_list(queue_keys) ->
+          entries = Enum.map(queue_keys, &{registry_key, &1})
+          {:cont, {:ok, entries ++ acc}}
 
-      _entry, acc ->
-        acc
+        {:error, reason} ->
+          Logger.warning("Failed to enumerate queue registry #{registry_key}: #{inspect(reason)}")
+
+          {:halt, {:error, reason}}
+
+        _ ->
+          {:cont, {:ok, acc}}
+      end
     end)
-    |> Enum.reverse()
-    |> Enum.filter(fn {_sid, session, _wait} -> queue_ready_session?(session) end)
+    |> case do
+      {:ok, entries} -> {:ok, Enum.uniq(entries)}
+      error -> error
+    end
   end
 
   defp strict_bucket_queue_key(mode, shard, bucket) when mode in ["lobby", "text", "video"] do
