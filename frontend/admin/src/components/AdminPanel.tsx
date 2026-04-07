@@ -1232,6 +1232,12 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                                 <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Reason</p>
                                 <p className="mt-1 text-sm text-slate-200">{report.reason}</p>
                               </div>
+                              {report.description && (
+                                <div>
+                                  <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Additional Information</p>
+                                  <p className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-200">{report.description}</p>
+                                </div>
+                              )}
                               {report.status !== 'pending' && (
                                 <div className="grid gap-3 sm:grid-cols-2">
                                   <div>
