@@ -227,5 +227,150 @@ else
 
       assert OmeglePhoenix.SessionManager.emergency_unban_ip(ip) == {:error, :closed}
     end
+
+    test "admin subscriber logs emergency_ban_ip failures instead of false success" do
+      ip = "203.0.113.27"
+      stream = "admin:test"
+      group = "admin-group"
+      consumer = "admin-consumer"
+      entry_id = "1710000000000-0"
+
+      {:ok, calls} = Agent.start_link(fn -> %{read_pending?: true, delivered?: false} end)
+
+      on_exit(fn -> Agent.stop(calls) end)
+
+      payload =
+        Jason.encode!(%{
+          "action" => "emergency_ban_ip",
+          "ip" => ip,
+          "reason" => "test ban"
+        })
+
+      EredisClusterStub.put(:q, fn
+        :omegle_phoenix_redis_cluster,
+        [
+          "XREADGROUP",
+          "GROUP",
+          ^group,
+          ^consumer,
+          "COUNT",
+          _count,
+          "BLOCK",
+          _block_ms,
+          "STREAMS",
+          ^stream,
+          stream_id
+        ] ->
+          Agent.get_and_update(calls, fn state ->
+            case {stream_id, state} do
+              {"0", %{read_pending?: true}} ->
+                {{:ok, nil}, %{state | read_pending?: false}}
+
+              {">", %{delivered?: false}} ->
+                entry = [entry_id, ["payload", payload]]
+                {{:ok, [[stream, [entry]]]}, %{state | delivered?: true}}
+
+              _ ->
+                {{:ok, nil}, state}
+            end
+          end)
+
+        :omegle_phoenix_redis_cluster, ["XACK", ^stream, ^group, ^entry_id] ->
+          {:ok, "1"}
+
+        :omegle_phoenix_redis_cluster, ["SMEMBERS", lookup_key]
+        when lookup_key == "ip:sessions:#{ip}" ->
+          {:error, :timeout}
+      end)
+
+      state = %{stream: stream, group: group, consumer: consumer}
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:noreply, ^state} =
+                   OmeglePhoenix.Redis.AdminSubscriber.handle_info(:consume_stream, state)
+
+          receive do
+            :consume_stream -> :ok
+          after
+            0 -> :ok
+          end
+        end)
+
+      assert log =~ "Emergency ban IP failed for #{ip}: :timeout"
+      refute log =~ "Emergency ban IP: #{ip} - test ban"
+    end
+
+    test "admin subscriber logs emergency_unban_ip failures instead of false success" do
+      ip = "203.0.113.28"
+      stream = "admin:test"
+      group = "admin-group"
+      consumer = "admin-consumer"
+      entry_id = "1710000000001-0"
+
+      {:ok, calls} = Agent.start_link(fn -> %{read_pending?: true, delivered?: false} end)
+
+      on_exit(fn -> Agent.stop(calls) end)
+
+      payload =
+        Jason.encode!(%{
+          "action" => "emergency_unban_ip",
+          "ip" => ip
+        })
+
+      EredisClusterStub.put(:q, fn
+        :omegle_phoenix_redis_cluster,
+        [
+          "XREADGROUP",
+          "GROUP",
+          ^group,
+          ^consumer,
+          "COUNT",
+          _count,
+          "BLOCK",
+          _block_ms,
+          "STREAMS",
+          ^stream,
+          stream_id
+        ] ->
+          Agent.get_and_update(calls, fn state ->
+            case {stream_id, state} do
+              {"0", %{read_pending?: true}} ->
+                {{:ok, nil}, %{state | read_pending?: false}}
+
+              {">", %{delivered?: false}} ->
+                entry = [entry_id, ["payload", payload]]
+                {{:ok, [[stream, [entry]]]}, %{state | delivered?: true}}
+
+              _ ->
+                {{:ok, nil}, state}
+            end
+          end)
+
+        :omegle_phoenix_redis_cluster, ["XACK", ^stream, ^group, ^entry_id] ->
+          {:ok, "1"}
+
+        :omegle_phoenix_redis_cluster, ["SMEMBERS", lookup_key]
+        when lookup_key == "ip:sessions:#{ip}" ->
+          {:error, :closed}
+      end)
+
+      state = %{stream: stream, group: group, consumer: consumer}
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:noreply, ^state} =
+                   OmeglePhoenix.Redis.AdminSubscriber.handle_info(:consume_stream, state)
+
+          receive do
+            :consume_stream -> :ok
+          after
+            0 -> :ok
+          end
+        end)
+
+      assert log =~ "Emergency unban IP failed for #{ip}: :closed"
+      refute log =~ "Emergency unban IP: #{ip}"
+    end
   end
 end

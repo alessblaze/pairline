@@ -207,6 +207,47 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
     assert queue_meta["interest_buckets"] != []
   end
 
+  test "refresh_session recreates active locators for long-lived report lookups", %{
+    session_id: session_id,
+    ip: ip
+  } do
+    preferences = %{"mode" => "video", "interests" => "long,report"}
+
+    assert {:ok, _created} =
+             OmeglePhoenix.SessionManager.create_session(session_id, ip, preferences)
+
+    assert {:ok, route} = OmeglePhoenix.SessionManager.get_session_route(session_id)
+    locator_key = OmeglePhoenix.RedisKeys.session_locator_key(session_id)
+    ip_locator_key = OmeglePhoenix.RedisKeys.session_ip_locator_key(session_id)
+
+    Process.sleep(2_000)
+
+    assert {:ok, locator_ttl_before} = OmeglePhoenix.Redis.command(["TTL", locator_key])
+    assert {:ok, ip_locator_ttl_before} = OmeglePhoenix.Redis.command(["TTL", ip_locator_key])
+
+    assert {:ok, [1, 1]} =
+             OmeglePhoenix.Redis.pipeline([
+               ["DEL", locator_key],
+               ["DEL", ip_locator_key]
+             ])
+
+    assert OmeglePhoenix.Redis.command(["GET", locator_key]) == {:ok, nil}
+    assert OmeglePhoenix.Redis.command(["GET", ip_locator_key]) == {:ok, nil}
+
+    assert {:ok, _session_id} = OmeglePhoenix.SessionManager.refresh_session(session_id)
+
+    assert OmeglePhoenix.Redis.command(["GET", locator_key]) ==
+             {:ok, OmeglePhoenix.RedisKeys.encode_locator(route)}
+
+    assert OmeglePhoenix.Redis.command(["GET", ip_locator_key]) == {:ok, ip}
+
+    assert {:ok, locator_ttl_after} = OmeglePhoenix.Redis.command(["TTL", locator_key])
+    assert {:ok, ip_locator_ttl_after} = OmeglePhoenix.Redis.command(["TTL", ip_locator_key])
+
+    assert locator_ttl_after > locator_ttl_before
+    assert ip_locator_ttl_after > ip_locator_ttl_before
+  end
+
   test "delete_session preserves report-grace locators and session token", %{
     session_id: session_id,
     ip: ip

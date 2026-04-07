@@ -45,22 +45,22 @@ defmodule OmeglePhoenix.RedisKeys do
              :ok <- maybe_verify_session_exists(session_id, route, verify_exists?) do
           {:ok, route}
         else
-          {:error, :not_found} = error ->
+          {:error, :not_found} ->
             _ = OmeglePhoenix.Redis.command(["DEL", session_locator_key(session_id)])
-            error
+            repair_missing_session_route(session_id, verify_exists?)
 
           {:error, _reason} = error ->
             error
         end
 
       {:ok, nil} ->
-        {:error, :not_found}
+        repair_missing_session_route(session_id, verify_exists?)
 
       {:error, reason} ->
         {:error, reason}
 
       _ ->
-        {:error, :invalid_locator}
+        repair_missing_session_route(session_id, verify_exists?)
     end
   end
 
@@ -81,6 +81,75 @@ defmodule OmeglePhoenix.RedisKeys do
 
       _ ->
         {:error, :invalid_locator}
+    end
+  end
+
+  defp repair_missing_session_route(session_id, verify_exists?) do
+    with {:ok, route} <- find_session_route(session_id),
+         :ok <- maybe_verify_session_exists(session_id, route, verify_exists?),
+         :ok <- persist_repaired_session_locator(session_id, route) do
+      {:ok, route}
+    end
+  end
+
+  defp find_session_route(session_id) do
+    routes = candidate_routes(session_id)
+
+    commands =
+      Enum.map(routes, fn route ->
+        ["EXISTS", session_key(session_id, route)]
+      end)
+
+    case OmeglePhoenix.Redis.pipeline(commands) do
+      {:ok, results} ->
+        routes
+        |> Enum.zip(results)
+        |> Enum.find_value(fn
+          {route, 1} -> {:ok, route}
+          _ -> false
+        end) || {:error, :not_found}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp persist_repaired_session_locator(session_id, route) do
+    case session_ttl(session_id, route) do
+      {:ok, ttl} ->
+        case OmeglePhoenix.Redis.command([
+               "SETEX",
+               session_locator_key(session_id),
+               ttl,
+               encode_locator(route)
+             ]) do
+          {:ok, "OK"} -> :ok
+          {:error, reason} -> {:error, reason}
+          other -> {:error, {:unexpected_locator_repair_result, other}}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp session_ttl(session_id, route) do
+    case OmeglePhoenix.Redis.command(["TTL", session_key(session_id, route)]) do
+      {:ok, ttl} when is_integer(ttl) and ttl > 0 ->
+        {:ok, Integer.to_string(ttl)}
+
+      {:ok, _ttl} ->
+        {:ok, Integer.to_string(OmeglePhoenix.Config.get_session_ttl())}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp candidate_routes(session_id) do
+    for mode <- @allowed_modes,
+        shard <- 0..(OmeglePhoenix.Config.get_match_shard_count() - 1) do
+      %{mode: mode, shard: shard, session_id: session_id}
     end
   end
 

@@ -173,8 +173,13 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
     reason = Map.get(data, "reason", "admin action")
 
     if ip && valid_ip?(ip) do
-      OmeglePhoenix.SessionManager.emergency_ban_ip(ip, reason)
-      Logger.info("Emergency ban IP: #{ip} - #{reason}")
+      case OmeglePhoenix.SessionManager.emergency_ban_ip(ip, reason) do
+        {:ok, _banned_sessions} ->
+          Logger.info("Emergency ban IP: #{ip} - #{reason}")
+
+        {:error, error_reason} ->
+          Logger.error("Emergency ban IP failed for #{ip}: #{inspect(error_reason)}")
+      end
     else
       Logger.error("Emergency ban IP: missing or invalid ip")
     end
@@ -206,8 +211,13 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
     ip = Map.get(data, "ip")
 
     if ip && valid_ip?(ip) do
-      OmeglePhoenix.SessionManager.emergency_unban_ip(ip)
-      Logger.info("Emergency unban IP: #{ip}")
+      case OmeglePhoenix.SessionManager.emergency_unban_ip(ip) do
+        :ok ->
+          Logger.info("Emergency unban IP: #{ip}")
+
+        {:error, reason} ->
+          Logger.error("Emergency unban IP failed for #{ip}: #{inspect(reason)}")
+      end
     else
       Logger.error("Emergency unban IP: missing or invalid ip")
     end

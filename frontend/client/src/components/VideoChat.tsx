@@ -429,7 +429,7 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
         status === 'disconnected' ? 'bg-red-500' : 'bg-gray-400'
       }`} />
   );
-  const canReportLastChat = !!reportPeerId && messages.some((message) => message.sender !== 'system');
+  const canReportLastChat = !!reportPeerId;
 
   return (
     <div className="fixed inset-0 flex flex-col bg-gray-100 dark:bg-gray-900 overflow-hidden">

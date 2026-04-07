@@ -173,7 +173,7 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [confirmStop, setConfirmStop] = useState(false);
   const [showReport, setShowReport] = useState(false);
-  const canReportLastChat = !!reportPeerId && messages.some((message) => message.sender !== 'system');
+  const canReportLastChat = !!reportPeerId;
 
   // handleSend is now inside ChatInput; parent just needs a callback wrapper
   const handleSend = useCallback((text: string) => {

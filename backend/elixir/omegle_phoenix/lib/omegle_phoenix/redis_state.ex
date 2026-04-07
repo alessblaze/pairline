@@ -18,6 +18,9 @@
 defmodule OmeglePhoenix.RedisState do
   @moduledoc false
   require Logger
+  @active_locator_refresh_attempts 3
+  @active_locator_refresh_delay_ms 50
+  @active_locator_refresh_jitter_ms 25
 
   @persist_script """
   redis.call('SETEX', KEYS[1], ARGV[1], ARGV[5])
@@ -532,7 +535,8 @@ defmodule OmeglePhoenix.RedisState do
     now = Integer.to_string(System.system_time(:second))
 
     with {:ok, route} <- resolve_route(session_id) do
-      exec(
+      result =
+        exec(
         [
           "EVAL",
           @touch_session_script,
@@ -548,6 +552,15 @@ defmodule OmeglePhoenix.RedisState do
         ],
         opts
       )
+
+      case result do
+        {:ok, _} = ok ->
+          _ = refresh_active_locators(session_id, route, ttl)
+          ok
+
+        other ->
+          other
+      end
     end
   end
 
@@ -563,7 +576,8 @@ defmodule OmeglePhoenix.RedisState do
           {:error, :missing_queue_meta}
 
         {:ok, _} ->
-          exec(
+          result =
+            exec(
             [
               "EVAL",
               @update_session_fields_script,
@@ -580,6 +594,15 @@ defmodule OmeglePhoenix.RedisState do
             ],
             opts
           )
+
+          case result do
+            {:ok, _} = ok ->
+              _ = refresh_active_locators(session_id, route, ttl)
+              ok
+
+            other ->
+              other
+          end
 
         {:error, reason} ->
           {:error, reason}
@@ -888,6 +911,95 @@ defmodule OmeglePhoenix.RedisState do
       {:ok, _} -> :ok
       {:error, reason} -> {:error, reason}
       other -> {:error, {:unexpected_locator_cleanup_result, other}}
+    end
+  end
+
+  defp refresh_active_locators(session_id, route, ttl) do
+    with {:ok, ip} <- load_active_locator_ip(session_id, route) do
+      commands = [
+        [
+          "SETEX",
+          OmeglePhoenix.RedisKeys.session_locator_key(session_id),
+          ttl,
+          OmeglePhoenix.RedisKeys.encode_locator(route)
+        ],
+        [
+          "SETEX",
+          OmeglePhoenix.RedisKeys.session_ip_locator_key(session_id),
+          ttl,
+          ip
+        ]
+      ]
+
+      case do_refresh_active_locators(commands, @active_locator_refresh_attempts) do
+        {:ok, _} ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning(
+            "Failed to refresh active locator TTLs for #{session_id}: #{inspect(reason)}"
+          )
+
+          :ok
+
+        other ->
+          Logger.warning(
+            "Unexpected active locator TTL refresh result for #{session_id}: #{inspect(other)}"
+          )
+
+          :ok
+      end
+    else
+      {:error, reason} ->
+        Logger.warning(
+          "Failed to load active locator values for #{session_id}: #{inspect(reason)}"
+        )
+
+        :ok
+    end
+  end
+
+  defp do_refresh_active_locators(commands, attempts_left) when attempts_left > 1 do
+    case OmeglePhoenix.Redis.pipeline(commands) do
+      {:ok, _} = ok ->
+        ok
+
+      {:error, _reason} ->
+        Process.sleep(active_locator_refresh_delay_ms())
+        do_refresh_active_locators(commands, attempts_left - 1)
+
+      other ->
+        other
+    end
+  end
+
+  defp do_refresh_active_locators(commands, 1), do: OmeglePhoenix.Redis.pipeline(commands)
+
+  defp active_locator_refresh_delay_ms do
+    @active_locator_refresh_delay_ms + :rand.uniform(@active_locator_refresh_jitter_ms) - 1
+  end
+
+  defp load_active_locator_ip(session_id, route) do
+    case OmeglePhoenix.Redis.command(["GET", session_ip_key(session_id, route)]) do
+      {:ok, ip} when is_binary(ip) and ip != "" ->
+        {:ok, ip}
+
+      {:ok, _missing} ->
+        case OmeglePhoenix.Redis.command([
+               "GET",
+               OmeglePhoenix.RedisKeys.session_ip_locator_key(session_id)
+             ]) do
+          {:ok, ip} when is_binary(ip) and ip != "" -> {:ok, ip}
+          {:ok, _} -> {:error, :missing_session_ip}
+          {:error, reason} -> {:error, reason}
+          other -> {:error, {:unexpected_session_ip_lookup, other}}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+
+      other ->
+        {:error, {:unexpected_session_ip_lookup, other}}
     end
   end
 
