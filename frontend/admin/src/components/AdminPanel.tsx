@@ -1859,7 +1859,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
               transition={{ type: 'spring', stiffness: 350, damping: 30 }}
-              className="relative flex flex-col w-full max-w-[640px] max-h-[80vh] rounded-[24px] border border-white/[0.08] bg-[#050816] shadow-[0_32px_128px_rgba(0,0,0,0.8)] overflow-hidden"
+              className="relative flex flex-col w-full max-w-[640px] max-h-[80vh] rounded-none border border-white/[0.08] bg-[#050816] shadow-[0_32px_128px_rgba(0,0,0,0.8)] overflow-hidden"
             >
               <div className="hud-bracket hud-bracket-tl opacity-20" />
               <div className="hud-bracket-tr opacity-20" />
