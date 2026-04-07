@@ -18,20 +18,7 @@
 import React, { useDeferredValue, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DOMPurify from 'dompurify';
-import type { AdminAccount, AdminRole, CreateBanRequest, LoginResponse, Report } from '../types';
-
-interface Ban {
-  id: string;
-  session_id: string;
-  ip_address: string;
-  reason: string;
-  banned_by_username: string;
-  created_at: string;
-  expires_at: string | null;
-  is_active: boolean;
-  unbanned_at: string | null;
-  unbanned_by_username: string | null;
-}
+import type { AdminAccount, AdminRole, Ban, CreateBanRequest, LoginResponse, Report } from '../types';
 
 interface BanModalState {
   open: boolean;

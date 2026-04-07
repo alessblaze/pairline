@@ -17,31 +17,6 @@
 
 export type AdminRole = 'moderator' | 'admin' | 'root';
 
-export interface Message {
-  type: 'offer' | 'answer' | 'ice' | 'message' | 'match' | 'disconnect' | 'disconnected' | 'error' | 'banned' | 'timeout' | 'stopped' | 'typing' | 'pong' | 'connected' | 'searching' | 'skipped' | 'webrtc_ready' | 'webrtc_start';
-  data?: any;
-  peer_id?: string;
-  session_id?: string;
-  session_token?: string;
-}
-
-
-export interface User {
-  id: string;
-  ip: string;
-}
-
-export interface ReportData {
-  reason: string;
-  description: string;
-}
-
-export interface BanCheck {
-  is_banned: boolean;
-  reason?: string;
-  expires_at?: string;
-}
-
 export interface LoginResponse {
   username?: string;
   role: AdminRole;
@@ -75,6 +50,19 @@ export interface CreateBanRequest {
   ip?: string;
   reason: string;
   expiry_date?: string;
+}
+
+export interface Ban {
+  id: string;
+  session_id: string;
+  ip_address: string;
+  reason: string;
+  banned_by_username: string;
+  created_at: string;
+  expires_at: string | null;
+  is_active: boolean;
+  unbanned_at: string | null;
+  unbanned_by_username: string | null;
 }
 
 export interface AdminAccount {
