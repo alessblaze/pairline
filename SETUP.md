@@ -1,11 +1,12 @@
 # Setup
 
-This project runs as three app services plus Redis and Postgres:
+This project runs as four app services plus Redis and Postgres:
 
-- `frontend`: React + Vite on `http://localhost:5173`
+- `frontend/client`: React + Vite chat app on `http://localhost:5173`
+- `frontend/admin`: React + Vite admin app on `http://localhost:5174`
 - `backend/elixir/omegle_phoenix`: Phoenix websocket/matchmaking service on `http://localhost:8080`
 - `backend/golang`: Go moderation and TURN service on `http://localhost:8082`
-- `redis`: session and pub/sub state on `localhost:6379`
+- `redis`: local Redis Cluster seed nodes on `localhost:7000` through `localhost:7005`
 - `postgres`: moderation data on `localhost:5432`
 
 ## Prerequisites
@@ -17,20 +18,27 @@ This project runs as three app services plus Redis and Postgres:
 
 ## 1. Start Redis and Postgres
 
-Using Docker Compose:
+Using the checked-in Docker cluster stack:
 
 ```bash
-docker compose up -d redis postgres
+docker compose -f docker/docker-compose.yml up -d redis-node-1 redis-node-2 redis-node-3 redis-node-4 redis-node-5 redis-node-6 redis-cluster-init postgres
 ```
 
-Or start local services manually on the default ports above.
+Or start local services manually with a Redis Cluster available on the ports above.
 
 ## 2. Configure the services
 
 Frontend:
 
 ```bash
-cd frontend
+cd frontend/client
+cp .env.example .env
+```
+
+Optional admin frontend:
+
+```bash
+cd frontend/admin
 cp .env.example .env
 ```
 
@@ -50,9 +58,12 @@ cp .env.example .env
 
 Minimum values to review:
 
-- `frontend/.env`
+- `frontend/client/.env`
   - `VITE_API_URL=http://localhost:8082`
   - `VITE_WS_URL=ws://localhost:8080/ws`
+- `frontend/admin/.env`
+  - `VITE_API_URL=http://localhost:8082`
+  - `VITE_ADMIN_BASE_PATH=/`
 - `backend/elixir/omegle_phoenix/.env`
   - `SECRET_KEY_BASE`
   - `SHARED_SECRET`
@@ -87,7 +98,14 @@ Notes:
 Frontend:
 
 ```bash
-cd frontend
+cd frontend/client
+npm install
+```
+
+Optional admin frontend:
+
+```bash
+cd frontend/admin
 npm install
 ```
 
@@ -124,13 +142,21 @@ go run .
 Frontend:
 
 ```bash
-cd frontend
+cd frontend/client
+npm run dev
+```
+
+Admin frontend:
+
+```bash
+cd frontend/admin
 npm run dev
 ```
 
 ## 5. Verify
 
-- Frontend: open `http://localhost:5173`
+- Chat frontend: open `http://localhost:5173`
+- Admin frontend: open `http://localhost:5174`
 - Phoenix health: `http://localhost:8080/health`
 - Go health: `http://localhost:8082/health`
 
@@ -139,7 +165,15 @@ npm run dev
 Frontend:
 
 ```bash
-cd frontend
+cd frontend/client
+npm run build
+npm run lint
+```
+
+Admin frontend:
+
+```bash
+cd frontend/admin
 npm run build
 npm run lint
 ```

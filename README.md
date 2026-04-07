@@ -6,7 +6,8 @@ Anonymous text and video chat app with moderation tooling. Built for massive sca
 
 ## Stack
 
-- [frontend/](./frontend): React 19 + Vite
+- [frontend/client/](./frontend/client): React 19 + Vite chat client
+- [frontend/admin/](./frontend/admin): React 19 + Vite admin dashboard
 - [backend/elixir/omegle_phoenix/](./backend/elixir/omegle_phoenix): Phoenix websocket and matchmaking service
 - [backend/golang/](./backend/golang): moderation, admin, and TURN service
 - Redis: session state and admin pub/sub
@@ -17,10 +18,13 @@ Anonymous text and video chat app with moderation tooling. Built for massive sca
 ```text
 .
 ├── frontend/
+│   ├── client/
+│   └── admin/
 ├── backend/
 │   ├── elixir/omegle_phoenix/
 │   └── golang/
-├── docker-compose.yml
+├── docker/
+│   └── docker-compose.yml
 ├── SETUP.md
 └── Vulnerabilities.md(Internal only.)
 ```
@@ -35,7 +39,8 @@ Phoenix handles websocket sessions, matchmaking, and session IP tracking. The Go
 
 ## Notes
 
-- The default local ports are `5173` for the frontend, `8080` for Phoenix ingress, and `8081` for Go ingress.
+- Local app defaults are `5173` for the chat frontend, `5174` for the admin frontend, `8080` for Phoenix, and `8082` for the combined Go service.
+- The Docker cluster stack exposes `8080` for Phoenix through Nginx and `8081` for Go through Nginx.
 - `docker compose up -d` at the repo root now boots a 6-node local Valkey/Redis Cluster on ports `7000` through `7005` for migration work.
 - `SHARED_SECRET` must match across the backend services.
 
@@ -49,9 +54,11 @@ Pairline leverages Elixir's battle-tested concurrency model and Go's lightweight
 
 ## Additional docs
 
-- [frontend/README.md](./frontend/README.md)
+- [frontend/client/README.md](./frontend/client/README.md)
+- [frontend/admin/README.md](./frontend/admin/README.md)
 - [backend/elixir/omegle_phoenix/README.md](./backend/elixir/omegle_phoenix/README.md)
 - [backend/golang/README.md](./backend/golang/README.md)
+- [docker/README.md](./docker/README.md)
 
 ## Known Bugs
 - Using Turn sometimes skips first entry while starting video streams.

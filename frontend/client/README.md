@@ -4,7 +4,7 @@ React 19 + Vite client for anonymous text/video chat, reporting, and admin moder
 
 ## Local development
 
-Use the shared setup guide in [../SETUP.md](../SETUP.md) for the full stack, then run:
+Use the shared setup guide in [../../SETUP.md](../../SETUP.md) for the full stack, then run:
 
 ```bash
 npm install
