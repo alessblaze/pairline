@@ -412,21 +412,21 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   def emergency_ban_ip(ip, reason) do
-    {:ok, sessions} = get_sessions_by_ip(ip)
+    with {:ok, sessions} <- get_sessions_by_ip(ip) do
+      banned_sessions =
+        sessions
+        |> Enum.flat_map(fn session ->
+          case emergency_ban(session.id, reason) do
+            {:ok, _updated} -> [session.id]
+            _ -> []
+          end
+        end)
 
-    banned_sessions =
-      sessions
-      |> Enum.flat_map(fn session ->
-        case emergency_ban(session.id, reason) do
-          {:ok, _updated} -> [session.id]
-          _ -> []
-        end
-      end)
-
-    case OmeglePhoenix.Redis.command(["SET", ip_ban_key(ip), reason]) do
-      {:ok, "OK"} -> {:ok, banned_sessions}
-      {:error, reason} -> {:error, reason}
-      _ -> {:error, :ip_ban_store_failed}
+      case OmeglePhoenix.Redis.command(["SET", ip_ban_key(ip), reason]) do
+        {:ok, "OK"} -> {:ok, banned_sessions}
+        {:error, reason} -> {:error, reason}
+        _ -> {:error, :ip_ban_store_failed}
+      end
     end
   end
 
@@ -435,15 +435,15 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   def emergency_unban_ip(ip) do
-    {:ok, sessions} = get_sessions_by_ip(ip)
+    with {:ok, sessions} <- get_sessions_by_ip(ip) do
+      Enum.each(sessions, fn session ->
+        _ = emergency_unban(session.id)
+      end)
 
-    Enum.each(sessions, fn session ->
-      _ = emergency_unban(session.id)
-    end)
-
-    case OmeglePhoenix.Redis.command(["DEL", ip_ban_key(ip)]) do
-      {:ok, _} -> :ok
-      _ -> :ok
+      case OmeglePhoenix.Redis.command(["DEL", ip_ban_key(ip)]) do
+        {:ok, _} -> :ok
+        _ -> :ok
+      end
     end
   end
 

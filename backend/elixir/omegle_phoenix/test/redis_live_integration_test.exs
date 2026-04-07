@@ -398,19 +398,11 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
     preferences = %{"mode" => "text", "interests" => "crash,window"}
     hook_ref = make_ref()
 
-    original_hook = Application.get_env(:omegle_phoenix, :matchmaker_pairing_test_hook)
-    Application.put_env(
-      :omegle_phoenix,
-      :matchmaker_pairing_test_hook,
-      {self(), hook_ref, :once, :before_pair_sessions}
-    )
+    original_hooks =
+      install_cluster_pairing_test_hook({self(), hook_ref, :once, :before_pair_sessions})
 
     on_exit(fn ->
-      if original_hook do
-        Application.put_env(:omegle_phoenix, :matchmaker_pairing_test_hook, original_hook)
-      else
-        Application.delete_env(:omegle_phoenix, :matchmaker_pairing_test_hook)
-      end
+      restore_cluster_pairing_test_hook(original_hooks)
     end)
 
     assert {:ok, _session_1} =
@@ -435,6 +427,18 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
 
     membership_key_1 = OmeglePhoenix.RedisKeys.session_queue_key(session_id, route_1)
     membership_key_2 = OmeglePhoenix.RedisKeys.session_queue_key(peer_session_id, route_2)
+
+    assert_eventually(fn ->
+      with {:ok, queue_keys_1} <- OmeglePhoenix.Redis.command(["SMEMBERS", membership_key_1]),
+           {:ok, queue_keys_2} <- OmeglePhoenix.Redis.command(["SMEMBERS", membership_key_2]) do
+        queue_keys_1 != [] and queue_keys_2 != []
+      else
+        _ -> false
+      end
+    end)
+
+    assert {:ok, queue_keys} = OmeglePhoenix.Redis.command(["SMEMBERS", membership_key_1])
+    GenServer.cast(OmeglePhoenix.Matchmaker, {:schedule_local_match_attempts, queue_keys})
 
     assert_receive(
       {:matchmaker_pairing_hook, ^hook_ref, :before_pair_sessions, first_id, second_id, task_pid},
@@ -473,19 +477,11 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
 
     on_exit(fn -> cleanup_session(third_session_id) end)
 
-    original_hook = Application.get_env(:omegle_phoenix, :matchmaker_pairing_test_hook)
-    Application.put_env(
-      :omegle_phoenix,
-      :matchmaker_pairing_test_hook,
-      {self(), hook_ref, :once, :before_load_sessions}
-    )
+    original_hooks =
+      install_cluster_pairing_test_hook({self(), hook_ref, :once, :before_load_sessions})
 
     on_exit(fn ->
-      if original_hook do
-        Application.put_env(:omegle_phoenix, :matchmaker_pairing_test_hook, original_hook)
-      else
-        Application.delete_env(:omegle_phoenix, :matchmaker_pairing_test_hook)
-      end
+      restore_cluster_pairing_test_hook(original_hooks)
     end)
 
     {route_1, route_2, route_3} =
@@ -548,19 +544,11 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
 
     on_exit(fn -> cleanup_session(third_session_id) end)
 
-    original_hook = Application.get_env(:omegle_phoenix, :matchmaker_pairing_test_hook)
-    Application.put_env(
-      :omegle_phoenix,
-      :matchmaker_pairing_test_hook,
-      {self(), hook_ref, :once, :before_load_sessions}
-    )
+    original_hooks =
+      install_cluster_pairing_test_hook({self(), hook_ref, :once, :before_load_sessions})
 
     on_exit(fn ->
-      if original_hook do
-        Application.put_env(:omegle_phoenix, :matchmaker_pairing_test_hook, original_hook)
-      else
-        Application.delete_env(:omegle_phoenix, :matchmaker_pairing_test_hook)
-      end
+      restore_cluster_pairing_test_hook(original_hooks)
     end)
 
     {route_1, route_2, route_3} =
@@ -932,6 +920,57 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
     assert :ok = OmeglePhoenix.Matchmaker.join_queue(session_id, preferences)
     Process.sleep(5)
     :ok
+  end
+
+  defp install_cluster_pairing_test_hook(hook) do
+    pairing_test_hook_nodes()
+    |> Enum.map(fn node ->
+      original_hook =
+        rpc_call!(node, Application, :get_env, [:omegle_phoenix, :matchmaker_pairing_test_hook])
+
+      :ok =
+        rpc_call!(node, Application, :put_env, [
+          :omegle_phoenix,
+          :matchmaker_pairing_test_hook,
+          hook
+        ])
+
+      {node, original_hook}
+    end)
+  end
+
+  defp restore_cluster_pairing_test_hook(original_hooks) do
+    Enum.each(original_hooks, fn {node, original_hook} ->
+      if original_hook do
+        :ok =
+          rpc_call!(node, Application, :put_env, [
+            :omegle_phoenix,
+            :matchmaker_pairing_test_hook,
+            original_hook
+          ])
+      else
+        :ok =
+          rpc_call!(node, Application, :delete_env, [
+            :omegle_phoenix,
+            :matchmaker_pairing_test_hook
+          ])
+      end
+    end)
+  end
+
+  defp pairing_test_hook_nodes do
+    [Node.self() | Node.list()]
+    |> Enum.uniq()
+  end
+
+  defp rpc_call!(node, module, function, args) do
+    case :rpc.call(node, module, function, args) do
+      {:badrpc, reason} ->
+        flunk("RPC to #{inspect(node)} failed for #{inspect(module)}.#{function}: #{inspect(reason)}")
+
+      result ->
+        result
+    end
   end
 
   defp wait_for_local_match_batch_idle do

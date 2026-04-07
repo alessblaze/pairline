@@ -203,5 +203,29 @@ else
       assert OmeglePhoenix.SessionManager.get_queue_ready_sessions(session_ids) ==
                {:error, :timeout}
     end
+
+    test "emergency_ban_ip propagates session lookup errors instead of crashing" do
+      ip = "203.0.113.25"
+      key = "ip:sessions:#{ip}"
+
+      EredisClusterStub.put(:q, fn
+        :omegle_phoenix_redis_cluster, ["SMEMBERS", lookup_key] when lookup_key == key ->
+          {:error, :timeout}
+      end)
+
+      assert OmeglePhoenix.SessionManager.emergency_ban_ip(ip, "test ban") == {:error, :timeout}
+    end
+
+    test "emergency_unban_ip propagates session lookup errors instead of crashing" do
+      ip = "203.0.113.26"
+      key = "ip:sessions:#{ip}"
+
+      EredisClusterStub.put(:q, fn
+        :omegle_phoenix_redis_cluster, ["SMEMBERS", lookup_key] when lookup_key == key ->
+          {:error, :closed}
+      end)
+
+      assert OmeglePhoenix.SessionManager.emergency_unban_ip(ip) == {:error, :closed}
+    end
   end
 end
