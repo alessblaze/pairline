@@ -15,6 +15,81 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+defmodule RedisLiveStressHelpers do
+  def wait_for_matched_pairs!(sessions, pair_count, timeout_ms \\ 10_000)
+
+  def wait_for_matched_pairs!(_sessions, 0, _timeout_ms), do: []
+
+  def wait_for_matched_pairs!(sessions, pair_count, timeout_ms) do
+    attempts = max(div(timeout_ms, 50), 1)
+
+    result =
+      Enum.reduce_while(1..attempts, [], fn _, _acc ->
+        pairs = matched_pairs(sessions)
+
+        if length(pairs) >= pair_count do
+          {:halt, Enum.take(pairs, pair_count)}
+        else
+          Process.sleep(50)
+          {:cont, pairs}
+        end
+      end)
+
+    if length(result) >= pair_count do
+      Enum.take(result, pair_count)
+    else
+      raise("Timed out waiting for #{pair_count} matched pairs, found #{length(result)}")
+    end
+  end
+
+  def wait_for_matchmaker_idle!(timeout_ms \\ 10_000) do
+    attempts = max(div(timeout_ms, 50), 1)
+
+    result =
+      Enum.reduce_while(1..attempts, nil, fn _, _acc ->
+        state = :sys.get_state(OmeglePhoenix.Matchmaker)
+
+        if is_nil(state.local_match_batch_ref) and MapSet.size(state.pending_local_match_keys) == 0 do
+          {:halt, :ok}
+        else
+          Process.sleep(50)
+          {:cont, nil}
+        end
+      end)
+
+    if result == :ok do
+      :ok
+    else
+      raise("Timed out waiting for local match batch to become idle")
+    end
+  end
+
+  defp matched_pairs(sessions) do
+    snapshots =
+      Enum.reduce(sessions, %{}, fn %{id: id}, acc ->
+        case OmeglePhoenix.SessionManager.get_session(id) do
+          {:ok, session} -> Map.put(acc, id, session)
+          _ -> acc
+        end
+      end)
+
+    snapshots
+    |> Enum.reduce([], fn {id, session}, acc ->
+      partner_id = session.partner_id
+
+      if session.status == :matched and is_binary(partner_id) and id < partner_id do
+        case Map.get(snapshots, partner_id) do
+          %{status: :matched, partner_id: ^id} -> [[id, partner_id] | acc]
+          _ -> acc
+        end
+      else
+        acc
+      end
+    end)
+    |> Enum.sort()
+  end
+end
+
 run_id = "stress:#{System.system_time(:millisecond)}:#{System.unique_integer([:positive])}"
 
 session_count =
@@ -132,42 +207,17 @@ try do
 
   if join_errors != [], do: raise("Join queue failures: #{inspect(join_errors)}")
 
-  paired_sessions =
-    sessions
-    |> Enum.take(pair_count * 2)
-    |> Enum.chunk_every(2, 2, :discard)
-
-  {pair_us, pair_results} =
+  {pair_us, matched_pairs} =
     :timer.tc(fn ->
-      paired_sessions
-      |> Task.async_stream(
-        fn [%{id: id_1}, %{id: id_2}] ->
-          with {:ok, session_1} <- OmeglePhoenix.SessionManager.get_session(id_1),
-               {:ok, session_2} <- OmeglePhoenix.SessionManager.get_session(id_2),
-               {:ok, _updated_1, _updated_2, _common} <-
-                 OmeglePhoenix.SessionManager.pair_sessions(session_1, session_2) do
-            :ok
-          else
-            other -> {:error, {:pair_sessions, id_1, id_2, other}}
-          end
-        end,
-        max_concurrency: concurrency,
-        ordered: false,
-        timeout: 30_000,
-        on_timeout: :kill_task
-      )
-      |> Enum.to_list()
+      RedisLiveStressHelpers.wait_for_matched_pairs!(sessions, pair_count)
     end)
 
-  pair_errors =
-    for {:ok, {:error, error}} <- pair_results, do: error
-
-  if pair_errors != [], do: raise("Pair session failures: #{inspect(pair_errors)}")
+  RedisLiveStressHelpers.wait_for_matchmaker_idle!()
 
   disconnected_ids =
-    paired_sessions
+    matched_pairs
     |> Enum.take(disconnect_count)
-    |> Enum.map(fn [%{id: id}, _other] -> id end)
+    |> Enum.map(fn [id, _partner_id] -> id end)
 
   {disconnect_us, disconnect_results} =
     :timer.tc(fn ->
@@ -216,6 +266,8 @@ try do
     for {:ok, {:error, error}} <- leave_results, do: error
 
   if leave_errors != [], do: raise("Leave queue failures: #{inspect(leave_errors)}")
+
+  RedisLiveStressHelpers.wait_for_matchmaker_idle!()
 
   active_before_cleanup =
     case OmeglePhoenix.SessionManager.count_active_sessions() do
