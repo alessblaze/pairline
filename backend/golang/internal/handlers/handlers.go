@@ -84,7 +84,7 @@ func LoginHandlerGin(c *gin.Context) {
 	}
 
 	setAdminSessionCookies(c, accessToken, refreshToken, csrfToken, accessTTL, refreshTTL)
-	writeAdminAuthResponse(c, admin.Role, csrfToken)
+	writeAdminAuthResponse(c, admin.Username, admin.Role, csrfToken)
 }
 
 func RefreshAdminSessionHandlerGin(c *gin.Context) {
@@ -128,7 +128,7 @@ func RefreshAdminSessionHandlerGin(c *gin.Context) {
 	}
 
 	setAdminSessionCookies(c, accessToken, refreshToken, csrfToken, accessTTL, refreshTTL)
-	writeAdminAuthResponse(c, admin.Role, csrfToken)
+	writeAdminAuthResponse(c, admin.Username, admin.Role, csrfToken)
 }
 
 func LogoutAdminSessionHandlerGin(c *gin.Context) {
@@ -557,6 +557,12 @@ func CreateBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 func GetBansHandlerGin(c *gin.Context) {
 	status := c.Query("status")
 	limitStr := c.Query("limit")
+	ipQuery := strings.ToLower(strings.TrimSpace(c.Query("ip")))
+
+	if len(ipQuery) > 64 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ip query too long"})
+		return
+	}
 
 	limit := 10
 	if limitStr != "" {
@@ -583,6 +589,10 @@ func GetBansHandlerGin(c *gin.Context) {
 		query = query.Where("is_active = ?", true)
 	} else if status == "inactive" {
 		query = query.Where("is_active = ?", false)
+	}
+
+	if ipQuery != "" {
+		query = query.Where("LOWER(ip_address) LIKE ?", "%"+ipQuery+"%")
 	}
 
 	var bans []storage.Ban
@@ -767,6 +777,25 @@ func DeleteBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 			"ban_id": ban.ID,
 		})
 	}
+}
+
+func ListAdminAccountsHandlerGin(c *gin.Context) {
+	db := storage.NewDatabase()
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	var accounts []storage.AdminAccount
+	if err := db.GetDB().WithContext(ctx).
+		Select("id", "username", "role", "created_at", "created_by_username", "is_active").
+		Order("created_at DESC").
+		Find(&accounts).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch admin accounts"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"accounts": accounts,
+	})
 }
 
 func CreateAdminHandlerGin(c *gin.Context) {
@@ -1002,9 +1031,10 @@ func clearAdminSessionCookies(c *gin.Context) {
 	c.SetCookie(middleware.LegacyAdminAccessCookieName, "", -1, "/", "", isSecure, true)
 }
 
-func writeAdminAuthResponse(c *gin.Context, role, csrfToken string) {
+func writeAdminAuthResponse(c *gin.Context, username, role, csrfToken string) {
 	c.Header("X-CSRF-Token", csrfToken)
 	c.JSON(http.StatusOK, gin.H{
+		"username":   username,
 		"role":       role,
 		"csrf_token": csrfToken,
 	})

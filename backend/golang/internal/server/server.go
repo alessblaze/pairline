@@ -370,11 +370,15 @@ func (s *Server) setupRoutes() {
 				moderation.GET("/bans", handlers.GetBansHandlerGin)
 
 				enforcement := adminAuth.Group("")
-				enforcement.Use(s.RoleAuthMiddleware([]string{"admin", "root"}))
+				enforcement.Use(s.RoleAuthMiddleware([]string{"moderator", "admin", "root"}))
 				enforcement.POST("/ban", handlers.CreateBanHandlerGin(s.redis))
-				enforcement.DELETE("/ban/:session_id", handlers.DeleteBanHandlerGin(s.redis))
-				enforcement.POST("/accounts", handlers.CreateAdminHandlerGin)
-				enforcement.DELETE("/accounts/:username", handlers.DeleteAdminHandlerGin)
+
+				adminOnlyEnforcement := adminAuth.Group("")
+				adminOnlyEnforcement.Use(s.RoleAuthMiddleware([]string{"admin", "root"}))
+				adminOnlyEnforcement.DELETE("/ban/:session_id", handlers.DeleteBanHandlerGin(s.redis))
+				adminOnlyEnforcement.GET("/accounts", handlers.ListAdminAccountsHandlerGin)
+				adminOnlyEnforcement.POST("/accounts", handlers.CreateAdminHandlerGin)
+				adminOnlyEnforcement.DELETE("/accounts/:username", handlers.DeleteAdminHandlerGin)
 			}
 		}
 	}

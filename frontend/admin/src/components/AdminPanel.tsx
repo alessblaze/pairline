@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useDeferredValue, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DOMPurify from 'dompurify';
-import type { AdminRole, CreateBanRequest, LoginResponse, Report } from '../types';
+import type { AdminAccount, AdminRole, CreateBanRequest, LoginResponse, Report } from '../types';
 
 interface Ban {
   id: string;
@@ -69,9 +69,12 @@ function buildAdminHeaders(includeJSON = false) {
   return headers;
 }
 
-function persistAdminSession(role: AdminRole, csrfToken?: string) {
+function persistAdminSession(username: string | undefined, role: AdminRole, csrfToken?: string) {
   localStorage.setItem('admin_auth', 'true');
   localStorage.setItem('admin_role', role);
+  if (username) {
+    localStorage.setItem('admin_username', username);
+  }
 
   if (csrfToken) {
     sessionStorage.setItem('admin_csrf', csrfToken);
@@ -81,6 +84,7 @@ function persistAdminSession(role: AdminRole, csrfToken?: string) {
 function clearAdminSession() {
   localStorage.removeItem('admin_auth');
   localStorage.removeItem('admin_role');
+  localStorage.removeItem('admin_username');
   sessionStorage.removeItem('admin_csrf');
 }
 
@@ -129,22 +133,31 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
   const [isAuthenticated, setIsAuthenticated] = useState(localStorage.getItem('admin_auth') === 'true');
   const [authReady, setAuthReady] = useState(false);
   const [role, setRole] = useState<AdminRole | null>((localStorage.getItem('admin_role') as AdminRole | null) || null);
+  const [currentAdminUsername, setCurrentAdminUsername] = useState(localStorage.getItem('admin_username') || '');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [reports, setReports] = useState<Report[]>([]);
+  const [accounts, setAccounts] = useState<AdminAccount[]>([]);
   const [selectedReports, setSelectedReports] = useState<Set<string>>(new Set());
   const [expandedReport, setExpandedReport] = useState<string | null>(null);
   const [bans, setBans] = useState<Ban[]>([]);
-  const [currentTab, setCurrentTab] = useState<'reports' | 'bans'>('reports');
+  const [currentTab, setCurrentTab] = useState<'reports' | 'bans' | 'accounts'>('reports');
   const [reportStatusFilter, setReportStatusFilter] = useState<'pending' | 'decided' | 'all'>('pending');
   const [reportLimit, setReportLimit] = useState<string>('10');
   const [serverReportMetrics, setServerReportMetrics] = useState({ pending: 0, approved: 0, rejected: 0 });
   const [banFilter, setBanFilter] = useState<'all' | 'active' | 'inactive'>('active');
   const [banLimit, setBanLimit] = useState<string>('10');
+  const [banSearch, setBanSearch] = useState('');
   const [serverBanMetrics, setServerBanMetrics] = useState({ active: 0, inactive: 0, total: 0 });
   const [manualBanSessionId, setManualBanSessionId] = useState('');
   const [manualBanIP, setManualBanIP] = useState('');
   const [manualBanReason, setManualBanReason] = useState('');
+  const [accountUsername, setAccountUsername] = useState('');
+  const [accountPassword, setAccountPassword] = useState('');
+  const [showCreateAccountPassword, setShowCreateAccountPassword] = useState(false);
+  const [accountRole, setAccountRole] = useState<AdminRole>('moderator');
+  const [submittingAccount, setSubmittingAccount] = useState(false);
   const [submittingBan, setSubmittingBan] = useState(false);
   const [banModal, setBanModal] = useState<BanModalState>({
     open: false,
@@ -157,19 +170,28 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
     durationUnit: 'hours',
   });
 
+  const canCreateBans = role === 'moderator' || role === 'admin' || role === 'root';
   const canManageBans = role === 'admin' || role === 'root';
+  const canManageAccounts = role === 'admin' || role === 'root';
+  const deferredBanSearch = useDeferredValue(banSearch);
 
   useEffect(() => {
     if (authReady && isAuthenticated) {
       fetchBans();
     }
-  }, [authReady, isAuthenticated, banFilter, banLimit]);
+  }, [authReady, isAuthenticated, banFilter, banLimit, deferredBanSearch]);
 
   useEffect(() => {
     if (authReady && isAuthenticated) {
       fetchReports();
     }
   }, [authReady, isAuthenticated, reportStatusFilter, reportLimit]);
+
+  useEffect(() => {
+    if (authReady && isAuthenticated && canManageAccounts) {
+      void fetchAccounts();
+    }
+  }, [authReady, isAuthenticated, canManageAccounts]);
 
   useEffect(() => {
     const bootstrapAuth = async () => {
@@ -216,9 +238,10 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
 
       await storeCSRFFromResponse(response);
       const data: LoginResponse = await response.json();
-      persistAdminSession(data.role, data.csrf_token);
+      persistAdminSession(data.username, data.role, data.csrf_token);
       setIsAuthenticated(true);
       setRole(data.role);
+      setCurrentAdminUsername(data.username || localStorage.getItem('admin_username') || '');
       return true;
     } catch (error) {
       console.error('Failed to refresh admin session:', error);
@@ -271,9 +294,10 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
       if (response.ok) {
         await storeCSRFFromResponse(response);
         const data: LoginResponse = await response.json();
-        persistAdminSession(data.role, data.csrf_token);
+        persistAdminSession(data.username || username, data.role, data.csrf_token);
         setIsAuthenticated(true);
         setRole(data.role);
+        setCurrentAdminUsername(data.username || username);
         fetchReports();
       } else {
         alert('Invalid credentials');
@@ -297,9 +321,11 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
 
     setIsAuthenticated(false);
     setRole(null);
+    setCurrentAdminUsername('');
     clearAdminSession();
     setReports([]);
     setBans([]);
+    setAccounts([]);
     navigate(loginRoute);
   };
 
@@ -361,7 +387,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
   };
 
   const createBan = async (request: CreateBanRequest) => {
-    if (!canManageBans) {
+    if (!canCreateBans) {
       alert('Your role cannot create bans');
       return false;
     }
@@ -443,6 +469,9 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
 
     if (banModal.target === 'session') {
       request.session_id = banModal.sessionId;
+      if (banModal.ip) {
+        request.ip = banModal.ip;
+      }
     } else {
       request.ip = banModal.ip;
     }
@@ -475,8 +504,18 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
 
   const fetchBans = async () => {
     try {
+      const params = new URLSearchParams({
+        status: banFilter,
+        limit: banLimit,
+      });
+
+      const normalizedBanSearch = deferredBanSearch.trim();
+      if (normalizedBanSearch) {
+        params.set('ip', normalizedBanSearch);
+      }
+
       const response = await adminFetch(
-        `${import.meta.env.VITE_API_URL}/api/v1/admin/bans?status=${banFilter}&limit=${banLimit}`
+        `${import.meta.env.VITE_API_URL}/api/v1/admin/bans?${params.toString()}`
       );
 
       if (response.status === 401) return logout();
@@ -519,6 +558,85 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
     } catch (error) {
       console.error('Failed to unban:', error);
       alert('Failed to unban');
+    }
+  };
+
+  const fetchAccounts = async () => {
+    if (!canManageAccounts) return;
+
+    try {
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/accounts`);
+      if (response.status === 401) return logout();
+      if (!response.ok) return;
+
+      const data = await response.json();
+      setAccounts(data.accounts || []);
+    } catch (error) {
+      console.error('Failed to fetch admin accounts:', error);
+    }
+  };
+
+  const createAccount = async () => {
+    if (!canManageAccounts) return;
+    if (!accountUsername.trim() || !accountPassword.trim()) {
+      alert('Please enter username and password');
+      return;
+    }
+
+    setSubmittingAccount(true);
+    try {
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/accounts`, {
+        method: 'POST',
+        body: JSON.stringify({
+          username: accountUsername.trim(),
+          password: accountPassword,
+          role: accountRole,
+        }),
+      });
+
+      if (response.status === 401) return logout();
+      if (response.ok) {
+        await storeCSRFFromResponse(response);
+        setAccountUsername('');
+        setAccountPassword('');
+        setAccountRole('moderator');
+        await fetchAccounts();
+        alert('Admin account created');
+        return;
+      }
+
+      const data = await response.json().catch(() => ({}));
+      alert(data.error || 'Failed to create admin account');
+    } catch (error) {
+      console.error('Failed to create admin account:', error);
+      alert('Failed to create admin account');
+    } finally {
+      setSubmittingAccount(false);
+    }
+  };
+
+  const deleteAccount = async (targetUsername: string) => {
+    if (!canManageAccounts) return;
+    if (!window.confirm(`Delete admin account "${targetUsername}"?`)) return;
+
+    try {
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/accounts/${encodeURIComponent(targetUsername)}`, {
+        method: 'DELETE',
+      });
+
+      if (response.status === 401) return logout();
+      if (response.ok) {
+        await storeCSRFFromResponse(response);
+        await fetchAccounts();
+        alert('Admin account deleted');
+        return;
+      }
+
+      const data = await response.json().catch(() => ({}));
+      alert(data.error || 'Failed to delete admin account');
+    } catch (error) {
+      console.error('Failed to delete admin account:', error);
+      alert('Failed to delete admin account');
     }
   };
 
@@ -588,13 +706,22 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                 </div>
                 <div>
                   <label className="mb-2 block text-sm font-medium text-slate-300">Password</label>
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className={inputClass}
-                    required
-                  />
+                  <div className="relative">
+                    <input
+                      type={showLoginPassword ? 'text' : 'password'}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className={`${inputClass} pr-24`}
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowLoginPassword((current) => !current)}
+                      className="absolute inset-y-1.5 right-1.5 rounded-xl border border-white/10 bg-white/8 px-3 text-xs font-semibold uppercase tracking-[0.16em] text-slate-300 transition hover:bg-white/12"
+                    >
+                      {showLoginPassword ? 'Hide' : 'Show'}
+                    </button>
+                  </div>
                 </div>
                 <button
                   type="submit"
@@ -609,6 +736,77 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
       </div>
     );
   }
+
+  const quickActionTitle =
+    currentTab === 'reports' ? 'Review Controls' : currentTab === 'bans' ? 'Ban Controls' : 'Account Controls';
+  const permanentBans = bans.filter((ban) => !ban.expires_at);
+  const temporaryBans = bans.filter((ban) => Boolean(ban.expires_at));
+
+  const renderBanCard = (ban: Ban) => (
+    <article
+      key={ban.id}
+      className="rounded-[28px] border border-white/10 bg-white/5 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.2)]"
+    >
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${banStatusClass(ban.is_active)}`}>
+              {ban.is_active ? 'Active' : 'Inactive'}
+            </span>
+            <span className="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">
+              {ban.expires_at ? 'Temporary' : 'Permanent'}
+            </span>
+            <span className="text-xs uppercase tracking-[0.18em] text-slate-500">{formatDate(ban.created_at)}</span>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="min-w-0">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Ban ID</p>
+              <p className="mt-1 break-all text-sm font-medium text-slate-200">{formatShort(ban.id, 16)}</p>
+            </div>
+            <div className="min-w-0">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Session ID</p>
+              <p className="mt-1 break-all text-sm font-medium text-slate-200">{formatShort(ban.session_id, 16)}</p>
+            </div>
+            <div className="min-w-0">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">IP Address</p>
+              <p className="mt-1 break-all text-sm font-medium text-slate-200">{ban.ip_address || 'N/A'}</p>
+            </div>
+            <div className="min-w-0">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Banned By</p>
+              <p className="mt-1 break-all text-sm font-medium text-slate-200">{ban.banned_by_username || 'N/A'}</p>
+            </div>
+          </div>
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Reason</p>
+            <p className="mt-1 text-sm text-slate-200">{ban.reason}</p>
+          </div>
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Expires</p>
+            <p className="mt-1 text-sm text-slate-200">{ban.expires_at ? formatDate(ban.expires_at) : 'Permanent'}</p>
+          </div>
+        </div>
+
+        <div className="xl:text-right">
+          {ban.is_active && canManageBans ? (
+            <button
+              onClick={() => unban(ban.id)}
+              className={`${actionButtonClass} bg-emerald-400/15 text-emerald-100 hover:bg-emerald-400/25`}
+            >
+              Unban
+            </button>
+          ) : ban.is_active ? (
+            <div className="text-sm text-slate-400">
+              Admin or root access required to remove bans
+            </div>
+          ) : (
+            <div className="text-sm text-slate-400">
+              Unbanned by {ban.unbanned_by_username || 'Unknown'}
+            </div>
+          )}
+        </div>
+      </div>
+    </article>
+  );
 
   return (
     <div className="min-h-screen bg-[#050816] text-white">
@@ -638,6 +836,11 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                 <button onClick={() => setCurrentTab('bans')} className={tabButtonClass(currentTab === 'bans')}>
                   Bans
                 </button>
+                {canManageAccounts && (
+                  <button onClick={() => setCurrentTab('accounts')} className={tabButtonClass(currentTab === 'accounts')}>
+                    Accounts
+                  </button>
+                )}
               </div>
               <button
                 onClick={logout}
@@ -683,9 +886,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Quick Actions</p>
-                  <h2 className="mt-2 text-xl font-semibold text-white">
-                    {currentTab === 'reports' ? 'Review Controls' : 'Ban Controls'}
-                  </h2>
+                  <h2 className="mt-2 text-xl font-semibold text-white">{quickActionTitle}</h2>
                 </div>
               </div>
 
@@ -741,7 +942,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                     </button>
                   </div>
                 </div>
-              ) : (
+              ) : currentTab === 'bans' ? (
                 <div className="mt-6 flex flex-col gap-4 lg:flex-row lg:items-end">
                   <div className="flex flex-col gap-2">
                     <label className="text-xs uppercase tracking-[0.2em] text-slate-400">Ban Filter</label>
@@ -779,10 +980,19 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                     </button>
                   </div>
                 </div>
+              ) : (
+                <div className="mt-6 flex flex-wrap gap-2">
+                  <button
+                    onClick={() => void fetchAccounts()}
+                    className={`${actionButtonClass} bg-white text-slate-950 hover:bg-cyan-100`}
+                  >
+                    Refresh Accounts
+                  </button>
+                </div>
               )}
             </section>
 
-            {currentTab === 'bans' && canManageBans && (
+            {currentTab === 'bans' && canCreateBans && (
               <section className={`${surfaceCardClass} p-6`}>
                 <div className="mb-5">
                   <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Manual Ban</p>
@@ -842,6 +1052,66 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                     className={`${actionButtonClass} w-full bg-rose-500 text-white hover:bg-rose-400`}
                   >
                     Ban
+                  </button>
+                </div>
+              </section>
+            )}
+
+            {currentTab === 'accounts' && canManageAccounts && (
+              <section className={`${surfaceCardClass} p-6`}>
+                <div className="mb-5">
+                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Account Management</p>
+                  <h2 className="mt-2 text-xl font-semibold text-white">Create admin and moderator accounts</h2>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 items-end">
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-slate-300">Username</label>
+                    <input
+                      type="text"
+                      value={accountUsername}
+                      onChange={(e) => setAccountUsername(e.target.value)}
+                      className={inputClass}
+                      placeholder="moderator_name"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-slate-300">Password</label>
+                    <div className="relative">
+                      <input
+                        type={showCreateAccountPassword ? 'text' : 'password'}
+                        value={accountPassword}
+                        onChange={(e) => setAccountPassword(e.target.value)}
+                        className={`${inputClass} pr-24`}
+                        placeholder="Minimum 8 characters"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowCreateAccountPassword((current) => !current)}
+                        className="absolute inset-y-1.5 right-1.5 rounded-xl border border-white/10 bg-white/8 px-3 text-xs font-semibold uppercase tracking-[0.16em] text-slate-300 transition hover:bg-white/12"
+                      >
+                        {showCreateAccountPassword ? 'Hide' : 'Show'}
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-slate-300">Role</label>
+                    <select
+                      value={accountRole}
+                      onChange={(e) => setAccountRole(e.target.value as AdminRole)}
+                      className={`${inputClass} appearance-none bg-white/5 [&>option]:bg-slate-900`}
+                    >
+                      <option value="moderator">Moderator</option>
+                      <option value="admin" disabled={role !== 'root'}>Admin</option>
+                      <option value="root" disabled={role !== 'root'}>Root</option>
+                    </select>
+                  </div>
+                  <button
+                    onClick={() => void createAccount()}
+                    disabled={submittingAccount}
+                    className={`${actionButtonClass} w-full bg-cyan-400 text-slate-950 hover:bg-cyan-300`}
+                  >
+                    {submittingAccount ? 'Creating...' : 'Create Account'}
                   </button>
                 </div>
               </section>
@@ -937,7 +1207,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                               </button>
                             )}
                             <div className="flex flex-col gap-2 min-w-[140px]">
-                              {canManageBans && (
+                              {canCreateBans && (
                                 <button
                                   onClick={() =>
                                     openBanModal({
@@ -1023,69 +1293,104 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                 </div>
 
                 <div className="space-y-4 p-4 sm:p-6">
+                  <div className="flex flex-col gap-2">
+                    <label className="text-xs uppercase tracking-[0.2em] text-slate-400">Search IP Address</label>
+                    <input
+                      type="text"
+                      value={banSearch}
+                      onChange={(e) => setBanSearch(e.target.value)}
+                      className={`${inputClass} max-w-md`}
+                      placeholder="Search bans by IP"
+                      maxLength={64}
+                    />
+                  </div>
+
                   {bans.length === 0 && (
                     <div className="rounded-[28px] border border-dashed border-white/10 bg-white/4 px-6 py-16 text-center text-slate-400">
-                      No bans found
+                      No bans found for this filter
                     </div>
                   )}
 
-                  {bans.map((ban) => (
-                    <article
-                      key={ban.id}
-                      className="rounded-[28px] border border-white/10 bg-white/5 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.2)]"
-                    >
-                      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-                        <div className="space-y-4">
-                          <div className="flex flex-wrap items-center gap-3">
-                            <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${banStatusClass(ban.is_active)}`}>
-                              {ban.is_active ? 'Active' : 'Inactive'}
-                            </span>
-                            <span className="text-xs uppercase tracking-[0.18em] text-slate-500">{formatDate(ban.created_at)}</span>
-                          </div>
-                          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                            <div className="min-w-0">
-                              <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Ban ID</p>
-                              <p className="mt-1 break-all text-sm font-medium text-slate-200">{formatShort(ban.id, 16)}</p>
-                            </div>
-                            <div className="min-w-0">
-                              <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Session ID</p>
-                              <p className="mt-1 break-all text-sm font-medium text-slate-200">{formatShort(ban.session_id, 16)}</p>
-                            </div>
-                            <div className="min-w-0">
-                              <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">IP Address</p>
-                              <p className="mt-1 break-all text-sm font-medium text-slate-200">{ban.ip_address || 'N/A'}</p>
-                            </div>
-                            <div className="min-w-0">
-                              <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Banned By</p>
-                              <p className="mt-1 break-all text-sm font-medium text-slate-200">{ban.banned_by_username || 'N/A'}</p>
-                            </div>
+                  {permanentBans.length > 0 && (
+                    <section className="space-y-4">
+                      <div className="flex items-center justify-between rounded-[24px] border border-white/10 bg-white/4 px-5 py-4">
+                        <div>
+                          <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Permanent Bans</p>
+                          <h3 className="mt-2 text-lg font-semibold text-white">Manual removal required</h3>
+                        </div>
+                        <div className="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-sm font-semibold text-slate-200">
+                          {permanentBans.length}
+                        </div>
+                      </div>
+                      {permanentBans.map(renderBanCard)}
+                    </section>
+                  )}
+
+                  {temporaryBans.length > 0 && (
+                    <section className="space-y-4">
+                      <div className="flex items-center justify-between rounded-[24px] border border-white/10 bg-white/4 px-5 py-4">
+                        <div>
+                          <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Temporary Bans</p>
+                          <h3 className="mt-2 text-lg font-semibold text-white">Expire automatically</h3>
+                        </div>
+                        <div className="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-sm font-semibold text-slate-200">
+                          {temporaryBans.length}
+                        </div>
+                      </div>
+                      {temporaryBans.map(renderBanCard)}
+                    </section>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {currentTab === 'accounts' && canManageAccounts && (
+              <div>
+                <div className="flex flex-col gap-2 border-b border-white/10 px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Admin Accounts</p>
+                    <h2 className="mt-2 text-2xl font-semibold text-white">Moderation operators</h2>
+                  </div>
+                </div>
+
+                <div className="space-y-4 p-4 sm:p-6">
+                  {accounts.length === 0 && (
+                    <div className="rounded-[28px] border border-dashed border-white/10 bg-white/4 px-6 py-16 text-center text-slate-400">
+                      No admin accounts found
+                    </div>
+                  )}
+
+                  {accounts.map((account) => (
+                    <article key={account.id} className="rounded-[28px] border border-white/10 bg-white/5 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.2)]">
+                      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                          <div>
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Username</p>
+                            <p className="mt-1 break-all text-sm font-medium text-slate-200">{account.username}</p>
                           </div>
                           <div>
-                            <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Reason</p>
-                            <p className="mt-1 text-sm text-slate-200">{ban.reason}</p>
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Role</p>
+                            <p className="mt-1 text-sm font-medium text-slate-200">{account.role}</p>
                           </div>
                           <div>
-                            <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Expires</p>
-                            <p className="mt-1 text-sm text-slate-200">{ban.expires_at ? formatDate(ban.expires_at) : 'Permanent'}</p>
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Created By</p>
+                            <p className="mt-1 text-sm font-medium text-slate-200">{account.created_by_username || 'system'}</p>
+                          </div>
+                          <div>
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Created At</p>
+                            <p className="mt-1 text-sm font-medium text-slate-200">{formatDate(account.created_at)}</p>
                           </div>
                         </div>
 
-                        <div className="xl:text-right">
-                          {ban.is_active && canManageBans ? (
+                        <div className="flex flex-wrap gap-2">
+                          {account.username !== currentAdminUsername && (
                             <button
-                              onClick={() => unban(ban.id)}
-                              className={`${actionButtonClass} bg-emerald-400/15 text-emerald-100 hover:bg-emerald-400/25`}
+                              onClick={() => void deleteAccount(account.username)}
+                              disabled={role !== 'root' && (account.role === 'admin' || account.role === 'root')}
+                              className={`${actionButtonClass} bg-rose-400/15 text-rose-100 hover:bg-rose-400/25`}
                             >
-                              Unban
+                              Delete
                             </button>
-                          ) : ban.is_active ? (
-                            <div className="text-sm text-slate-400">
-                              Admin or root access required to unban
-                            </div>
-                          ) : (
-                            <div className="text-sm text-slate-400">
-                              Unbanned by {ban.unbanned_by_username || 'Unknown'}
-                            </div>
                           )}
                         </div>
                       </div>

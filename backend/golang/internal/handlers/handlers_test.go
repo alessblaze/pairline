@@ -80,13 +80,14 @@ func TestWriteAdminAuthResponseSetsHeaderAndBody(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 
-	writeAdminAuthResponse(ctx, "admin", "csrf-123")
+	writeAdminAuthResponse(ctx, "alice", "admin", "csrf-123")
 
 	if got := recorder.Header().Get("X-CSRF-Token"); got != "csrf-123" {
 		t.Fatalf("X-CSRF-Token header = %q, want %q", got, "csrf-123")
 	}
 
 	var body struct {
+		Username  string `json:"username"`
 		Role      string `json:"role"`
 		CSRFToken string `json:"csrf_token"`
 	}
@@ -94,7 +95,7 @@ func TestWriteAdminAuthResponseSetsHeaderAndBody(t *testing.T) {
 		t.Fatalf("json.Unmarshal returned error: %v", err)
 	}
 
-	if body.Role != "admin" || body.CSRFToken != "csrf-123" {
+	if body.Username != "alice" || body.Role != "admin" || body.CSRFToken != "csrf-123" {
 		t.Fatalf("response body = %+v", body)
 	}
 }

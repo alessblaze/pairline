@@ -26,6 +26,7 @@ export interface BanCheck {
 }
 
 export interface LoginResponse {
+  username?: string;
   role: AdminRole;
   csrf_token?: string;
 }
@@ -57,4 +58,13 @@ export interface CreateBanRequest {
   ip?: string;
   reason: string;
   expiry_date?: string;
+}
+
+export interface AdminAccount {
+  id: string;
+  username: string;
+  role: AdminRole;
+  created_at: string;
+  created_by_username: string;
+  is_active: boolean;
 }
