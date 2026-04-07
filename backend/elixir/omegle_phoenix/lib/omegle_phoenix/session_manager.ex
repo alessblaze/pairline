@@ -153,12 +153,16 @@ defmodule OmeglePhoenix.SessionManager do
 
                 {:ok, sessions}
 
+              {:error, reason} ->
+                {:error, reason}
+
               _ ->
-                {:ok, %{}}
+                {:error, :unexpected_queue_ready_batch_lookup}
             end
           end
         else
-          _ -> {:ok, %{}}
+          {:error, reason} -> {:error, reason}
+          _ -> {:error, :unexpected_queue_ready_route_lookup}
         end
     end
   end
@@ -209,9 +213,10 @@ defmodule OmeglePhoenix.SessionManager do
 
   def count_active_sessions do
     case OmeglePhoenix.Redis.command(["SCARD", OmeglePhoenix.RedisKeys.active_sessions_key()]) do
-      {:ok, count} when is_integer(count) -> count
-      {:ok, count} when is_binary(count) -> parse_non_negative_integer(count, 0)
-      _ -> 0
+      {:ok, count} when is_integer(count) -> {:ok, count}
+      {:ok, count} when is_binary(count) -> {:ok, parse_non_negative_integer(count, 0)}
+      {:error, reason} -> {:error, reason}
+      _ -> {:error, :unexpected_active_session_count}
     end
   end
 
@@ -427,9 +432,10 @@ defmodule OmeglePhoenix.SessionManager do
 
   def ip_ban_reason(ip) do
     case OmeglePhoenix.Redis.command(["GET", ip_ban_key(ip)]) do
-      {:ok, nil} -> nil
-      {:ok, reason} -> reason
-      _ -> nil
+      {:ok, nil} -> {:ok, nil}
+      {:ok, reason} -> {:ok, reason}
+      {:error, reason} -> {:error, reason}
+      _ -> {:error, :unexpected_ip_ban_lookup}
     end
   end
 

@@ -48,11 +48,14 @@ defmodule OmeglePhoenixWeb.RoomChannel do
             client_ip = socket.assigns[:client_ip] || "unknown"
 
             case OmeglePhoenix.SessionManager.ip_ban_reason(client_ip) do
-              nil ->
+              {:ok, nil} ->
                 create_and_queue_session(socket, client_ip, preferences, "searching")
 
-              reason ->
+              {:ok, reason} ->
                 {:reply, {:error, %{type: "banned", data: %{reason: reason}}}, socket}
+
+              {:error, _reason} ->
+                {:reply, {:error, %{reason: "Unable to verify access right now"}}, socket}
             end
           end)
       end
@@ -79,11 +82,14 @@ defmodule OmeglePhoenixWeb.RoomChannel do
             client_ip = socket.assigns[:client_ip] || "unknown"
 
             case OmeglePhoenix.SessionManager.ip_ban_reason(client_ip) do
-              nil ->
+              {:ok, nil} ->
                 create_and_queue_session(socket, client_ip, preferences, "connected")
 
-              reason ->
+              {:ok, reason} ->
                 {:reply, {:error, %{type: "banned", data: %{reason: reason}}}, socket}
+
+              {:error, _reason} ->
+                {:reply, {:error, %{reason: "Unable to verify access right now"}}, socket}
             end
           end)
       end
@@ -173,7 +179,10 @@ defmodule OmeglePhoenixWeb.RoomChannel do
 
               {:noreply, socket}
             else
-              Logger.debug("Swallowed in-flight message from #{session_id}: match state unavailable")
+              Logger.debug(
+                "Swallowed in-flight message from #{session_id}: match state unavailable"
+              )
+
               {:reply, {:ok, %{status: "ignored"}}, clear_match_assigns(socket)}
             end
           else
@@ -799,8 +808,8 @@ defmodule OmeglePhoenixWeb.RoomChannel do
 
              true ->
                fun.(session)
-         end
-      end) do
+           end
+         end) do
       {:error, :locked} ->
         Process.sleep(50)
         with_session_partner_lock(session_id, fun, attempts_left - 1)
@@ -842,7 +851,7 @@ defmodule OmeglePhoenixWeb.RoomChannel do
               :ok ->
                 {:reply,
                  {:ok,
-                 %{type: connected_type, session_id: session_id, session_token: session.token}},
+                  %{type: connected_type, session_id: session_id, session_token: session.token}},
                  socket
                  |> assign(:session_id, session_id)
                  |> clear_match_assigns()}
@@ -899,8 +908,9 @@ defmodule OmeglePhoenixWeb.RoomChannel do
 
   defp normalize_partner_route(_route), do: nil
 
-  defp normalize_partner_owner_node(owner_node) when is_binary(owner_node) and byte_size(owner_node) > 0,
-    do: owner_node
+  defp normalize_partner_owner_node(owner_node)
+       when is_binary(owner_node) and byte_size(owner_node) > 0,
+       do: owner_node
 
   defp normalize_partner_owner_node(_owner_node), do: nil
 

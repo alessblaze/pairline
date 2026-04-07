@@ -104,7 +104,7 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
     ip: ip,
     peer_ip: peer_ip
   } do
-    baseline = OmeglePhoenix.SessionManager.count_active_sessions()
+    assert {:ok, baseline} = OmeglePhoenix.SessionManager.count_active_sessions()
 
     assert {:ok, _created} =
              OmeglePhoenix.SessionManager.create_session(session_id, ip, %{"mode" => "text"})
@@ -115,14 +115,17 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
              })
 
     assert_eventually(fn ->
-      OmeglePhoenix.SessionManager.count_active_sessions() >= baseline + 2
+      case OmeglePhoenix.SessionManager.count_active_sessions() do
+        {:ok, count} -> count >= baseline + 2
+        _ -> false
+      end
     end)
 
     assert :ok = OmeglePhoenix.SessionManager.delete_session(session_id)
     assert :ok = OmeglePhoenix.SessionManager.delete_session(peer_session_id)
 
     assert_eventually(fn ->
-      OmeglePhoenix.SessionManager.count_active_sessions() == baseline
+      OmeglePhoenix.SessionManager.count_active_sessions() == {:ok, baseline}
     end)
   end
 
@@ -317,7 +320,7 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
 
     assert {:ok, banned_ids} = OmeglePhoenix.SessionManager.emergency_ban_ip(ip, "test ban")
     assert session_id in banned_ids
-    assert OmeglePhoenix.SessionManager.ip_ban_reason(ip) == "test ban"
+    assert OmeglePhoenix.SessionManager.ip_ban_reason(ip) == {:ok, "test ban"}
 
     assert :ok = OmeglePhoenix.SessionManager.emergency_unban_ip(ip)
     assert {:ok, session} = OmeglePhoenix.SessionManager.get_session(session_id)

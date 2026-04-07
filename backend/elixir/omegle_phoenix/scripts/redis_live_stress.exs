@@ -200,7 +200,14 @@ try do
 
   if leave_errors != [], do: raise("Leave queue failures: #{inspect(leave_errors)}")
 
-  active_before_cleanup = OmeglePhoenix.SessionManager.count_active_sessions()
+  active_before_cleanup =
+    case OmeglePhoenix.SessionManager.count_active_sessions() do
+      {:ok, count} ->
+        count
+
+      {:error, reason} ->
+        raise("Failed to count active sessions before cleanup: #{inspect(reason)}")
+    end
 
   {cleanup_us, cleanup_results} =
     :timer.tc(fn ->
@@ -230,13 +237,16 @@ try do
 
   final_active =
     Enum.reduce_while(1..50, nil, fn _, _acc ->
-      count = OmeglePhoenix.SessionManager.count_active_sessions()
+      case OmeglePhoenix.SessionManager.count_active_sessions() do
+        {:ok, 0} ->
+          {:halt, 0}
 
-      if count == 0 do
-        {:halt, 0}
-      else
-        Process.sleep(100)
-        {:cont, count}
+        {:ok, count} ->
+          Process.sleep(100)
+          {:cont, count}
+
+        {:error, reason} ->
+          raise("Failed to count active sessions during cleanup poll: #{inspect(reason)}")
       end
     end)
 

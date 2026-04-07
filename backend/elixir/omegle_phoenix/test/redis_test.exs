@@ -136,5 +136,55 @@ else
 
       assert OmeglePhoenix.SessionManager.get_sessions(session_ids) == {:error, :timeout}
     end
+
+    test "ip_ban_reason propagates redis errors instead of treating the ip as unbanned" do
+      ip = "203.0.113.10"
+      key = "ban:ip:#{ip}"
+
+      EredisClusterStub.put(:q, fn
+        :omegle_phoenix_redis_cluster, ["GET", lookup_key] when lookup_key == key ->
+          {:error, :timeout}
+      end)
+
+      assert OmeglePhoenix.SessionManager.ip_ban_reason(ip) == {:error, :timeout}
+    end
+
+    test "count_active_sessions propagates redis errors instead of reporting zero" do
+      EredisClusterStub.put(:q, fn
+        :omegle_phoenix_redis_cluster, ["SCARD", _key] ->
+          {:error, :closed}
+      end)
+
+      assert OmeglePhoenix.SessionManager.count_active_sessions() == {:error, :closed}
+    end
+
+    test "get_queue_ready_sessions propagates batched redis lookup errors instead of returning an empty map" do
+      session_ids = ["session-1", "session-2"]
+      route = %{mode: "text", shard: 0}
+
+      locator_commands =
+        Enum.map(session_ids, fn session_id ->
+          ["GET", OmeglePhoenix.RedisKeys.session_locator_key(session_id)]
+        end)
+
+      queue_meta_commands =
+        Enum.map(session_ids, fn session_id ->
+          ["GET", OmeglePhoenix.RedisKeys.queue_meta_key(session_id, route)]
+        end)
+
+      EredisClusterStub.put(:qmn, fn
+        :omegle_phoenix_redis_cluster, commands when commands == locator_commands ->
+          [
+            {:ok, OmeglePhoenix.RedisKeys.encode_locator(route)},
+            {:ok, OmeglePhoenix.RedisKeys.encode_locator(route)}
+          ]
+
+        :omegle_phoenix_redis_cluster, commands when commands == queue_meta_commands ->
+          [{:error, :timeout}, {:error, :timeout}]
+      end)
+
+      assert OmeglePhoenix.SessionManager.get_queue_ready_sessions(session_ids) ==
+               {:error, :timeout}
+    end
   end
 end
