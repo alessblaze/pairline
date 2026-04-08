@@ -21,21 +21,115 @@
 
 :root {
   color-scheme: dark;
+  --admin-bg: #050816;
+  --admin-text: #e2e8f0;
+  --admin-text-soft: #94a3b8;
+  --admin-text-muted: #475569;
+  --admin-input-bg: rgba(255, 255, 255, 0.04);
+  --admin-input-border: rgba(255, 255, 255, 0.07);
+  --admin-input-text: #f8fafc;
+  --admin-input-focus-bg: rgba(255, 255, 255, 0.06);
+  --admin-select-option-bg: #0f172a;
+  --admin-select-option-text: #f8fafc;
+  --admin-placeholder: #64748b;
+  --admin-surface-bg: rgba(2, 6, 23, 0.6);
+  --admin-surface-border: rgba(255, 255, 255, 0.07);
+  --admin-surface-border-strong: rgba(255, 255, 255, 0.14);
+  --admin-surface-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+  --admin-sidebar-bg: rgba(2, 6, 23, 0.3);
+  --admin-sidebar-border: rgba(255, 255, 255, 0.08);
+  --admin-muted-surface: rgba(255, 255, 255, 0.05);
+  --admin-muted-surface-hover: rgba(255, 255, 255, 0.08);
+  --admin-detail-bg: rgba(255, 255, 255, 0.02);
+  --admin-detail-border: rgba(255, 255, 255, 0.04);
+  --admin-transcript-bg: rgba(2, 6, 23, 0.2);
+  --admin-transcript-header-bg: rgba(2, 6, 23, 0.72);
+  --admin-transcript-bubble-peer-bg: rgba(255, 255, 255, 0.05);
+  --admin-transcript-bubble-peer-border: rgba(255, 255, 255, 0.08);
+  --admin-transcript-bubble-peer-text: #cbd5e1;
+  --admin-transcript-bubble-reporter-bg: rgba(34, 211, 238, 0.12);
+  --admin-transcript-bubble-reporter-border: rgba(34, 211, 238, 0.24);
+  --admin-transcript-bubble-reporter-text: #d9f7ff;
+  --admin-transcript-bubble-system-bg: rgba(30, 41, 59, 0.4);
+  --admin-transcript-bubble-system-border: rgba(255, 255, 255, 0.06);
+  --admin-transcript-bubble-system-text: #94a3b8;
+  --admin-transcript-label: rgba(203, 213, 225, 0.62);
+  --admin-outline-soft: rgba(255, 255, 255, 0.1);
+  --admin-outline-strong: rgba(255, 255, 255, 0.16);
+  --admin-icon-muted: #64748b;
 }
 
 body {
-  @apply bg-[#050816] text-[#f1f5f9] antialiased selection:bg-cyan-500/30 selection:text-white;
+  background: var(--admin-bg);
+  color: var(--admin-text);
+  @apply antialiased selection:bg-cyan-500/30 selection:text-white;
   font-family: "Rajdhani", sans-serif;
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
 }
 
+html.light {
+  color-scheme: light;
+  --admin-bg: #f4f7fb;
+  --admin-text: #0f172a;
+  --admin-text-soft: #334155;
+  --admin-text-muted: #64748b;
+  --admin-input-bg: rgba(255, 255, 255, 0.9);
+  --admin-input-border: rgba(148, 163, 184, 0.35);
+  --admin-input-text: #0f172a;
+  --admin-input-focus-bg: #ffffff;
+  --admin-select-option-bg: #ffffff;
+  --admin-select-option-text: #0f172a;
+  --admin-placeholder: #94a3b8;
+  --admin-surface-bg: rgba(255, 255, 255, 0.82);
+  --admin-surface-border: rgba(148, 163, 184, 0.24);
+  --admin-surface-border-strong: rgba(100, 116, 139, 0.34);
+  --admin-surface-shadow: 0 12px 40px rgba(15, 23, 42, 0.08);
+  --admin-sidebar-bg: rgba(255, 255, 255, 0.74);
+  --admin-sidebar-border: rgba(148, 163, 184, 0.24);
+  --admin-muted-surface: rgba(255, 255, 255, 0.88);
+  --admin-muted-surface-hover: rgba(255, 255, 255, 1);
+  --admin-detail-bg: #e9eef5;
+  --admin-detail-border: rgba(148, 163, 184, 0.28);
+  --admin-transcript-bg: #eaf4ff;
+  --admin-transcript-header-bg: rgba(255, 255, 255, 0.94);
+  --admin-transcript-bubble-peer-bg: #cfe4ff;
+  --admin-transcript-bubble-peer-border: rgba(96, 165, 250, 0.34);
+  --admin-transcript-bubble-peer-text: #1e3a8a;
+  --admin-transcript-bubble-reporter-bg: #9fd0ff;
+  --admin-transcript-bubble-reporter-border: rgba(37, 99, 235, 0.34);
+  --admin-transcript-bubble-reporter-text: #082f6b;
+  --admin-transcript-bubble-system-bg: #b8d7ff;
+  --admin-transcript-bubble-system-border: rgba(59, 130, 246, 0.34);
+  --admin-transcript-bubble-system-text: #1d4ed8;
+  --admin-transcript-label: rgba(8, 47, 107, 0.68);
+  --admin-outline-soft: rgba(148, 163, 184, 0.32);
+  --admin-outline-strong: rgba(100, 116, 139, 0.42);
+  --admin-icon-muted: #475569;
+}
+
 @layer components {
   .surface-card {
-    @apply relative border border-white/[0.07] bg-slate-950/60 backdrop-blur-xl shadow-[0_4px_24px_rgba(0,0,0,0.3)];
+    @apply relative backdrop-blur-xl;
+    border: 1px solid var(--admin-surface-border);
+    background: var(--admin-surface-bg);
+    box-shadow: var(--admin-surface-shadow);
   }
 
   .surface-inner {
     @apply bg-white/[0.04] border border-white/[0.07];
+  }
+
+  .detail-panel {
+    background: var(--admin-detail-bg);
+    border: 1px solid var(--admin-detail-border);
+  }
+
+  .detail-panel > :not([hidden]) ~ :not([hidden]) {
+    border-top-color: var(--admin-detail-border);
+  }
+
+  .detail-panel.divide-y > :not([hidden]) ~ :not([hidden]) {
+    border-top-color: var(--admin-detail-border) !important;
   }
 
   .hud-bracket {
@@ -65,4 +159,65 @@ body {
     content: '';
     @apply absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-[14px] bg-danger-rose;
   }
+}
+
+.admin-sidebar {
+  background: var(--admin-sidebar-bg);
+  border-color: var(--admin-sidebar-border);
+}
+
+html.light .admin-console .text-slate-700,
+html.light .admin-console .text-slate-600,
+html.light .admin-console .text-slate-500 {
+  color: var(--admin-text-muted) !important;
+}
+
+html.light .admin-console .text-slate-400 {
+  color: var(--admin-text-soft) !important;
+}
+
+html.light .admin-console .text-slate-300,
+html.light .admin-console .text-slate-200,
+html.light .admin-console .text-white {
+  color: var(--admin-text) !important;
+}
+
+html.light .admin-console .hud-bracket {
+  border-color: rgba(100, 116, 139, 0.28);
+  opacity: 0.16;
+}
+
+html.light .admin-console [class*="border-white/5"],
+html.light .admin-console [class*="border-white/[0.05]"],
+html.light .admin-console [class*="border-white/[0.06]"],
+html.light .admin-console [class*="border-white/[0.07]"],
+html.light .admin-console [class*="border-white/8"] {
+  border-color: var(--admin-outline-soft) !important;
+}
+
+html.light .admin-console [class*="border-white/10"],
+html.light .admin-console [class*="border-white/[0.08]"],
+html.light .admin-console [class*="border-white/[0.1]"] {
+  border-color: var(--admin-outline-strong) !important;
+}
+
+html.light .admin-console [class*="border-white/20"] {
+  border-color: rgba(100, 116, 139, 0.3) !important;
+}
+
+html.light .admin-console [class*="bg-white/5"],
+html.light .admin-console [class*="bg-white/[0.01]"],
+html.light .admin-console [class*="bg-white/[0.02]"],
+html.light .admin-console [class*="bg-white/[0.04]"] {
+  background-color: var(--admin-muted-surface) !important;
+}
+
+html.light .admin-console [class*="bg-white/[0.06]"],
+html.light .admin-console [class*="bg-white/[0.08]"],
+html.light .admin-console [class*="bg-white/10"] {
+  background-color: var(--admin-muted-surface-hover) !important;
+}
+
+html.light .admin-console [class*="divide-white/[0.04]"] > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--admin-detail-border) !important;
 }

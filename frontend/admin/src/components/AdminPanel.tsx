@@ -4,10 +4,11 @@
  * Enhanced Admin Dashboard
  */
 
-import React, { useDeferredValue, useEffect, useState } from 'react';
+import React, { useDeferredValue, useEffect, useEffectEvent, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DOMPurify from 'dompurify';
 import { motion, AnimatePresence } from 'motion/react';
+import { useTheme } from '../context/ThemeContext';
 import { 
   Shield, 
   AlertTriangle, 
@@ -28,6 +29,8 @@ import {
   EyeOff,
   Activity,
   Menu,
+  Moon,
+  Sun,
   X
 } from 'lucide-react';
 import type { AdminAccount, AdminRole, Ban, CreateBanRequest, LoginResponse, Report } from '../types';
@@ -50,7 +53,7 @@ const tabButtonClass = (active: boolean) =>
   `relative flex h-11 w-full items-center justify-start gap-3 rounded-none px-5 text-sm font-bold uppercase tracking-[0.14em] transition-all duration-200 ${
     active
       ? 'border border-electric-cyan/40 bg-electric-cyan/10 text-electric-cyan shadow-[0_0_12px_rgba(34,211,238,0.12)]'
-      : 'text-slate-400 hover:bg-white/5 hover:text-white font-medium'
+      : 'border border-transparent bg-transparent text-[var(--admin-text-soft)] hover:bg-[var(--admin-muted-surface)] hover:text-[var(--admin-text)] font-medium'
   }`;
 
 const filterButtonClass = (active: boolean, type: 'cyan' | 'rose' = 'cyan') => {
@@ -59,7 +62,7 @@ const filterButtonClass = (active: boolean, type: 'cyan' | 'rose' = 'cyan') => {
     : 'border-electric-cyan/40 bg-electric-cyan/[0.08] text-electric-cyan shadow-[0_0_12px_rgba(34,211,238,0.12)]';
   
   return `inline-flex h-11 items-center justify-center rounded-none border px-4 text-[10px] font-bold uppercase tracking-[0.14em] transition-all duration-200 ${
-    active ? activeStyles : 'border-white/[0.07] bg-white/[0.04] text-slate-400 hover:text-slate-200 hover:bg-white/[0.07]'
+    active ? activeStyles : 'border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] text-[var(--admin-text-soft)] hover:text-[var(--admin-text)] hover:bg-[var(--admin-muted-surface-hover)]'
   }`;
 };
 
@@ -70,22 +73,22 @@ const metricCardClass = (type: 'active' | 'inactive' | 'total' | 'pending' | 'ap
     type === 'approved' ? 'shadow-[inset_0_0_20px_rgba(52,211,153,0.05)] border-success-emerald/20' :
     'border-white/[0.07]';
   
-  return `surface-card rounded-none flex flex-row items-center gap-4 p-5 transition-all duration-300 hover:border-white/20 ${glowShadow}`;
+  return `surface-card rounded-none flex flex-row items-center gap-4 p-5 transition-all duration-300 hover:border-[var(--admin-surface-border-strong)] ${glowShadow}`;
 };
 
 const surfaceCardClass = 'surface-card rounded-none p-5';
 
 const inputClass =
-  'h-11 w-full rounded-none border border-white/[0.07] bg-white/[0.04] px-4 font-mono text-sm text-white placeholder:text-slate-500 outline-none transition-all duration-200 focus:border-electric-cyan/50 focus:ring-2 focus:ring-electric-cyan/15 focus:bg-white/[0.06] scanlines';
+  'h-11 w-full rounded-none border border-[var(--admin-input-border)] bg-[var(--admin-input-bg)] px-4 font-mono text-sm text-[var(--admin-input-text)] placeholder:text-[var(--admin-placeholder)] outline-none transition-all duration-200 focus:border-electric-cyan/50 focus:ring-2 focus:ring-electric-cyan/15 focus:bg-[var(--admin-input-focus-bg)] scanlines';
 
 const compactSelectClass =
-  'h-11 w-full rounded-none border border-white/[0.07] bg-white/[0.04] px-3 font-semibold uppercase tracking-wider text-sm text-white outline-none transition-all duration-200 focus:border-electric-cyan/50 focus:ring-2 focus:ring-electric-cyan/15';
+  'h-11 w-full rounded-none border border-[var(--admin-input-border)] bg-[var(--admin-input-bg)] px-3 font-semibold uppercase tracking-wider text-sm text-[var(--admin-input-text)] outline-none transition-all duration-200 focus:border-electric-cyan/50 focus:ring-2 focus:ring-electric-cyan/15 [&>option]:bg-[var(--admin-select-option-bg)] [&>option]:text-[var(--admin-select-option-text)]';
 
 const segmentedToggleButtonClass = (active: boolean) =>
   `flex h-10 flex-1 items-center justify-center rounded-none px-4 text-[10px] font-bold uppercase tracking-[0.14em] transition-all duration-200 ${
     active
       ? 'bg-white text-navy-black shadow-[0_0_14px_rgba(255,255,255,0.1)]'
-      : 'text-slate-500 hover:bg-white/[0.05] hover:text-slate-200'
+      : 'text-[var(--admin-text-soft)] hover:bg-[var(--admin-muted-surface)] hover:text-[var(--admin-text)]'
   }`;
 
 const actionButtonClass =
@@ -143,8 +146,13 @@ interface AdminPanelProps {
   loginRoute?: string;
 }
 
+type RawReport = Omit<Report, 'chat_log'> & {
+  chat_log: string | Report['chat_log'] | null;
+};
+
 export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
   const navigate = useNavigate();
+  const { isDark, toggleTheme } = useTheme();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authReady, setAuthReady] = useState(false);
   const [role, setRole] = useState<AdminRole | null>(null);
@@ -200,6 +208,14 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
   const deferredAccountSearch = useDeferredValue(accountSearch);
   const accountPageSize = accountLimit === 'all' ? Math.max(accountTotal, accounts.length, 1) : Number(accountLimit);
   const accountTotalPages = Math.max(1, Math.ceil(accountTotal / accountPageSize));
+  const selectableVisibleReports = reports.filter((report) => report.status === 'pending');
+  const selectedPendingReportIds = selectableVisibleReports
+    .filter((report) => selectedReports.has(report.id))
+    .map((report) => report.id);
+  const selectedPendingReportsCount = selectedPendingReportIds.length;
+  const allVisibleReportsSelected =
+    selectableVisibleReports.length > 0 &&
+    selectableVisibleReports.every((report) => selectedReports.has(report.id));
 
   // Authentication Logic
   useEffect(() => {
@@ -332,7 +348,10 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
       );
       if (response.status === 401) return logout();
       if (response.ok) {
-        const data = await response.json();
+        const data: {
+          reports?: RawReport[];
+          metrics?: Partial<Record<'pending' | 'approved' | 'rejected', number>>;
+        } = await response.json();
         if (data.metrics) {
           setServerReportMetrics({
             pending: data.metrics.pending || 0,
@@ -340,7 +359,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
             rejected: data.metrics.rejected || 0,
           });
         }
-        const normalized = (data.reports || []).map((r: any) => ({
+        const normalized = (data.reports || []).map((r) => ({
           ...r,
           chat_log: (() => {
             if (typeof r.chat_log !== 'string') return r.chat_log || [];
@@ -354,7 +373,11 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
         }));
         setReports(normalized);
         setSelectedReports((current) => {
-          const visibleIds = new Set(normalized.map((report: Report) => report.id));
+          const visibleIds = new Set(
+            normalized
+              .filter((report: Report) => report.status === 'pending')
+              .map((report: Report) => report.id)
+          );
           return new Set([...current].filter((id) => visibleIds.has(id)));
         });
       }
@@ -443,6 +466,20 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
     void submitBanModal();
   };
 
+  const toggleSelectAllVisibleReports = () => {
+    setSelectedReports((current) => {
+      if (selectableVisibleReports.length === 0) return current;
+      if (selectableVisibleReports.every((report) => current.has(report.id))) {
+        const next = new Set(current);
+        selectableVisibleReports.forEach((report) => next.delete(report.id));
+        return next;
+      }
+      const next = new Set(current);
+      selectableVisibleReports.forEach((report) => next.add(report.id));
+      return next;
+    });
+  };
+
   const createBan = async (request: CreateBanRequest) => {
     if (!canCreateBans) return false;
     try {
@@ -456,8 +493,11 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
         fetchReports();
         return true;
       }
+      const data = await response.json().catch(() => ({}));
+      alert(data.error || 'Failed to create ban');
     } catch (error) {
       console.error('Failed to create ban:', error);
+      alert('Failed to create ban');
     }
     return false;
   };
@@ -502,9 +542,13 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
       if (response.ok) {
         fetchBans();
         fetchReports();
+        return;
       }
+      const data = await response.json().catch(() => ({}));
+      alert(data.error || 'Failed to unban');
     } catch (error) {
       console.error('Failed to unban:', error);
+      alert('Failed to unban');
     }
   };
 
@@ -516,12 +560,22 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
         method: 'POST',
         body: JSON.stringify({ username: accountUsername.trim(), password: accountPassword, role: accountRole }),
       });
+      if (response.status === 401) {
+        logout();
+        return;
+      }
       if (response.ok) {
         setAccountUsername('');
         setAccountPassword('');
         setAccountPage(1);
         fetchAccounts();
+        return;
       }
+      const data = await response.json().catch(() => ({}));
+      alert(data.error || 'Failed to create account');
+    } catch (error) {
+      console.error('Failed to create account:', error);
+      alert('Failed to create account');
     } finally {
       setSubmittingAccount(false);
     }
@@ -533,9 +587,16 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
       const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/accounts/${encodeURIComponent(targetUsername)}`, {
         method: 'DELETE',
       });
-      if (response.ok) fetchAccounts();
+      if (response.status === 401) return logout();
+      if (response.ok) {
+        fetchAccounts();
+        return;
+      }
+      const data = await response.json().catch(() => ({}));
+      alert(data.error || 'Failed to delete account');
     } catch (error) {
       console.error('Failed to delete account:', error);
+      alert('Failed to delete account');
     }
   };
 
@@ -587,6 +648,18 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
     }
   };
 
+  const syncReports = useEffectEvent(() => {
+    void fetchReports();
+  });
+
+  const syncBans = useEffectEvent(() => {
+    void fetchBans();
+  });
+
+  const syncAccounts = useEffectEvent(() => {
+    void fetchAccounts();
+  });
+
   // Effects for data sync
   useEffect(() => {
     setAccountPage(1);
@@ -596,13 +669,13 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
     setAccountPage(1);
   }, [accountLimit]);
 
-  useEffect(() => { if (authReady && isAuthenticated) fetchReports(); }, [authReady, isAuthenticated, reportStatusFilter, reportLimit]);
-  useEffect(() => { if (authReady && isAuthenticated) fetchBans(); }, [authReady, isAuthenticated, banFilter, banLimit, deferredBanSearch]);
-  useEffect(() => { if (authReady && isAuthenticated && canManageAccounts) fetchAccounts(); }, [authReady, isAuthenticated, canManageAccounts, accountPage, deferredAccountSearch]);
+  useEffect(() => { if (authReady && isAuthenticated) syncReports(); }, [authReady, isAuthenticated, reportStatusFilter, reportLimit]);
+  useEffect(() => { if (authReady && isAuthenticated) syncBans(); }, [authReady, isAuthenticated, banFilter, banLimit, deferredBanSearch]);
+  useEffect(() => { if (authReady && isAuthenticated && canManageAccounts) syncAccounts(); }, [authReady, isAuthenticated, canManageAccounts, accountPage, accountLimit, deferredAccountSearch]);
 
   if (!authReady) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#050816]">
+      <div className="admin-console flex min-h-screen items-center justify-center bg-[var(--admin-bg)]">
         <motion.div 
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -617,7 +690,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
 
   if (!isAuthenticated) {
     return (
-      <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#050816]">
+      <div className="admin-console relative flex min-h-screen items-center justify-center overflow-hidden bg-[var(--admin-bg)] transition-colors duration-300">
         {/* Animated Background Elements */}
         <div className="absolute inset-0 z-0">
           <div className="absolute top-[-10%] left-[-10%] h-[40%] w-[40%] rounded-full bg-cyan-500/10 blur-[120px]" />
@@ -695,7 +768,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
   }
 
   return (
-    <div className="h-screen overflow-hidden bg-[#050816] text-slate-200 flex flex-col">
+    <div className="admin-console flex h-screen flex-col overflow-hidden bg-[var(--admin-bg)] text-[var(--admin-text)] transition-colors duration-300">
       {/* Background Gradients */}
       <div className="fixed inset-0 z-0">
         <div className="absolute top-0 left-0 h-[500px] w-[500px] rounded-full bg-cyan-500/5 blur-[100px]" />
@@ -703,7 +776,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
       </div>
 
       {/* Mobile Top Bar */}
-      <div className="relative z-40 flex h-16 shrink-0 items-center justify-between border-b border-white/5 bg-slate-950/50 px-6 backdrop-blur-xl lg:hidden">
+      <div className="admin-sidebar relative z-40 flex h-16 shrink-0 items-center justify-between border-b px-6 backdrop-blur-xl lg:hidden">
         <div className="flex items-center gap-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-none bg-white text-slate-950">
             <Shield size={16} />
@@ -712,7 +785,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
         </div>
         <button
           onClick={() => setIsMobileMenuOpen(true)}
-          className="flex h-10 w-10 items-center justify-center rounded-none bg-white/5 text-slate-400 hover:text-white"
+          className="flex h-10 w-10 items-center justify-center rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] text-[var(--admin-text-soft)] transition-all hover:bg-[var(--admin-muted-surface-hover)] hover:text-[var(--admin-text)]"
         >
           <Menu size={20} />
         </button>
@@ -734,7 +807,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
               animate={{ x: 0 }}
               exit={{ x: '-100%' }}
               transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-              className="fixed inset-y-0 left-0 z-[70] w-[280px] bg-slate-950 border-r border-white/10 p-6 shadow-2xl lg:hidden flex flex-col"
+              className="admin-sidebar fixed inset-y-0 left-0 z-[70] flex w-[280px] flex-col border-r p-6 shadow-2xl lg:hidden"
             >
               <div className="mb-10 flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -748,7 +821,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                 </div>
                 <button
                   onClick={() => setIsMobileMenuOpen(false)}
-                  className="flex h-10 w-10 items-center justify-center rounded-none bg-white/5 text-slate-400 hover:text-white"
+                  className="flex h-10 w-10 items-center justify-center rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] text-[var(--admin-text-soft)] transition-all hover:bg-[var(--admin-muted-surface-hover)] hover:text-[var(--admin-text)]"
                 >
                   <X size={20} />
                 </button>
@@ -794,8 +867,16 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                 )}
               </nav>
 
-              <div className="mt-auto pt-6 border-t border-white/5">
+              <div className="mt-auto border-t border-[var(--admin-sidebar-border)] pt-6">
                 <div className="flex flex-col gap-4">
+                  <button
+                    type="button"
+                    onClick={toggleTheme}
+                    className="flex w-full items-center gap-3 rounded-none border border-[var(--admin-input-border)] bg-[var(--admin-input-bg)] px-4 py-3 text-sm font-bold uppercase tracking-[0.14em] text-[var(--admin-text)] transition-all hover:bg-[var(--admin-input-focus-bg)]"
+                  >
+                    {isDark ? <Sun size={16} /> : <Moon size={16} />}
+                    {isDark ? 'Light Mode' : 'Dark Mode'}
+                  </button>
                   <div className="flex items-center gap-3 px-2">
                     <div className="h-10 w-10 rounded-none bg-gradient-to-br from-cyan-400 to-blue-500 shadow-lg" />
                     <div className="min-w-0 flex-1">
@@ -819,7 +900,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
 
       <div className="relative z-10 flex h-full overflow-hidden">
         {/* Sidebar */}
-        <aside className="hidden w-72 border-r border-white/5 bg-slate-950/20 backdrop-blur-xl lg:block">
+        <aside className="admin-sidebar hidden w-72 border-r backdrop-blur-xl lg:block">
           <div className="flex h-full flex-col p-6">
             <div className="mb-10 flex items-center gap-3 px-2">
               <div className="flex h-10 w-10 items-center justify-center rounded-none bg-white text-slate-950">
@@ -854,15 +935,23 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
             </nav>
 
             <div className="mt-auto relative">
+              <button
+                type="button"
+                onClick={toggleTheme}
+                className="mb-4 flex w-full items-center gap-3 rounded-none border border-[var(--admin-input-border)] bg-[var(--admin-input-bg)] px-4 py-3 text-sm font-bold uppercase tracking-[0.14em] text-[var(--admin-text)] transition-all hover:bg-[var(--admin-input-focus-bg)]"
+              >
+                {isDark ? <Sun size={16} /> : <Moon size={16} />}
+                {isDark ? 'Light Mode' : 'Dark Mode'}
+              </button>
               <AnimatePresence>
                 {isUserMenuOpen && (
                   <motion.div
                     initial={{ opacity: 0, scale: 0.95, y: 10 }}
                     animate={{ opacity: 1, scale: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                    className="absolute bottom-full left-0 mb-4 w-full rounded-none border border-white/10 bg-slate-900/90 p-2 shadow-2xl backdrop-blur-xl"
+                    className="absolute bottom-full left-0 mb-4 w-full rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-surface-bg)] p-2 shadow-2xl backdrop-blur-xl"
                   >
-                    <div className="mb-2 border-b border-white/5 px-4 py-3">
+                    <div className="mb-2 border-b border-[var(--admin-sidebar-border)] px-4 py-3">
                       <p className="truncate text-xs font-bold text-slate-300 tracking-wide uppercase">{currentAdminUsername}</p>
                       <p className="mt-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-700">{role}</p>
                     </div>
@@ -885,7 +974,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                 className={`group flex w-full items-center gap-3 rounded-none border p-4 transition-all duration-300 ${
                   isUserMenuOpen 
                     ? 'border-electric-cyan/40 bg-electric-cyan/10 shadow-[0_0_15px_rgba(34,211,238,0.1)]' 
-                    : 'border-white/5 bg-white/5 hover:border-white/10 hover:bg-white/[0.07]'
+                    : 'border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] hover:border-[var(--admin-outline-strong)] hover:bg-[var(--admin-muted-surface-hover)]'
                 }`}
               >
                 <div className="relative">
@@ -896,7 +985,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                   <p className="truncate text-sm font-bold text-slate-300">{currentAdminUsername}</p>
                   <p className="text-[10px] font-bold uppercase tracking-widest text-slate-700 leading-none mt-1">{role}</p>
                 </div>
-                <div className={`text-slate-600 transition-transform duration-300 ${isUserMenuOpen ? 'rotate-180' : ''}`}>
+                <div className={`text-[var(--admin-icon-muted)] transition-transform duration-300 ${isUserMenuOpen ? 'rotate-180' : ''}`}>
                   <RefreshCw size={14} className={isUserMenuOpen ? 'animate-spin-slow' : ''} />
                 </div>
               </button>
@@ -983,7 +1072,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                           <select
                             value={reportLimit}
                             onChange={(e) => setReportLimit(e.target.value)}
-                            className={`${compactSelectClass} min-w-[150px] appearance-none [&>option]:bg-slate-900`}
+                            className={`${compactSelectClass} min-w-[150px] appearance-none`}
                           >
                             <option value="10">10 entries</option>
                             <option value="20">20 entries</option>
@@ -1002,27 +1091,35 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                           </button>
                           <button
                             type="button"
-                            onClick={() => {
-                              void Promise.all([...selectedReports].map((id) => updateReportStatus(id, 'approved')));
-                              setSelectedReports(new Set());
-                            }}
-                            disabled={selectedReports.size === 0}
-                            className={`${actionButtonClass} bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20`}
+                            onClick={toggleSelectAllVisibleReports}
+                            disabled={selectableVisibleReports.length === 0}
+                            className={`${actionButtonClass} border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] text-[var(--admin-text)] hover:bg-[var(--admin-muted-surface-hover)]`}
                           >
-                            <CheckCircle2 size={16} />
-                            Approve Selected ({selectedReports.size})
+                            {allVisibleReportsSelected ? 'Clear Selection' : 'Select All'}
                           </button>
                           <button
                             type="button"
                             onClick={() => {
-                              void Promise.all([...selectedReports].map((id) => updateReportStatus(id, 'rejected')));
+                              void Promise.all(selectedPendingReportIds.map((id) => updateReportStatus(id, 'approved')));
                               setSelectedReports(new Set());
                             }}
-                            disabled={selectedReports.size === 0}
+                            disabled={selectedPendingReportsCount === 0}
+                            className={`${actionButtonClass} bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20`}
+                          >
+                            <CheckCircle2 size={16} />
+                            Approve Selected ({selectedPendingReportsCount})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void Promise.all(selectedPendingReportIds.map((id) => updateReportStatus(id, 'rejected')));
+                              setSelectedReports(new Set());
+                            }}
+                            disabled={selectedPendingReportsCount === 0}
                             className={`${actionButtonClass} bg-rose-500/10 text-rose-300 hover:bg-rose-500/20`}
                           >
                             <XCircle size={16} />
-                            Reject Selected ({selectedReports.size})
+                            Reject Selected ({selectedPendingReportsCount})
                           </button>
                         </div>
                       </div>
@@ -1049,17 +1146,25 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                           <div className="flex flex-col lg:grid lg:grid-cols-[56px_1fr_320px_200px] lg:items-stretch overflow-hidden">
                             {/* Checkbox Column */}
                             <div className="flex items-center justify-center py-4 lg:py-0 border-b lg:border-b-0 lg:border-r border-white/5 bg-white/[0.01]">
-                              <input
-                                type="checkbox"
-                                checked={selectedReports.has(report.id)}
-                                onChange={(e) => {
-                                  const next = new Set(selectedReports);
-                                  if (e.target.checked) next.add(report.id);
-                                  else next.delete(report.id);
-                                  setSelectedReports(next);
-                                }}
-                                className="h-5 w-5 rounded border-white/20 bg-transparent text-electric-cyan focus:ring-electric-cyan/40 cursor-pointer"
-                              />
+                              {report.status === 'pending' ? (
+                                <input
+                                  type="checkbox"
+                                  checked={selectedReports.has(report.id)}
+                                  onChange={(e) => {
+                                    setSelectedReports((current) => {
+                                      const next = new Set(current);
+                                      if (e.target.checked) next.add(report.id);
+                                      else next.delete(report.id);
+                                      return next;
+                                    });
+                                  }}
+                                  className="h-5 w-5 cursor-pointer appearance-none rounded-none border border-[var(--admin-outline-strong)] bg-[var(--admin-input-bg)] text-electric-cyan transition-all checked:border-electric-cyan checked:bg-electric-cyan focus:ring-2 focus:ring-electric-cyan/30 focus:ring-offset-0"
+                                />
+                              ) : (
+                                <span className="font-mono text-xs font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">
+                                  done
+                                </span>
+                              )}
                             </div>
 
                             {/* Content Column */}
@@ -1105,16 +1210,16 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
 
                             {/* Detailed Data Column */}
                             <div className="flex flex-col gap-3 p-5 sm:p-6 lg:p-7 lg:justify-center border-t lg:border-t-0 lg:border-l border-white/5 bg-white/[0.01] min-w-0 overflow-hidden">
-                              <div className="bg-white/[0.02] border border-white/[0.04] rounded-none overflow-hidden divide-y divide-white/[0.04] flex flex-col justify-center">
-                                <div className="flex flex-col justify-center px-5 min-h-[64px] py-3 gap-1">
+                              <div className="detail-panel rounded-none overflow-hidden flex flex-col justify-center">
+                                <div className="flex min-h-[64px] flex-col justify-center gap-1 border-b border-[var(--admin-detail-border)] px-5 py-3">
                                   <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Reported Identity</span>
                                   <span className="font-mono text-sm text-slate-300 tabular-nums break-all leading-relaxed whitespace-pre-wrap">{report.reported_ip || 'N/A'}</span>
                                 </div>
-                                <div className="flex flex-col justify-center px-5 min-h-[64px] py-3 gap-1">
+                                <div className="flex min-h-[64px] flex-col justify-center gap-1 border-b border-[var(--admin-detail-border)] px-5 py-3">
                                   <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Session ID Reference</span>
                                   <span className="font-mono text-sm text-slate-400 tabular-nums break-all leading-relaxed whitespace-pre-wrap">{report.reported_session_id}</span>
                                 </div>
-                                <div className="flex flex-col justify-center px-5 min-h-[64px] py-3 gap-1">
+                                <div className="flex min-h-[64px] flex-col justify-center gap-1 px-5 py-3">
                                   <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Reporter Context</span>
                                   <span className="font-mono text-sm text-slate-400 tabular-nums break-all leading-relaxed whitespace-pre-wrap">{report.reporter_ip || 'N/A'}</span>
                                 </div>
@@ -1263,7 +1368,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                               <select
                                 value={banLimit}
                                 onChange={(e) => setBanLimit(e.target.value)}
-                                className={`${compactSelectClass} [&>option]:bg-slate-900`}
+                                className={compactSelectClass}
                               >
                                 <option value="10">10 ENTRIES</option>
                                 <option value="20">20 ENTRIES</option>
@@ -1417,7 +1522,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                                   </div>
 
                                   {/* Data Panel */}
-                                  <div className="bg-white/[0.02] border border-white/[0.04] rounded-none px-4 py-3 md:px-5">
+                                  <div className="detail-panel rounded-none px-4 py-3 md:px-5">
                                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-4">
                                       <div className="flex flex-col">
                                         <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Network Address</p>
@@ -1490,7 +1595,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                           <select
                             value={accountLimit}
                             onChange={(e) => setAccountLimit(e.target.value)}
-                            className={`${compactSelectClass} min-w-[150px] appearance-none [&>option]:bg-slate-900`}
+                            className={`${compactSelectClass} min-w-[150px] appearance-none`}
                           >
                             <option value="10">10 entries</option>
                             <option value="25">25 entries</option>
@@ -1542,7 +1647,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                         <select
                           value={accountRole}
                           onChange={(e) => setAccountRole(e.target.value as AdminRole)}
-                          className={`${compactSelectClass} [&>option]:bg-slate-900`}
+                          className={compactSelectClass}
                         >
                           <option value="moderator">Moderator</option>
                           <option value="admin">Admin</option>
@@ -1816,7 +1921,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
               transition={{ type: 'spring', stiffness: 350, damping: 30 }}
-              className="relative flex flex-col w-full max-w-[640px] max-h-[85vh] rounded-[24px] border border-white/[0.08] bg-[#050816] shadow-[0_32px_128px_rgba(0,0,0,0.8)] overflow-hidden"
+              className="relative flex flex-col w-full max-w-[640px] max-h-[85vh] rounded-none border border-[var(--admin-surface-border)] bg-[var(--admin-bg)] shadow-[0_32px_128px_rgba(0,0,0,0.8)] overflow-hidden"
             >
               <div className="hud-bracket hud-bracket-tl opacity-20" />
               <div className="hud-bracket-tr opacity-20" />
@@ -1824,7 +1929,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
               <div className="hud-bracket-br opacity-20" />
 
               {/* Header */}
-              <div className="px-6 py-5 sm:px-8 sm:py-6 border-b border-white/[0.06] flex items-center justify-between">
+              <div className="flex items-center justify-between border-b border-[var(--admin-surface-border)] px-6 py-5 sm:px-8 sm:py-6" style={{ background: 'var(--admin-transcript-header-bg)' }}>
                 <div className="flex items-center gap-4">
                   <div className="w-10 h-10 rounded-none bg-electric-cyan/10 border border-electric-cyan/20 flex items-center justify-center shrink-0 shadow-[0_0_15px_rgba(34,211,238,0.1)]">
                     <MessageSquare size={18} className="text-electric-cyan" />
@@ -1838,26 +1943,49 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                 </div>
                 <button
                   onClick={() => setExpandedReport(null)}
-                  className="w-10 h-10 rounded-none bg-white/[0.04] border border-white/10 text-slate-400 flex items-center justify-center hover:text-slate-300 hover:bg-white/[0.08] transition-all"
+                  className="flex h-10 w-10 items-center justify-center rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] text-[var(--admin-text-soft)] transition-all hover:bg-[var(--admin-muted-surface-hover)] hover:text-[var(--admin-text)]"
                 >
                   <XCircle size={18} />
                 </button>
               </div>
 
               {/* Body */}
-              <div className="flex-1 overflow-y-auto px-6 py-6 sm:px-8 bg-slate-950/20">
+              <div className="flex-1 overflow-y-auto px-6 py-6 sm:px-8" style={{ background: 'var(--admin-transcript-bg)' }}>
                 <div className="space-y-4">
                   {reports.find(r => r.id === expandedReport)?.chat_log.map((msg, idx) => (
                     <div key={idx} className={`flex ${msg.sender === 'me' ? 'justify-end' : msg.sender === 'system' ? 'justify-center' : 'justify-start'}`}>
-                      <div className={`max-w-[85%] rounded-none px-4 py-3 text-sm shadow-sm ${
-                        msg.sender === 'me' 
-                          ? 'bg-cyan-500/10 text-cyan-100 border border-cyan-500/20' 
-                          : msg.sender === 'system'
-                            ? 'bg-slate-800/40 text-slate-400 border border-white/5 text-center text-[11px] px-6 py-1.5'
-                            : 'bg-white/5 text-slate-300 border border-white/5'
-                      }`}>
+                      <div
+                        className={`max-w-[85%] rounded-none px-4 py-3 text-sm shadow-sm ${
+                          msg.sender === 'me'
+                            ? ''
+                            : msg.sender === 'system'
+                              ? 'text-center text-[11px] px-6 py-1.5'
+                              : ''
+                        }`}
+                        style={
+                          msg.sender === 'me'
+                            ? {
+                                background: 'var(--admin-transcript-bubble-reporter-bg)',
+                                borderColor: 'var(--admin-transcript-bubble-reporter-border)',
+                                color: 'var(--admin-transcript-bubble-reporter-text)',
+                              }
+                            : msg.sender === 'peer'
+                            ? {
+                                background: 'var(--admin-transcript-bubble-peer-bg)',
+                                borderColor: 'var(--admin-transcript-bubble-peer-border)',
+                                color: 'var(--admin-transcript-bubble-peer-text)',
+                              }
+                            : msg.sender === 'system'
+                              ? {
+                                  background: 'var(--admin-transcript-bubble-system-bg)',
+                                  borderColor: 'var(--admin-transcript-bubble-system-border)',
+                                  color: 'var(--admin-transcript-bubble-system-text)',
+                                }
+                              : undefined
+                        }
+                      >
                         {msg.sender !== 'system' && (
-                          <p className="text-[10px] font-bold uppercase tracking-wider opacity-40 mb-1.5">
+                          <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--admin-transcript-label)' }}>
                             {msg.sender === 'me' ? 'Reporter' : 'Peer'}
                           </p>
                         )}
@@ -1878,10 +2006,10 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
               </div>
 
               {/* Footer */}
-              <div className="px-6 py-4 sm:px-8 border-t border-white/[0.06] bg-white/[0.02]">
+              <div className="border-t border-[var(--admin-surface-border)] bg-[var(--admin-muted-surface)] px-6 py-4 sm:px-8">
                 <button
                   onClick={() => setExpandedReport(null)}
-                  className="w-full h-11 rounded-none bg-white/[0.04] border border-white/[0.1] text-xs font-bold text-slate-300 uppercase tracking-widest hover:bg-white/[0.08] hover:text-slate-300 transition-all active:scale-[0.98]"
+                  className="h-11 w-full rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-input-bg)] text-xs font-bold uppercase tracking-widest text-[var(--admin-text)] transition-all hover:bg-[var(--admin-input-focus-bg)] active:scale-[0.98]"
                 >
                   DISMISS_VIEW
                 </button>
@@ -1907,7 +2035,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
               transition={{ type: 'spring', stiffness: 350, damping: 30 }}
-              className="relative flex flex-col w-full max-w-[640px] max-h-[80vh] rounded-none border border-white/[0.08] bg-[#050816] shadow-[0_32px_128px_rgba(0,0,0,0.8)] overflow-hidden"
+              className="relative flex flex-col w-full max-w-[640px] max-h-[80vh] rounded-none border border-[var(--admin-surface-border)] bg-[var(--admin-bg)] shadow-[0_32px_128px_rgba(0,0,0,0.8)] overflow-hidden"
             >
               <div className="hud-bracket hud-bracket-tl opacity-20" />
               <div className="hud-bracket-tr opacity-20" />
@@ -1915,7 +2043,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
               <div className="hud-bracket-br opacity-20" />
 
               {/* Header */}
-              <div className="px-6 py-5 sm:px-8 sm:py-6 border-b border-white/[0.06] flex items-center justify-between">
+              <div className="flex items-center justify-between border-b border-[var(--admin-surface-border)] px-6 py-5 sm:px-8 sm:py-6" style={{ background: 'var(--admin-transcript-header-bg)' }}>
                 <div className="flex items-center gap-4">
                   <div className="w-10 h-10 rounded-none bg-electric-cyan/10 border border-electric-cyan/20 flex items-center justify-center shrink-0 shadow-[0_0_15px_rgba(34,211,238,0.1)]">
                     <Shield size={18} className="text-electric-cyan" />
@@ -1929,15 +2057,15 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                 </div>
                 <button
                   onClick={() => setViewingDescription(null)}
-                  className="w-10 h-10 rounded-none bg-white/[0.04] border border-white/10 text-slate-400 flex items-center justify-center hover:text-white hover:bg-white/[0.08] transition-all"
+                  className="flex h-10 w-10 items-center justify-center rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] text-[var(--admin-text-soft)] transition-all hover:bg-[var(--admin-muted-surface-hover)] hover:text-[var(--admin-text)]"
                 >
                   <XCircle size={18} />
                 </button>
               </div>
 
               {/* Body */}
-              <div className="flex-1 overflow-y-auto px-6 py-8 sm:px-8 bg-slate-950/20">
-                <div className="rounded-none border border-white/5 bg-white/[0.02] p-6 scanlines">
+              <div className="flex-1 overflow-y-auto px-6 py-8 sm:px-8" style={{ background: 'var(--admin-transcript-bg)' }}>
+                <div className="detail-panel rounded-none p-6 scanlines">
                   <p className="text-base text-slate-300 leading-relaxed break-words whitespace-pre-wrap font-medium">
                     {reports.find(r => r.id === viewingDescription)?.description}
                   </p>
@@ -1945,10 +2073,10 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
               </div>
 
               {/* Footer */}
-              <div className="px-6 py-4 sm:px-8 border-t border-white/[0.06] bg-white/[0.02]">
+              <div className="border-t border-[var(--admin-surface-border)] bg-[var(--admin-muted-surface)] px-6 py-4 sm:px-8">
                 <button
                   onClick={() => setViewingDescription(null)}
-                  className="w-full h-11 rounded-none bg-white/[0.04] border border-white/[0.1] text-xs font-bold text-slate-300 uppercase tracking-widest hover:bg-white/[0.08] hover:text-white transition-all active:scale-[0.98]"
+                  className="h-11 w-full rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-input-bg)] text-xs font-bold uppercase tracking-widest text-[var(--admin-text)] transition-all hover:bg-[var(--admin-input-focus-bg)] active:scale-[0.98]"
                 >
                   CLOSE_ENTRY
                 </button>

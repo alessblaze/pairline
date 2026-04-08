@@ -20,7 +20,7 @@ import { AdminPanel } from './components/AdminPanel'
 
 function App() {
   return (
-    <div className="min-h-screen bg-[#050816] text-white">
+    <div className="admin-console min-h-screen bg-[var(--admin-bg)] text-[var(--admin-text)] transition-colors duration-300">
       <Routes>
         <Route path="/" element={<AdminPanel loginRoute="/" />} />
         <Route path="*" element={<Navigate to="/" replace />} />
