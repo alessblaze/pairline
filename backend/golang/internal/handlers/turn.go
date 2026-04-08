@@ -18,8 +18,8 @@
 package handlers
 
 import (
-	"context"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -28,8 +28,11 @@ import (
 	"os"
 	"time"
 
+	"github.com/anish/omegle/backend/golang/internal/observability"
 	internalredis "github.com/anish/omegle/backend/golang/internal/redis"
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
 
 var turnHTTPClient = &http.Client{Timeout: 5 * time.Second}
@@ -63,20 +66,30 @@ type cloudflareIceServersWrapper struct {
 // This keeps the Cloudflare API token server-side and hidden from clients.
 func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		startedAt := time.Now()
+		cacheHit := false
+		span := startHandlerSpan(c, "webrtc.turn.credentials")
+		defer span.End()
+
 		if c.Request.ContentLength > 4096 {
+			span.SetStatus(codes.Error, "request too large")
 			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "Request too large"})
 			return
 		}
 
 		var authReq turnCredentialsClientRequest
 		if err := c.ShouldBindJSON(&authReq); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "invalid request body")
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return
 		}
 
 		sessionID := authReq.SessionID
 		sessionToken := authReq.SessionToken
+		span.SetAttributes(hashedAttribute("webrtc.session.ref", sessionID))
 		if sessionID == "" || sessionToken == "" || len(sessionID) > 100 || len(sessionToken) > 128 || !uuidRe.MatchString(sessionID) {
+			span.SetStatus(codes.Error, "invalid session format")
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid session_id or session_token format"})
 			return
 		}
@@ -85,6 +98,7 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 		defer cancel()
 
 		if !verifySessionToken(ctx, redisClient.GetClient(), sessionID, sessionToken) {
+			span.SetStatus(codes.Error, "invalid session")
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid session"})
 			return
 		}
@@ -92,15 +106,21 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 		// Cache TURN credentials briefly to reduce Cloudflare API QPS during reconnect storms.
 		cacheKey := "webrtc:turn:cache:" + sessionID
 		if cached, err := redisClient.GetClient().Get(ctx, cacheKey).Result(); err == nil && cached != "" {
+			cacheHit = true
+			span.SetAttributes(attribute.Bool("webrtc.turn.cache_hit", true))
+			observability.RecordTURNRequest(c.Request.Context(), time.Since(startedAt), "cache_hit", true)
 			c.Data(http.StatusOK, "application/json", []byte(cached))
 			return
 		}
+		span.SetAttributes(attribute.Bool("webrtc.turn.cache_hit", false))
 
 		keyID := os.Getenv("CLOUDFLARE_TURN_KEY_ID")
 		apiToken := os.Getenv("CLOUDFLARE_TURN_API_TOKEN")
 
 		if keyID == "" || apiToken == "" {
 			log.Println("CLOUDFLARE_TURN_KEY_ID or CLOUDFLARE_TURN_API_TOKEN not configured")
+			span.SetAttributes(attribute.Bool("webrtc.turn.fallback_stun_only", true))
+			observability.RecordTURNRequest(c.Request.Context(), time.Since(startedAt), "stun_fallback", cacheHit)
 			// Fallback: return public STUN only so WebRTC can still attempt direct P2P
 			c.JSON(http.StatusOK, gin.H{
 				"iceServers": []gin.H{
@@ -118,6 +138,8 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 
 		cfReq, err := http.NewRequestWithContext(c.Request.Context(), "POST", cfURL, bytes.NewReader(reqBody))
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed to build turn request")
 			log.Printf("Failed to build Cloudflare TURN request: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to build TURN request"})
 			return
@@ -127,6 +149,9 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 
 		resp, err := turnHTTPClient.Do(cfReq)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed to contact turn provider")
+			observability.RecordTURNRequest(c.Request.Context(), time.Since(startedAt), "provider_error", cacheHit)
 			log.Printf("Failed to reach Cloudflare TURN API: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to contact Cloudflare TURN API"})
 			return
@@ -135,12 +160,17 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 
 		body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB limit
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed to read turn response")
 			log.Printf("Failed to read Cloudflare TURN response: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read TURN response"})
 			return
 		}
 
 		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+			span.SetAttributes(attribute.Int("webrtc.turn.status_code", resp.StatusCode))
+			span.SetStatus(codes.Error, "turn provider error")
+			observability.RecordTURNRequest(c.Request.Context(), time.Since(startedAt), "provider_error", cacheHit)
 			log.Printf("Cloudflare TURN API error %d: %s", resp.StatusCode, string(body))
 			c.JSON(http.StatusBadGateway, gin.H{"error": "Cloudflare TURN API returned an error"})
 			return
@@ -148,6 +178,8 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 
 		var cfResp cloudflareCredentialsResponse
 		if err := json.Unmarshal(body, &cfResp); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed to parse turn response")
 			log.Printf("Failed to parse Cloudflare TURN response: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse TURN credentials"})
 			return
@@ -169,6 +201,7 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 			// Cache for 10 minutes (shorter than CF TTL) to reduce load while limiting reuse window.
 			_ = redisClient.GetClient().Set(ctx, cacheKey, string(responseBody), 10*time.Minute).Err()
 		}
+		observability.RecordTURNRequest(c.Request.Context(), time.Since(startedAt), "success", cacheHit)
 
 		c.Data(http.StatusOK, "application/json", responseBody)
 	}

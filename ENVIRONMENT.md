@@ -96,6 +96,15 @@ This file focuses on **what each variable changes in runtime behavior**, not jus
 ### Health endpoint
 - **`HEALTH_DETAILS_ENABLED`** (default: `false`): when enabled, `/api/health` includes node identity and internal counters. Keep disabled on public deployments unless protected.
 
+### OpenTelemetry tracing
+- **`OTEL_EXPORTER_OTLP_ENDPOINT`** (default: unset): base OTLP endpoint for traces and metrics, for example `http://otel-collector:4318`. When unset, spans can still be created locally but are not exported anywhere useful.
+- **`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`** (default: unset): trace-specific OTLP HTTP endpoint, useful when your collector requires an explicit `/v1/traces` path.
+- **`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`** (default: unset): metric-specific OTLP HTTP endpoint, useful when your collector requires an explicit `/v1/metrics` path.
+- **`OTEL_EXPORTER_OTLP_INSECURE`** (default: exporter default; common dev value: `true`): use plaintext OTLP over HTTP for local collectors.
+- **`OTEL_ENVIRONMENT`** (default: `development`): exported as the deployment environment on spans.
+- **`OTEL_SERVICE_NAME`** (default: exporter/library default): explicit service name for traces. Set this to `omegle-phoenix` for clearer Jaeger grouping.
+- **`OTEL_SERVICE_INSTANCE_ID`** (default: hostname or runtime-generated identity): optional stable per-node identity for traces.
+
 ---
 
 ## Go backend (`backend/golang`)
@@ -146,3 +155,13 @@ This file focuses on **what each variable changes in runtime behavior**, not jus
 - **`CLOUDFLARE_TURN_KEY_ID`** / **`CLOUDFLARE_TURN_API_TOKEN`** (optional): enables `/api/v1/webrtc/turn` to mint ephemeral relay credentials via Cloudflare Calls.
   - If missing, the TURN endpoint falls back to STUN-only ICE servers (P2P may still work, but NAT traversal will be worse).
 
+### Redis client compatibility
+- **`REDIS_MAINT_NOTIFICATIONS_MODE`** (default: `disabled`): controls whether the Go Redis client sends `CLIENT MAINT_NOTIFICATIONS` on connect. Use `disabled` for Valkey or older Redis servers, `auto` to probe support safely, or `enabled` only when you know the server supports it.
+
+### OpenTelemetry tracing
+- **`OTEL_EXPORTER_OTLP_ENDPOINT`** (default: unset): base OTLP endpoint for traces and metrics, for example `http://jaeger:4318` or `http://otel-collector:4318`. When unset, Go telemetry stays disabled.
+- **`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`** (default: unset): trace-specific endpoint, for example `http://otel-collector:4318/v1/traces`. This is useful when your collector uses a non-default path.
+- **`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`** (default: unset): metric-specific endpoint, for example `http://otel-collector:4318/v1/metrics`.
+- **`OTEL_EXPORTER_OTLP_INSECURE`** (default: exporter default; common dev value: `true`): use plaintext HTTP for local/dev collectors.
+- **`OTEL_ENVIRONMENT`** (default: `development`): emitted as `deployment.environment` on spans.
+- **`OTEL_SERVICE_INSTANCE_ID`** (default: hostname): optional override for instance identity if hostnames are ephemeral or not unique enough.

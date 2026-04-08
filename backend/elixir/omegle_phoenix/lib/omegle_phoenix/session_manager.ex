@@ -17,6 +17,8 @@
 
 defmodule OmeglePhoenix.SessionManager do
   use GenServer
+  require OpenTelemetry.Tracer, as: Tracer
+  alias OmeglePhoenix.Tracing
 
   @session_fields [
     :id,
@@ -57,25 +59,35 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   def get_session(session_id) when is_binary(session_id) do
-    with {:ok, route} <-
-           OmeglePhoenix.RedisKeys.resolve_session_route(session_id, verify_exists: false) do
-      case OmeglePhoenix.Redis.command(["GET", session_key(session_id, route)]) do
-        {:ok, nil} ->
-          _ =
-            OmeglePhoenix.Redis.pipeline([
-              ["DEL", OmeglePhoenix.RedisKeys.session_locator_key(session_id)]
-            ])
+    Tracer.with_span "session_manager.get_session", %{kind: :internal} do
+      Tracing.annotate_internal("session_manager.get_session")
+      Tracer.set_attribute("session.ref", Tracing.safe_ref(session_id))
 
-          {:error, :not_found}
+      with {:ok, route} <-
+             OmeglePhoenix.RedisKeys.resolve_session_route(session_id, verify_exists: false) do
+        Tracer.set_attributes(%{
+          "session.route.mode" => route.mode,
+          "session.route.shard" => route.shard
+        })
 
-        {:ok, payload} ->
-          decode_session(payload)
+        case OmeglePhoenix.Redis.command(["GET", session_key(session_id, route)]) do
+          {:ok, nil} ->
+            _ =
+              OmeglePhoenix.Redis.pipeline([
+                ["DEL", OmeglePhoenix.RedisKeys.session_locator_key(session_id)]
+              ])
 
-        {:error, reason} ->
-          {:error, reason}
+            {:error, :not_found}
 
-        _ ->
-          {:error, :unexpected_session_lookup}
+          {:ok, payload} ->
+            decode_session(payload)
+
+          {:error, reason} ->
+            {:error, reason}
+
+          _ ->
+            {:error, :unexpected_session_lookup}
+        end
       end
     end
   end
@@ -83,53 +95,58 @@ defmodule OmeglePhoenix.SessionManager do
   def get_session(_session_id), do: {:error, :not_found}
 
   def get_sessions(session_ids) when is_list(session_ids) do
-    ordered_ids =
-      session_ids
-      |> Enum.filter(&is_binary/1)
-      |> Enum.uniq()
+    Tracer.with_span "session_manager.get_sessions", %{kind: :internal} do
+      Tracing.annotate_internal("session_manager.get_sessions")
+      Tracer.set_attribute("session.count", length(session_ids))
 
-    case ordered_ids do
-      [] ->
-        {:ok, %{}}
+      ordered_ids =
+        session_ids
+        |> Enum.filter(&is_binary/1)
+        |> Enum.uniq()
 
-      ids ->
-        with {:ok, routes} <- load_session_routes(ids) do
-          present_ids = Enum.filter(ids, &Map.has_key?(routes, &1))
+      case ordered_ids do
+        [] ->
+          {:ok, %{}}
 
-          if present_ids == [] do
-            {:ok, %{}}
-          else
-            keys = Enum.map(present_ids, &session_key(&1, Map.fetch!(routes, &1)))
+        ids ->
+          with {:ok, routes} <- load_session_routes(ids) do
+            present_ids = Enum.filter(ids, &Map.has_key?(routes, &1))
 
-            case OmeglePhoenix.Redis.mget(keys) do
-              {:ok, payloads} when is_list(payloads) ->
-                sessions =
-                  present_ids
-                  |> Enum.zip(payloads)
-                  |> Enum.reduce(%{}, fn
-                    {_id, nil}, acc ->
-                      acc
+            if present_ids == [] do
+              {:ok, %{}}
+            else
+              keys = Enum.map(present_ids, &session_key(&1, Map.fetch!(routes, &1)))
 
-                    {id, payload}, acc ->
-                      case decode_session(payload) do
-                        {:ok, session} -> Map.put(acc, id, session)
-                        _ -> acc
-                      end
-                  end)
+              case OmeglePhoenix.Redis.mget(keys) do
+                {:ok, payloads} when is_list(payloads) ->
+                  sessions =
+                    present_ids
+                    |> Enum.zip(payloads)
+                    |> Enum.reduce(%{}, fn
+                      {_id, nil}, acc ->
+                        acc
 
-                {:ok, sessions}
+                      {id, payload}, acc ->
+                        case decode_session(payload) do
+                          {:ok, session} -> Map.put(acc, id, session)
+                          _ -> acc
+                        end
+                    end)
 
-              {:error, reason} ->
-                {:error, reason}
+                  {:ok, sessions}
 
-              _ ->
-                {:error, :unexpected_session_batch_lookup}
+                {:error, reason} ->
+                  {:error, reason}
+
+                _ ->
+                  {:error, :unexpected_session_batch_lookup}
+              end
             end
+          else
+            {:error, reason} -> {:error, reason}
+            _ -> {:error, :unexpected_session_route_lookup}
           end
-        else
-          {:error, reason} -> {:error, reason}
-          _ -> {:error, :unexpected_session_route_lookup}
-        end
+      end
     end
   end
 
@@ -238,109 +255,147 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   def create_session(session_id, ip, preferences) do
-    session_token = generate_session_token()
-    now = System.system_time(:second)
-    normalized_preferences = normalize_preferences(preferences)
+    Tracer.with_span "session_manager.create_session", %{kind: :internal} do
+      Tracing.annotate_internal("session_manager.create_session")
+      session_token = generate_session_token()
+      now = System.system_time(:second)
+      normalized_preferences = normalize_preferences(preferences)
 
-    redis_shard =
-      OmeglePhoenix.RedisKeys.initial_shard(
-        Map.get(normalized_preferences, "mode", "text"),
-        normalized_preferences,
-        session_id
-      )
+      redis_shard =
+        OmeglePhoenix.RedisKeys.initial_shard(
+          Map.get(normalized_preferences, "mode", "text"),
+          normalized_preferences,
+          session_id
+        )
 
-    session = %{
-      id: session_id,
-      token: session_token,
-      ip: ip,
-      redis_shard: redis_shard,
-      match_generation: nil,
-      status: :waiting,
-      partner_id: nil,
-      last_partner_id: nil,
-      signaling_ready: false,
-      webrtc_started: false,
-      preferences: normalized_preferences,
-      created_at: now,
-      last_activity: now,
-      ban_status: false,
-      ban_reason: nil
-    }
+      Tracer.set_attributes(%{
+        "session.ref" => Tracing.safe_ref(session_id),
+        "client.ip_hash" => Tracing.safe_ref(ip),
+        "session.route.mode" => Map.get(normalized_preferences, "mode", "text"),
+        "session.route.shard" => redis_shard
+      })
 
-    case persist_session(session) do
-      :ok ->
-        {:ok, session}
+      session = %{
+        id: session_id,
+        token: session_token,
+        ip: ip,
+        redis_shard: redis_shard,
+        match_generation: nil,
+        status: :waiting,
+        partner_id: nil,
+        last_partner_id: nil,
+        signaling_ready: false,
+        webrtc_started: false,
+        preferences: normalized_preferences,
+        created_at: now,
+        last_activity: now,
+        ban_status: false,
+        ban_reason: nil
+      }
 
-      {:error, reason} ->
-        {:error, reason}
+      case persist_session(session) do
+        :ok ->
+          {:ok, session}
+
+        {:error, reason} ->
+          {:error, reason}
+      end
     end
   end
 
   def update_session(session_id, updates) do
-    normalized_updates = normalize_updates(updates)
+    Tracer.with_span "session_manager.update_session", %{kind: :internal} do
+      Tracing.annotate_internal("session_manager.update_session")
+      normalized_updates = normalize_updates(updates)
 
-    cond do
-      normalized_updates == %{} ->
-        with {:ok, _session_id} <- refresh_session(session_id),
-             {:ok, refreshed_session} <- get_session(session_id) do
-          {:ok, refreshed_session}
-        end
+      Tracer.set_attributes(%{
+        "session.ref" => Tracing.safe_ref(session_id),
+        "session.update_keys" =>
+          normalized_updates |> Map.keys() |> Enum.map(&Atom.to_string/1) |> Enum.join(",")
+      })
 
-      partial_update_supported?(normalized_updates) ->
-        case OmeglePhoenix.RedisState.update_session_fields(
-               session_id,
-               normalized_updates,
-               ttl_seconds()
-             ) do
-          {:ok, "not_found"} -> {:error, :not_found}
-          {:ok, payload} -> decode_session(payload)
-          {:error, :missing_queue_meta} -> persist_updated_session(session_id, normalized_updates)
-          {:error, reason} -> {:error, reason}
-          _ -> {:error, :not_found}
-        end
+      cond do
+        normalized_updates == %{} ->
+          with {:ok, _session_id} <- refresh_session(session_id),
+               {:ok, refreshed_session} <- get_session(session_id) do
+            {:ok, refreshed_session}
+          end
 
-      true ->
-        persist_updated_session(session_id, normalized_updates)
+        partial_update_supported?(normalized_updates) ->
+          case OmeglePhoenix.RedisState.update_session_fields(
+                 session_id,
+                 normalized_updates,
+                 ttl_seconds()
+               ) do
+            {:ok, "not_found"} ->
+              {:error, :not_found}
+
+            {:ok, payload} ->
+              decode_session(payload)
+
+            {:error, :missing_queue_meta} ->
+              persist_updated_session(session_id, normalized_updates)
+
+            {:error, reason} ->
+              {:error, reason}
+
+            _ ->
+              {:error, :not_found}
+          end
+
+        true ->
+          persist_updated_session(session_id, normalized_updates)
+      end
     end
   end
 
   def refresh_session(session_id) do
-    case OmeglePhoenix.RedisState.touch_session(session_id, ttl_seconds()) do
-      {:ok, "ok"} -> {:ok, session_id}
-      {:ok, "not_found"} -> {:error, :not_found}
-      {:error, reason} -> {:error, reason}
-      _ -> {:error, :not_found}
+    Tracer.with_span "session_manager.refresh_session", %{kind: :internal} do
+      Tracing.annotate_internal("session_manager.refresh_session")
+      Tracer.set_attribute("session.ref", Tracing.safe_ref(session_id))
+
+      case OmeglePhoenix.RedisState.touch_session(session_id, ttl_seconds()) do
+        {:ok, "ok"} -> {:ok, session_id}
+        {:ok, "not_found"} -> {:error, :not_found}
+        {:error, reason} -> {:error, reason}
+        _ -> {:error, :not_found}
+      end
     end
   end
 
   def delete_session(session_id) do
-    with {:ok, route} <-
-           OmeglePhoenix.RedisKeys.resolve_session_route(session_id, verify_exists: false),
-         {:ok, ip} <- load_session_ip(session_id, route) do
-      case OmeglePhoenix.RedisState.delete_session(
-             session_id,
-             ip,
-             report_grace_seconds(),
-             route: route,
-             index_cleanup: :async
-           ) do
-        {:ok, _} -> :ok
-        {:error, reason} -> {:error, reason}
-      end
-    else
-      {:error, :not_found} ->
-        case OmeglePhoenix.RedisState.cleanup_orphaned_session(
+    Tracer.with_span "session_manager.delete_session", %{kind: :internal} do
+      Tracing.annotate_internal("session_manager.delete_session")
+      Tracer.set_attribute("session.ref", Tracing.safe_ref(session_id))
+
+      with {:ok, route} <-
+             OmeglePhoenix.RedisKeys.resolve_session_route(session_id, verify_exists: false),
+           {:ok, ip} <- load_session_ip(session_id, route) do
+        case OmeglePhoenix.RedisState.delete_session(
                session_id,
-               nil,
+               ip,
                report_grace_seconds(),
+               route: route,
                index_cleanup: :async
              ) do
           {:ok, _} -> :ok
           {:error, reason} -> {:error, reason}
         end
+      else
+        {:error, :not_found} ->
+          case OmeglePhoenix.RedisState.cleanup_orphaned_session(
+                 session_id,
+                 nil,
+                 report_grace_seconds(),
+                 index_cleanup: :async
+               ) do
+            {:ok, _} -> :ok
+            {:error, reason} -> {:error, reason}
+          end
 
-      {:error, reason} ->
-        {:error, reason}
+        {:error, reason} ->
+          {:error, reason}
+      end
     end
   end
 
@@ -457,42 +512,52 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   def pair_sessions(session1, session2) do
-    if session1.redis_shard != session2.redis_shard do
-      {:error, :cross_shard_pairing_unsupported}
-    else
-      common_interests = get_common_interests(session1.preferences, session2.preferences)
-      match_generation = generate_match_generation()
+    Tracer.with_span "session_manager.pair_sessions", %{kind: :internal} do
+      Tracing.annotate_internal("session_manager.pair_sessions")
 
-      updated_session1 =
-        touch_last_activity(%{
-          session1
-          | match_generation: match_generation,
-            status: :matched,
-            partner_id: session2.id,
-            last_partner_id: session2.id,
-            signaling_ready: false,
-            webrtc_started: false
-        })
+      Tracer.set_attributes(%{
+        "session.primary_ref" => Tracing.safe_ref(session1.id),
+        "session.partner_ref" => Tracing.safe_ref(session2.id),
+        "session.redis_shard" => session1.redis_shard
+      })
 
-      updated_session2 =
-        touch_last_activity(%{
-          session2
-          | match_generation: match_generation,
-            status: :matched,
-            partner_id: session1.id,
-            last_partner_id: session1.id,
-            signaling_ready: false,
-            webrtc_started: false
-        })
+      if session1.redis_shard != session2.redis_shard do
+        {:error, :cross_shard_pairing_unsupported}
+      else
+        common_interests = get_common_interests(session1.preferences, session2.preferences)
+        match_generation = generate_match_generation()
 
-      case OmeglePhoenix.RedisState.pair_sessions(
-             updated_session1,
-             updated_session2,
-             ttl_seconds(),
-             report_grace_seconds()
-           ) do
-        {:ok, _} -> {:ok, updated_session1, updated_session2, common_interests}
-        {:error, reason} -> {:error, reason}
+        updated_session1 =
+          touch_last_activity(%{
+            session1
+            | match_generation: match_generation,
+              status: :matched,
+              partner_id: session2.id,
+              last_partner_id: session2.id,
+              signaling_ready: false,
+              webrtc_started: false
+          })
+
+        updated_session2 =
+          touch_last_activity(%{
+            session2
+            | match_generation: match_generation,
+              status: :matched,
+              partner_id: session1.id,
+              last_partner_id: session1.id,
+              signaling_ready: false,
+              webrtc_started: false
+          })
+
+        case OmeglePhoenix.RedisState.pair_sessions(
+               updated_session1,
+               updated_session2,
+               ttl_seconds(),
+               report_grace_seconds()
+             ) do
+          {:ok, _} -> {:ok, updated_session1, updated_session2, common_interests}
+          {:error, reason} -> {:error, reason}
+        end
       end
     end
   end

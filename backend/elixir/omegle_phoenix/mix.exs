@@ -51,7 +51,10 @@ defmodule OmeglePhoenix.MixProject do
       {:castore, "~> 1.0"},
       {:finch, "~> 0.17"},
       {:uuid, "~> 1.1"},
-      {:gettext, "~> 0.23"}
+      {:gettext, "~> 0.23"},
+      {:opentelemetry_api, "~> 1.4"},
+      {:opentelemetry, "~> 1.4"},
+      {:opentelemetry_exporter, "~> 1.6"}
     ]
   end
 

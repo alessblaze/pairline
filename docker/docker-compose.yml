@@ -18,6 +18,84 @@
 x-phoenix-image: &phoenix_image pairline-phoenix:local
 
 services:
+  jaeger:
+    image: jaegertracing/jaeger:2.17.0
+    container_name: pairline-jaeger
+    depends_on:
+      - prometheus
+    command:
+      - --config
+      - /jaeger/config-v2.yaml
+    ports:
+      - "16686:16686"
+      - "16685:16685"
+      - "4317:4317"
+      - "4318:4318"
+      - "14250:14250"
+      - "14268:14268"
+      - "6831:6831/udp"
+      - "6832:6832/udp"
+      - "9411:9411"
+      - "8888:8888"
+      - "8889:8889"
+    networks:
+      pairline_cluster:
+        ipv4_address: 172.30.0.5
+    volumes:
+      - ./jaeger/ui-config.json:/etc/jaeger/ui-config.json:ro
+      - ./jaeger/config-v2.yaml:/jaeger/config-v2.yaml:ro
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: pairline-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./otel/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      pairline_cluster:
+        ipv4_address: 172.30.0.7
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: pairline-grafana
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboard.sjon:/etc/grafana/dashboards/pairline-dashboard.json:ro
+      - grafana_data:/var/lib/grafana
+    networks:
+      pairline_cluster:
+        ipv4_address: 172.30.0.8
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.108.0
+    container_name: pairline-otel-collector
+    depends_on:
+      - jaeger
+      - prometheus
+    command:
+      - --config=/etc/otelcol/config.yaml
+    volumes:
+      - ./otel/collector-config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "9464:9464"
+      - "13133:13133"
+    networks:
+      pairline_cluster:
+        ipv4_address: 172.30.0.6
+
   nginx:
     image: nginx:stable
     container_name: pairline-nginx
@@ -313,6 +391,10 @@ services:
       TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
       SKIP_DOTENV: "1"
       MIX_ENV: dev
+      OTEL_SERVICE_NAME: omegle-phoenix
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+      OTEL_ENVIRONMENT: docker
     networks:
       pairline_cluster:
         ipv4_address: 172.30.0.11
@@ -359,6 +441,10 @@ services:
       TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
       SKIP_DOTENV: "1"
       MIX_ENV: dev
+      OTEL_SERVICE_NAME: omegle-phoenix
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+      OTEL_ENVIRONMENT: docker
     networks:
       pairline_cluster:
         ipv4_address: 172.30.0.12
@@ -405,6 +491,10 @@ services:
       TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
       SKIP_DOTENV: "1"
       MIX_ENV: dev
+      OTEL_SERVICE_NAME: omegle-phoenix
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+      OTEL_ENVIRONMENT: docker
     networks:
       pairline_cluster:
         ipv4_address: 172.30.0.13
@@ -450,6 +540,10 @@ services:
       CORS_ORIGIN: http://localhost:8080,http://127.0.0.1:8080
       TRUSTED_PROXY_CIDRS: 127.0.0.0/8,::1/128,172.16.0.0/12
       GOCACHE: /tmp/go-build
+      REDIS_MAINT_NOTIFICATIONS_MODE: disabled
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+      OTEL_ENVIRONMENT: docker
     networks:
       pairline_cluster:
         ipv4_address: 172.30.0.40
@@ -491,6 +585,10 @@ services:
       CORS_ORIGIN: http://localhost:8080,http://127.0.0.1:8080
       TRUSTED_PROXY_CIDRS: 127.0.0.0/8,::1/128,172.16.0.0/12
       GOCACHE: /tmp/go-build
+      REDIS_MAINT_NOTIFICATIONS_MODE: disabled
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+      OTEL_ENVIRONMENT: docker
     networks:
       pairline_cluster:
         ipv4_address: 172.30.0.42
@@ -532,6 +630,10 @@ services:
       CORS_ORIGIN: http://localhost:8080,http://127.0.0.1:8080
       TRUSTED_PROXY_CIDRS: 127.0.0.0/8,::1/128,172.16.0.0/12
       GOCACHE: /tmp/go-build
+      REDIS_MAINT_NOTIFICATIONS_MODE: disabled
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+      OTEL_ENVIRONMENT: docker
     networks:
       pairline_cluster:
         ipv4_address: 172.30.0.41
@@ -547,6 +649,8 @@ services:
         /usr/local/go/bin/go run ./cmd/admin
 
 volumes:
+  prometheus_data:
+  grafana_data:
   postgres_cluster_data:
   redis_node_1_data:
   redis_node_2_data:

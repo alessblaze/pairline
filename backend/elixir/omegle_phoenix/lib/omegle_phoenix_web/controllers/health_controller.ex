@@ -18,41 +18,54 @@
 defmodule OmeglePhoenixWeb.HealthController do
   use OmeglePhoenixWeb, :controller
   require Logger
+  require OpenTelemetry.Tracer, as: Tracer
+  alias OmeglePhoenix.Tracing
 
   def index(conn, _params) do
-    response = %{
-      service: "omegle-phoenix",
-      status: "ok",
-      timestamp: System.system_time(:millisecond)
-    }
+    Tracer.with_span "phoenix.health.index", %{kind: :server} do
+      Tracing.annotate_server("phoenix.health.index")
 
-    response =
-      if OmeglePhoenix.Config.health_details_enabled?() do
-        details = %{
-          node: Atom.to_string(Node.self()),
-          connected_nodes: Enum.map(Node.list(), &Atom.to_string/1),
-          queue_depths: OmeglePhoenix.Matchmaker.queue_depths(),
-          metrics: OmeglePhoenix.Metrics.snapshot()
-        }
+      Tracer.set_attributes(%{
+        "http.route" => "/api/health",
+        "service.name" => "omegle-phoenix",
+        "health.details_enabled" => OmeglePhoenix.Config.health_details_enabled?()
+      })
 
-        details =
-          case OmeglePhoenix.SessionManager.count_active_sessions() do
-            {:ok, active_sessions} ->
-              Map.put(details, :active_sessions, active_sessions)
+      response = %{
+        service: "omegle-phoenix",
+        status: "ok",
+        timestamp: System.system_time(:millisecond)
+      }
 
-            {:error, reason} ->
-              Logger.warning(
-                "Health controller could not load active session count: #{inspect(reason)}"
-              )
+      response =
+        if OmeglePhoenix.Config.health_details_enabled?() do
+          details = %{
+            node: Atom.to_string(Node.self()),
+            connected_nodes: Enum.map(Node.list(), &Atom.to_string/1),
+            queue_depths: OmeglePhoenix.Matchmaker.queue_depths(),
+            metrics: OmeglePhoenix.Metrics.snapshot()
+          }
 
-              details
-          end
+          details =
+            case OmeglePhoenix.SessionManager.count_active_sessions() do
+              {:ok, active_sessions} ->
+                Tracer.set_attribute("session.active_count", active_sessions)
+                Map.put(details, :active_sessions, active_sessions)
 
-        Map.merge(response, details)
-      else
-        response
-      end
+              {:error, reason} ->
+                Logger.warning(
+                  "Health controller could not load active session count: #{inspect(reason)}"
+                )
 
-    json(conn, response)
+                details
+            end
+
+          Map.merge(response, details)
+        else
+          response
+        end
+
+      json(conn, response)
+    end
   end
 end

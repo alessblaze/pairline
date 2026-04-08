@@ -18,6 +18,8 @@
 defmodule OmeglePhoenix.Matchmaker do
   use GenServer
   require Logger
+  require OpenTelemetry.Tracer, as: Tracer
+  alias OmeglePhoenix.Tracing
 
   alias OmeglePhoenix.Redis.Streams
 
@@ -52,82 +54,105 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   def join_queue(session_id, preferences) do
-    timestamp = System.system_time(:millisecond)
-    normalized_preferences = normalize_preferences(preferences)
-    generation = fallback_generation(normalized_preferences)
+    Tracer.with_span "matchmaker.join_queue", %{kind: :internal} do
+      Tracing.annotate_internal("matchmaker.join_queue")
+      timestamp = System.system_time(:millisecond)
+      normalized_preferences = normalize_preferences(preferences)
+      generation = fallback_generation(normalized_preferences)
 
-    with {:ok, route} <- OmeglePhoenix.SessionManager.get_session_route(session_id) do
-      queue_keys = initial_queue_keys_for_session(session_id, normalized_preferences, route)
+      Tracer.set_attributes(%{
+        "session.ref" => Tracing.safe_ref(session_id),
+        "match.mode" => Map.get(normalized_preferences, "mode", "text"),
+        "match.has_interests" => Map.get(normalized_preferences, "interests", "") != ""
+      })
 
-      case enqueue_queue_keys(session_id, route, queue_keys, timestamp) do
-        {:ok, _result} ->
-          sync_fallback_generation(session_id, generation)
-          schedule_local_match_attempts(queue_keys)
-          emit_match_event(queue_keys, "join", session_id)
-          schedule_fallback_checks(queue_keys, normalized_preferences, session_id, generation)
+      with {:ok, route} <- OmeglePhoenix.SessionManager.get_session_route(session_id) do
+        Tracer.set_attributes(%{
+          "session.route.mode" => route.mode,
+          "session.route.shard" => route.shard
+        })
 
-          :telemetry.execute([:omegle_phoenix, :matchmaking, :queued], %{count: 1}, %{
-            session_id: session_id,
-            shard: route.shard
-          })
+        queue_keys = initial_queue_keys_for_session(session_id, normalized_preferences, route)
+        Tracer.set_attribute("match.queue_count", length(queue_keys))
 
-          :ok
+        case enqueue_queue_keys(session_id, route, queue_keys, timestamp) do
+          {:ok, _result} ->
+            sync_fallback_generation(session_id, generation)
+            schedule_local_match_attempts(queue_keys)
+            emit_match_event(queue_keys, "join", session_id)
+            schedule_fallback_checks(queue_keys, normalized_preferences, session_id, generation)
 
-        {:error, reason} = error ->
-          Logger.warning("Failed to queue #{session_id}: #{inspect(reason)}")
-          error
+            :telemetry.execute([:omegle_phoenix, :matchmaking, :queued], %{count: 1}, %{
+              session_id: session_id,
+              shard: route.shard
+            })
+
+            :ok
+
+          {:error, reason} = error ->
+            Logger.warning("Failed to queue #{session_id}: #{inspect(reason)}")
+            error
+        end
       end
     end
   end
 
   def leave_queue(session_id) do
-    clear_fallback_generation(session_id)
+    Tracer.with_span "matchmaker.leave_queue", %{kind: :internal} do
+      Tracing.annotate_internal("matchmaker.leave_queue")
+      Tracer.set_attribute("session.ref", Tracing.safe_ref(session_id))
+      clear_fallback_generation(session_id)
 
-    with {:ok, route} <- OmeglePhoenix.SessionManager.get_session_route(session_id) do
-      membership_key = session_queue_key(session_id, route)
-      registry_key = queue_registry_key(route)
+      with {:ok, route} <- OmeglePhoenix.SessionManager.get_session_route(session_id) do
+        membership_key = session_queue_key(session_id, route)
+        registry_key = queue_registry_key(route)
 
-      case OmeglePhoenix.Redis.command(["SMEMBERS", membership_key]) do
-        {:ok, []} ->
-          :ok
+        case OmeglePhoenix.Redis.command(["SMEMBERS", membership_key]) do
+          {:ok, []} ->
+            :ok
 
-        {:ok, queue_keys} when is_list(queue_keys) ->
-          commands =
-            Enum.map(queue_keys, fn queue_key ->
-              ["ZREM", queue_key, session_id]
-            end) ++
+          {:ok, queue_keys} when is_list(queue_keys) ->
+            Tracer.set_attribute("match.queue_count", length(queue_keys))
+
+            commands =
               Enum.map(queue_keys, fn queue_key ->
-                ["SREM", membership_key, queue_key]
-              end) ++ [["DEL", membership_key]]
+                ["ZREM", queue_key, session_id]
+              end) ++
+                Enum.map(queue_keys, fn queue_key ->
+                  ["SREM", membership_key, queue_key]
+                end) ++ [["DEL", membership_key]]
 
-          case OmeglePhoenix.Redis.pipeline(commands) do
-            {:ok, _results} ->
-              Enum.each(queue_keys, &prune_queue_if_empty(&1, registry_key))
-              :ok
+            case OmeglePhoenix.Redis.pipeline(commands) do
+              {:ok, _results} ->
+                Enum.each(queue_keys, &prune_queue_if_empty(&1, registry_key))
+                :ok
 
-            {:error, reason} = error ->
-              Logger.warning(
-                "Failed to remove #{session_id} from matchmaking queues: #{inspect(reason)}"
-              )
+              {:error, reason} = error ->
+                Logger.warning(
+                  "Failed to remove #{session_id} from matchmaking queues: #{inspect(reason)}"
+                )
 
-              error
-          end
+                error
+            end
+
+          {:error, reason} = error ->
+            Logger.warning(
+              "Failed to load queue membership for #{session_id}: #{inspect(reason)}"
+            )
+
+            error
+        end
+      else
+        {:error, :not_found} ->
+          cleanup_unknown_queue_membership(session_id)
 
         {:error, reason} = error ->
-          Logger.warning("Failed to load queue membership for #{session_id}: #{inspect(reason)}")
-
+          Logger.warning("Failed to resolve queue route for #{session_id}: #{inspect(reason)}")
           error
+
+        _ ->
+          {:error, :unexpected_queue_route_lookup}
       end
-    else
-      {:error, :not_found} ->
-        cleanup_unknown_queue_membership(session_id)
-
-      {:error, reason} = error ->
-        Logger.warning("Failed to resolve queue route for #{session_id}: #{inspect(reason)}")
-        error
-
-      _ ->
-        {:error, :unexpected_queue_route_lookup}
     end
   end
 
@@ -401,100 +426,108 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   defp do_matching(queue_key) do
-    with_queue_leader(queue_key, fn ->
-      now = System.system_time(:millisecond)
-      expiration_time = now - OmeglePhoenix.Config.get_match_timeout()
-      batch_size = OmeglePhoenix.Config.get_match_batch_size()
+    Tracer.with_span "matchmaker.do_matching", %{kind: :internal} do
+      Tracing.annotate_internal("matchmaker.do_matching")
+      Tracer.set_attribute("match.queue_key", queue_key)
 
-      case OmeglePhoenix.Redis.command([
-             "ZRANGEBYSCORE",
-             queue_key,
-             "0",
-             to_string(expiration_time),
-             "LIMIT",
-             "0",
-             Integer.to_string(batch_size)
-           ]) do
-        {:ok, expired_sessions} ->
-          Enum.each(expired_sessions, fn session_id ->
-            case OmeglePhoenix.SessionManager.get_session(session_id) do
-              {:ok, session} when session.status == :waiting ->
-                with :ok <- leave_queue(session_id),
-                     {:ok, _updated_session} <-
-                       OmeglePhoenix.SessionManager.update_session(session_id, %{
-                         status: :disconnecting
-                       }) do
-                  OmeglePhoenix.Router.notify_timeout(session_id)
+      with_queue_leader(queue_key, fn ->
+        now = System.system_time(:millisecond)
+        expiration_time = now - OmeglePhoenix.Config.get_match_timeout()
+        batch_size = OmeglePhoenix.Config.get_match_batch_size()
 
-                  :telemetry.execute([:omegle_phoenix, :matchmaking, :timeout], %{count: 1}, %{
-                    session_id: session_id
-                  })
-                else
-                  {:error, reason} ->
-                    Logger.warning(
-                      "Failed to time out matchmaking session #{session_id}: #{inspect(reason)}"
-                    )
-                end
-
-              {:error, reason} ->
-                Logger.warning(
-                  "Skipped timeout cleanup for #{session_id} because session lookup failed: #{inspect(reason)}"
-                )
-
-              _ ->
-                :ok
-            end
-          end)
-
-        _ ->
-          :ok
-      end
-
-      sessions_with_prefs =
         case OmeglePhoenix.Redis.command([
                "ZRANGEBYSCORE",
                queue_key,
                "0",
-               "+inf",
-               "WITHSCORES",
+               to_string(expiration_time),
                "LIMIT",
                "0",
                Integer.to_string(batch_size)
              ]) do
-          {:ok, []} ->
-            []
+          {:ok, expired_sessions} ->
+            Enum.each(expired_sessions, fn session_id ->
+              case OmeglePhoenix.SessionManager.get_session(session_id) do
+                {:ok, session} when session.status == :waiting ->
+                  with :ok <- leave_queue(session_id),
+                       {:ok, _updated_session} <-
+                         OmeglePhoenix.SessionManager.update_session(session_id, %{
+                           status: :disconnecting
+                         }) do
+                    OmeglePhoenix.Router.notify_timeout(session_id)
 
-          {:ok, [_single]} ->
-            []
+                    :telemetry.execute([:omegle_phoenix, :matchmaking, :timeout], %{count: 1}, %{
+                      session_id: session_id
+                    })
+                  else
+                    {:error, reason} ->
+                      Logger.warning(
+                        "Failed to time out matchmaking session #{session_id}: #{inspect(reason)}"
+                      )
+                  end
 
-          {:ok, session_ids_with_scores} when is_list(session_ids_with_scores) ->
-            case build_session_pool(session_ids_with_scores, now) do
-              {:ok, pool} ->
-                pool
+                {:error, reason} ->
+                  Logger.warning(
+                    "Skipped timeout cleanup for #{session_id} because session lookup failed: #{inspect(reason)}"
+                  )
 
-              {:error, reason} ->
-                Logger.warning(
-                  "Skipped matching for queue #{queue_key} because session pool loading failed: #{inspect(reason)}"
-                )
-
-                []
-            end
-
-          {:error, reason} ->
-            Logger.warning("Failed to load queue candidates for #{queue_key}: #{inspect(reason)}")
-            []
+                _ ->
+                  :ok
+              end
+            end)
 
           _ ->
-            []
+            :ok
         end
 
-      match_from_pool(queue_key, sessions_with_prefs, MapSet.new())
+        sessions_with_prefs =
+          case OmeglePhoenix.Redis.command([
+                 "ZRANGEBYSCORE",
+                 queue_key,
+                 "0",
+                 "+inf",
+                 "WITHSCORES",
+                 "LIMIT",
+                 "0",
+                 Integer.to_string(batch_size)
+               ]) do
+            {:ok, []} ->
+              []
 
-      case queue_route(queue_key) do
-        {:ok, route} -> prune_queue_if_empty(queue_key, queue_registry_key(route))
-        _ -> :ok
-      end
-    end)
+            {:ok, [_single]} ->
+              []
+
+            {:ok, session_ids_with_scores} when is_list(session_ids_with_scores) ->
+              case build_session_pool(session_ids_with_scores, now) do
+                {:ok, pool} ->
+                  pool
+
+                {:error, reason} ->
+                  Logger.warning(
+                    "Skipped matching for queue #{queue_key} because session pool loading failed: #{inspect(reason)}"
+                  )
+
+                  []
+              end
+
+            {:error, reason} ->
+              Logger.warning(
+                "Failed to load queue candidates for #{queue_key}: #{inspect(reason)}"
+              )
+
+              []
+
+            _ ->
+              []
+          end
+
+        match_from_pool(queue_key, sessions_with_prefs, MapSet.new())
+
+        case queue_route(queue_key) do
+          {:ok, route} -> prune_queue_if_empty(queue_key, queue_registry_key(route))
+          _ -> :ok
+        end
+      end)
+    end
   end
 
   defp match_from_pool(_queue_key, [], _matched), do: :ok
@@ -629,147 +662,153 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   defp pair_users(session_id1, session_id2, strategy) do
-    OmeglePhoenix.SessionLock.with_locks([session_id1, session_id2], fn ->
-      maybe_run_pairing_test_hook(
-        :before_load_sessions,
-        %{id: session_id1},
-        %{id: session_id2}
-      )
+    Tracer.with_span "matchmaker.pair_users", %{kind: :internal} do
+      Tracing.annotate_internal("matchmaker.pair_users")
 
-      session1_result = OmeglePhoenix.SessionManager.get_session(session_id1)
-      session2_result = OmeglePhoenix.SessionManager.get_session(session_id2)
+      Tracer.set_attributes(%{
+        "session.primary_ref" => Tracing.safe_ref(session_id1),
+        "session.partner_ref" => Tracing.safe_ref(session_id2),
+        "match.strategy" => Atom.to_string(strategy)
+      })
 
-      case {session1_result, session2_result} do
-        {{:ok, session1}, {:ok, session2}} ->
-          cond do
-            not pairable_session?(session1) and not pairable_session?(session2) ->
-              {:retry, :both_removed}
+      OmeglePhoenix.SessionLock.with_locks([session_id1, session_id2], fn ->
+        maybe_run_pairing_test_hook(
+          :before_load_sessions,
+          %{id: session_id1},
+          %{id: session_id2}
+        )
 
-            not pairable_session?(session1) ->
-              {:retry, :session1_removed}
+        session1_result = OmeglePhoenix.SessionManager.get_session(session_id1)
+        session2_result = OmeglePhoenix.SessionManager.get_session(session_id2)
 
-            not pairable_session?(session2) ->
-              {:retry, :session2_removed}
+        case {session1_result, session2_result} do
+          {{:ok, session1}, {:ok, session2}} ->
+            cond do
+              not pairable_session?(session1) and not pairable_session?(session2) ->
+                {:retry, :both_removed}
 
-            true ->
-              case banned_pair_result(session1, session2) do
-                nil ->
-                  maybe_run_pairing_test_hook(:before_pair_sessions, session1, session2)
+              not pairable_session?(session1) ->
+                {:retry, :session1_removed}
 
-                  case OmeglePhoenix.SessionManager.pair_sessions(session1, session2) do
-                    {:ok, updated_session1, updated_session2, common_interests} ->
-                      drop_matched_from_queues([session_id1, session_id2])
+              not pairable_session?(session2) ->
+                {:retry, :session2_removed}
 
-                      updated_route1 = %{
-                        mode: OmeglePhoenix.RedisKeys.mode(updated_session1.preferences),
-                        shard: updated_session1.redis_shard
-                      }
+              true ->
+                case banned_pair_result(session1, session2) do
+                  nil ->
+                    maybe_run_pairing_test_hook(:before_pair_sessions, session1, session2)
 
-                      updated_route2 = %{
-                        mode: OmeglePhoenix.RedisKeys.mode(updated_session2.preferences),
-                        shard: updated_session2.redis_shard
-                      }
+                    case OmeglePhoenix.SessionManager.pair_sessions(session1, session2) do
+                      {:ok, updated_session1, updated_session2, common_interests} ->
+                        drop_matched_from_queues([session_id1, session_id2])
 
-                      owner_node1 = owner_node_hint(session_id1, updated_route1)
-                      owner_node2 = owner_node_hint(session_id2, updated_route2)
-
-                      match_generation =
-                        updated_session1.match_generation || updated_session2.match_generation
-
-                      OmeglePhoenix.Router.notify_match(
-                        session_id1,
-                        session_id2,
-                        common_interests,
-                        match_generation,
-                        updated_route2,
-                        owner_node2
-                      )
-
-                      OmeglePhoenix.Router.notify_match(
-                        session_id2,
-                        session_id1,
-                        common_interests,
-                        match_generation,
-                        updated_route1,
-                        owner_node1
-                      )
-
-                      :telemetry.execute(
-                        [:omegle_phoenix, :matchmaking, :matched],
-                        %{count: 1},
-                        %{
-                          session_id: session_id1,
-                          partner_id: session_id2,
-                          common_interests: length(common_interests),
-                          strategy: strategy
+                        updated_route1 = %{
+                          mode: OmeglePhoenix.RedisKeys.mode(updated_session1.preferences),
+                          shard: updated_session1.redis_shard
                         }
-                      )
 
-                      event =
-                        case strategy do
-                          :overflow -> [:omegle_phoenix, :matchmaking, :matched_overflow]
-                          _ -> [:omegle_phoenix, :matchmaking, :matched_local]
-                        end
+                        updated_route2 = %{
+                          mode: OmeglePhoenix.RedisKeys.mode(updated_session2.preferences),
+                          shard: updated_session2.redis_shard
+                        }
 
-                      :telemetry.execute(event, %{count: 1}, %{
-                        session_id: session_id1,
-                        partner_id: session_id2
-                      })
+                        owner_node1 = owner_node_hint(session_id1, updated_route1)
+                        owner_node2 = owner_node_hint(session_id2, updated_route2)
 
-                      :ok
+                        match_generation =
+                          updated_session1.match_generation || updated_session2.match_generation
 
-                    {:error, reason} ->
-                      {:error, reason}
-                  end
+                        OmeglePhoenix.Router.notify_match(
+                          session_id1,
+                          session_id2,
+                          common_interests,
+                          match_generation,
+                          updated_route2,
+                          owner_node2
+                        )
 
-                retry ->
-                  retry
-              end
-          end
+                        OmeglePhoenix.Router.notify_match(
+                          session_id2,
+                          session_id1,
+                          common_interests,
+                          match_generation,
+                          updated_route1,
+                          owner_node1
+                        )
 
-        {{:error, :not_found}, {:error, :not_found}} ->
-          Logger.warning(
-            "Matchmaker: sessions disappeared during pairing (#{session_id1} and #{session_id2})"
-          )
+                        :telemetry.execute(
+                          [:omegle_phoenix, :matchmaking, :matched],
+                          %{count: 1},
+                          %{
+                            session_id: session_id1,
+                            partner_id: session_id2,
+                            common_interests: length(common_interests),
+                            strategy: strategy
+                          }
+                        )
 
-          {:retry, :both_removed}
+                        event =
+                          case strategy do
+                            :overflow -> [:omegle_phoenix, :matchmaking, :matched_overflow]
+                            _ -> [:omegle_phoenix, :matchmaking, :matched_local]
+                          end
 
-        {{:error, :not_found}, _} ->
-          Logger.warning(
-            "Matchmaker: session disappeared during pairing (#{session_id1})"
-          )
+                        :telemetry.execute(event, %{count: 1}, %{
+                          session_id: session_id1,
+                          partner_id: session_id2
+                        })
 
-          {:retry, :session1_removed}
+                        :ok
 
-        {_, {:error, :not_found}} ->
-          Logger.warning(
-            "Matchmaker: session disappeared during pairing (#{session_id2})"
-          )
+                      {:error, reason} ->
+                        {:error, reason}
+                    end
 
-          {:retry, :session2_removed}
+                  retry ->
+                    retry
+                end
+            end
 
-        {{:error, _reason} = error, _} ->
-          Logger.warning(
-            "Matchmaker: failed to load session during pairing #{session_id1}/#{session_id2}: #{inspect(error)}"
-          )
+          {{:error, :not_found}, {:error, :not_found}} ->
+            Logger.warning(
+              "Matchmaker: sessions disappeared during pairing (#{session_id1} and #{session_id2})"
+            )
 
-          error
+            {:retry, :both_removed}
 
-        {_, {:error, _reason} = error} ->
-          Logger.warning(
-            "Matchmaker: failed to load session during pairing #{session_id1}/#{session_id2}: #{inspect(error)}"
-          )
+          {{:error, :not_found}, _} ->
+            Logger.warning("Matchmaker: session disappeared during pairing (#{session_id1})")
 
-          error
+            {:retry, :session1_removed}
 
-        _other ->
-          Logger.warning(
-            "Matchmaker: unexpected pairing precondition for #{session_id1}/#{session_id2}"
-          )
+          {_, {:error, :not_found}} ->
+            Logger.warning("Matchmaker: session disappeared during pairing (#{session_id2})")
 
-          {:retry, :both_removed}
-      end
-    end)
+            {:retry, :session2_removed}
+
+          {{:error, _reason} = error, _} ->
+            Logger.warning(
+              "Matchmaker: failed to load session during pairing #{session_id1}/#{session_id2}: #{inspect(error)}"
+            )
+
+            error
+
+          {_, {:error, _reason} = error} ->
+            Logger.warning(
+              "Matchmaker: failed to load session during pairing #{session_id1}/#{session_id2}: #{inspect(error)}"
+            )
+
+            error
+
+          _other ->
+            Logger.warning(
+              "Matchmaker: unexpected pairing precondition for #{session_id1}/#{session_id2}"
+            )
+
+            {:retry, :both_removed}
+        end
+      end)
+    end
   end
 
   defp pairable_session?(session) do
@@ -1487,25 +1526,34 @@ defmodule OmeglePhoenix.Matchmaker do
   defp emit_match_event([], _event, _session_id), do: :ok
 
   defp emit_match_event(queue_keys, event, session_id) do
-    payload = Jason.encode!(Enum.uniq(queue_keys))
+    Tracer.with_span "matchmaker.emit_event", %{kind: :internal} do
+      Tracing.annotate_internal("matchmaker.emit_event")
+      payload = Jason.encode!(Enum.uniq(queue_keys))
 
-    _ =
-      OmeglePhoenix.Redis.command([
-        "XADD",
-        OmeglePhoenix.Config.get_match_event_stream(),
-        "MAXLEN",
-        "~",
-        Integer.to_string(OmeglePhoenix.Config.get_match_event_stream_maxlen()),
-        "*",
-        "event",
-        event,
-        "session_id",
-        session_id,
-        "queue_keys",
-        payload
-      ])
+      Tracer.set_attributes(%{
+        "match.event" => event,
+        "session.ref" => Tracing.safe_ref(session_id),
+        "match.queue_count" => length(queue_keys)
+      })
 
-    :ok
+      _ =
+        OmeglePhoenix.Redis.command([
+          "XADD",
+          OmeglePhoenix.Config.get_match_event_stream(),
+          "MAXLEN",
+          "~",
+          Integer.to_string(OmeglePhoenix.Config.get_match_event_stream_maxlen()),
+          "*",
+          "event",
+          event,
+          "session_id",
+          session_id,
+          "queue_keys",
+          payload
+        ])
+
+      :ok
+    end
   end
 
   defp schedule_local_match_attempts([]), do: :ok
@@ -1523,20 +1571,25 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   defp run_local_match_batch(queue_keys) do
-    max_concurrency =
-      queue_keys
-      |> length()
-      |> min(System.schedulers_online())
-      |> max(1)
+    Tracer.with_span "matchmaker.local_batch", %{kind: :internal} do
+      Tracing.annotate_internal("matchmaker.local_batch")
+      Tracer.set_attribute("match.queue_count", length(queue_keys))
 
-    queue_keys
-    |> Task.async_stream(&run_local_match_attempt/1,
-      max_concurrency: max_concurrency,
-      timeout: 15_000,
-      on_timeout: :kill_task,
-      ordered: false
-    )
-    |> Stream.run()
+      max_concurrency =
+        queue_keys
+        |> length()
+        |> min(System.schedulers_online())
+        |> max(1)
+
+      queue_keys
+      |> Task.async_stream(&run_local_match_attempt/1,
+        max_concurrency: max_concurrency,
+        timeout: 15_000,
+        on_timeout: :kill_task,
+        ordered: false
+      )
+      |> Stream.run()
+    end
   end
 
   defp run_local_match_attempt(queue_key) do
@@ -1566,10 +1619,19 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   defp consume_stream_entries(state) do
-    with {:ok, pending_queue_keys} <- consume_pending_entries(state),
-         {:ok, entries} <- read_stream(state, ">"),
-         {:ok, processed_queue_keys} <- process_stream_entries(state, entries) do
-      {:ok, Enum.uniq(pending_queue_keys ++ processed_queue_keys)}
+    Tracer.with_span "matchmaker.consume_stream", %{kind: :internal} do
+      Tracing.annotate_internal("matchmaker.consume_stream")
+
+      Tracer.set_attributes(%{
+        "match.stream" => state.stream,
+        "match.consumer" => state.consumer
+      })
+
+      with {:ok, pending_queue_keys} <- consume_pending_entries(state),
+           {:ok, entries} <- read_stream(state, ">"),
+           {:ok, processed_queue_keys} <- process_stream_entries(state, entries) do
+        {:ok, Enum.uniq(pending_queue_keys ++ processed_queue_keys)}
+      end
     end
   end
 
@@ -1708,28 +1770,34 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   defp run_sweep(recent_queue_events, now_ms, stale_after_ms) do
-    stale_queue_keys =
-      queue_keys()
-      |> Enum.filter(fn queue_key ->
-        sweep_queue?(queue_key, recent_queue_events, now_ms, stale_after_ms)
-      end)
+    Tracer.with_span "matchmaker.run_sweep", %{kind: :internal} do
+      Tracing.annotate_internal("matchmaker.run_sweep")
 
-    max_concurrency =
+      stale_queue_keys =
+        queue_keys()
+        |> Enum.filter(fn queue_key ->
+          sweep_queue?(queue_key, recent_queue_events, now_ms, stale_after_ms)
+        end)
+
+      Tracer.set_attribute("match.stale_queue_count", length(stale_queue_keys))
+
+      max_concurrency =
+        stale_queue_keys
+        |> length()
+        |> min(System.schedulers_online())
+        |> max(1)
+
       stale_queue_keys
-      |> length()
-      |> min(System.schedulers_online())
-      |> max(1)
+      |> Task.async_stream(&do_matching/1,
+        max_concurrency: max_concurrency,
+        timeout: 15_000,
+        on_timeout: :kill_task,
+        ordered: false
+      )
+      |> Stream.run()
 
-    stale_queue_keys
-    |> Task.async_stream(&do_matching/1,
-      max_concurrency: max_concurrency,
-      timeout: 15_000,
-      on_timeout: :kill_task,
-      ordered: false
-    )
-    |> Stream.run()
-
-    now_ms
+      now_ms
+    end
   end
 
   defp match_stream_consumer_name do

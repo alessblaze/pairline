@@ -39,11 +39,14 @@ import (
 	"time"
 
 	"github.com/anish/omegle/backend/golang/internal/middleware"
+	"github.com/anish/omegle/backend/golang/internal/observability"
 	appredis "github.com/anish/omegle/backend/golang/internal/redis"
 	"github.com/anish/omegle/backend/golang/internal/storage"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"gorm.io/gorm"
 )
 
@@ -58,8 +61,12 @@ func HealthHandlerGin(serviceName string) gin.HandlerFunc {
 }
 
 func LoginHandlerGin(c *gin.Context) {
+	span := startHandlerSpan(c, "admin.login")
+	defer span.End()
+
 	// Per-endpoint request size limit: prevent DoS through large payloads
 	if c.Request.ContentLength > 4096 {
+		span.SetStatus(codes.Error, "request too large")
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "Request too large"})
 		return
 	}
@@ -70,9 +77,12 @@ func LoginHandlerGin(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "invalid request properties")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request properties"})
 		return
 	}
+	span.SetAttributes(hashedAttribute("admin.user.ref", req.Username))
 
 	db := storage.NewDatabase()
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
@@ -82,12 +92,14 @@ func LoginHandlerGin(c *gin.Context) {
 	result := db.GetDB().WithContext(ctx).Where("username = ? AND is_active = true", req.Username).First(&admin).Error
 
 	if result != nil || !storage.CheckPasswordHash(req.Password, admin.PasswordHash) {
+		span.SetStatus(codes.Error, "invalid credentials")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
 		return
 	}
 
 	jwtSecret := os.Getenv("JWT_SECRET")
 	if jwtSecret == "" {
+		span.SetStatus(codes.Error, "service misconfigured")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Service misconfigured"})
 		return
 	}
@@ -96,32 +108,43 @@ func LoginHandlerGin(c *gin.Context) {
 
 	accessToken, refreshToken, csrfToken, err := issueAdminSession(admin.Username, admin.Role, jwtSecret, accessTTL, refreshTTL)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to generate session token")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate session token"})
 		return
 	}
 
+	span.SetAttributes(attribute.String("admin.role", admin.Role))
 	setAdminSessionCookies(c, accessToken, refreshToken, csrfToken, accessTTL, refreshTTL)
 	writeAdminAuthResponse(c, admin.Username, admin.Role, csrfToken)
 }
 
 func RefreshAdminSessionHandlerGin(c *gin.Context) {
+	span := startHandlerSpan(c, "admin.refresh")
+	defer span.End()
+
 	jwtSecret := os.Getenv("JWT_SECRET")
 	if jwtSecret == "" {
+		span.SetStatus(codes.Error, "service misconfigured")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Service misconfigured"})
 		return
 	}
 
 	refreshCookie, err := c.Cookie(middleware.AdminRefreshCookieName)
 	if err != nil || refreshCookie == "" {
+		span.SetStatus(codes.Error, "refresh token required")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Refresh token required"})
 		return
 	}
 
 	username, _, err := middleware.VerifyJWTWithType(refreshCookie, jwtSecret, middleware.TokenTypeRefresh)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "invalid refresh token")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
 		return
 	}
+	span.SetAttributes(hashedAttribute("admin.user.ref", username))
 
 	db := storage.NewDatabase()
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
@@ -131,6 +154,8 @@ func RefreshAdminSessionHandlerGin(c *gin.Context) {
 	if err := db.GetDB().WithContext(ctx).
 		Where("username = ? AND is_active = ?", username, true).
 		First(&admin).Error; err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "invalid refresh token")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
 		return
 	}
@@ -140,20 +165,29 @@ func RefreshAdminSessionHandlerGin(c *gin.Context) {
 
 	accessToken, refreshToken, csrfToken, err := issueAdminSession(admin.Username, admin.Role, jwtSecret, accessTTL, refreshTTL)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to refresh session")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to refresh session"})
 		return
 	}
 
+	span.SetAttributes(attribute.String("admin.role", admin.Role))
 	setAdminSessionCookies(c, accessToken, refreshToken, csrfToken, accessTTL, refreshTTL)
 	writeAdminAuthResponse(c, admin.Username, admin.Role, csrfToken)
 }
 
 func LogoutAdminSessionHandlerGin(c *gin.Context) {
+	span := startHandlerSpan(c, "admin.logout")
+	defer span.End()
+
 	clearAdminSessionCookies(c)
 	c.JSON(http.StatusOK, gin.H{"status": "logged_out"})
 }
 
 func GetReportsHandlerGin(c *gin.Context) {
+	span := startHandlerSpan(c, "admin.reports.list")
+	defer span.End()
+
 	status := c.Query("status")
 	limitStr := c.Query("limit")
 
@@ -188,15 +222,25 @@ func GetReportsHandlerGin(c *gin.Context) {
 	result := query.Order("created_at DESC").Limit(limit).Find(&reports).Error
 
 	if result != nil {
+		span.RecordError(result)
+		span.SetStatus(codes.Error, "failed to fetch reports")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch reports"})
 		return
 	}
 
 	metrics, err := loadReportMetrics(ctx, db.GetDB())
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to fetch report metrics")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch report metrics"})
 		return
 	}
+
+	span.SetAttributes(
+		attribute.String("report.status_filter", status),
+		attribute.Int("report.limit", limit),
+		attribute.Int("report.count", len(reports)),
+	)
 
 	c.JSON(http.StatusOK, gin.H{
 		"reports": reports,
@@ -205,16 +249,22 @@ func GetReportsHandlerGin(c *gin.Context) {
 }
 
 func UpdateReportHandlerGin(c *gin.Context) {
+	span := startHandlerSpan(c, "admin.reports.update")
+	defer span.End()
+
 	id := c.Param("id")
+	span.SetAttributes(hashedAttribute("report.ref", id))
 
 	// Validate UUID format for report ID
 	if !uuidRe.MatchString(id) {
+		span.SetStatus(codes.Error, "invalid report id format")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid report ID format"})
 		return
 	}
 
 	username, ok := getContextString(c, "username")
 	if !ok {
+		span.SetStatus(codes.Error, "unauthorized")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
@@ -224,14 +274,21 @@ func UpdateReportHandlerGin(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "invalid request body")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
 		return
 	}
 
 	if req.Status != "approved" && req.Status != "rejected" {
+		span.SetStatus(codes.Error, "invalid status")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid status"})
 		return
 	}
+	span.SetAttributes(
+		hashedAttribute("admin.user.ref", username),
+		attribute.String("report.status", req.Status),
+	)
 
 	db := storage.NewDatabase()
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
@@ -244,6 +301,8 @@ func UpdateReportHandlerGin(c *gin.Context) {
 	})
 
 	if tx.Error != nil {
+		span.RecordError(tx.Error)
+		span.SetStatus(codes.Error, "failed to update report")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update report"})
 		return
 	}
@@ -251,6 +310,7 @@ func UpdateReportHandlerGin(c *gin.Context) {
 	if tx.RowsAffected == 0 {
 		var existingCount int64
 		if err := db.GetDB().WithContext(ctx).Model(&storage.Report{}).Where("id = ?", id).Count(&existingCount).Error; err != nil {
+			span.RecordError(err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update report"})
 			return
 		}
@@ -270,8 +330,12 @@ func UpdateReportHandlerGin(c *gin.Context) {
 
 func CreateReportHandlerGin(redisClient redis.UniversalClient) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		span := startHandlerSpan(c, "moderation.report.create")
+		defer span.End()
+
 		// Per-endpoint request size limit: reports with chat logs can be larger but still bounded
 		if c.Request.ContentLength > 262144 { // 256 KB
+			span.SetStatus(codes.Error, "request too large")
 			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "Request too large"})
 			return
 		}
@@ -286,11 +350,19 @@ func CreateReportHandlerGin(redisClient redis.UniversalClient) gin.HandlerFunc {
 		}
 
 		if err := c.ShouldBindJSON(&req); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "invalid request parameters")
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request parameters"})
 			return
 		}
+		span.SetAttributes(
+			hashedAttribute("report.reporter.ref", req.ReporterSessionID),
+			hashedAttribute("report.reported.ref", req.ReportedSessionID),
+			attribute.Bool("report.description_present", strings.TrimSpace(req.Description) != ""),
+		)
 
 		if req.ReportedSessionID == req.ReporterSessionID {
+			span.SetStatus(codes.Error, "self-report rejected")
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot report your own session"})
 			return
 		}
@@ -298,6 +370,7 @@ func CreateReportHandlerGin(redisClient redis.UniversalClient) gin.HandlerFunc {
 		req.Reason = stripHTML(req.Reason)
 		req.Description = stripHTML(req.Description)
 		if req.Reason == "" {
+			span.SetStatus(codes.Error, "empty reason")
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Reason cannot be empty"})
 			return
 		}
@@ -307,11 +380,13 @@ func CreateReportHandlerGin(redisClient redis.UniversalClient) gin.HandlerFunc {
 		defer cancel()
 
 		if !verifySessionToken(ctx, redisClient, req.ReporterSessionID, req.ReporterToken) {
+			span.SetStatus(codes.Error, "invalid session token")
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid session token"})
 			return
 		}
 
 		if !sessionCanReportPeer(ctx, redisClient, req.ReporterSessionID, req.ReportedSessionID) {
+			span.SetStatus(codes.Error, "report peer not allowed")
 			c.JSON(http.StatusForbidden, gin.H{"error": "Reports are only allowed for your current or recent chat partner"})
 			return
 		}
@@ -341,6 +416,8 @@ func CreateReportHandlerGin(redisClient redis.UniversalClient) gin.HandlerFunc {
 
 		chatLogStr, err := normalizeChatLog(req.ChatLog)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "invalid chat log")
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
@@ -358,9 +435,16 @@ func CreateReportHandlerGin(redisClient redis.UniversalClient) gin.HandlerFunc {
 		}
 
 		if err := db.GetDB().WithContext(ctx).Create(&report).Error; err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed to create report")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create report"})
 			return
 		}
+		observability.RecordBusinessEvent(
+			c.Request.Context(),
+			"report.created",
+			attribute.Bool("report.chat_log_present", chatLogStr != "[]"),
+		)
 
 		c.JSON(http.StatusOK, gin.H{
 			"status": "created",
@@ -370,8 +454,12 @@ func CreateReportHandlerGin(redisClient redis.UniversalClient) gin.HandlerFunc {
 
 func CreateBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		span := startHandlerSpan(c, "moderation.ban.create")
+		defer span.End()
+
 		// Per-endpoint request size limit: prevent DoS through large payloads
 		if c.Request.ContentLength > 4096 {
+			span.SetStatus(codes.Error, "request too large")
 			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "Request too large"})
 			return
 		}
@@ -385,33 +473,45 @@ func CreateBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 		}
 
 		if err := c.ShouldBindJSON(&req); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "invalid request parameters")
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request parameters"})
 			return
 		}
 
 		if req.SessionID == "" && req.IP == "" {
+			span.SetStatus(codes.Error, "missing ban target")
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Missing session_id or ip"})
 			return
 		}
 
 		if req.IP != "" && net.ParseIP(req.IP) == nil {
+			span.SetStatus(codes.Error, "invalid ip address format")
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid IP address format"})
 			return
 		}
 
 		req.Reason = stripHTML(req.Reason)
 		if req.Reason == "" {
+			span.SetStatus(codes.Error, "empty ban reason")
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Reason cannot be empty"})
 			return
 		}
+		span.SetAttributes(
+			hashedAttribute("ban.session.ref", req.SessionID),
+			attribute.Bool("ban.ip_provided", strings.TrimSpace(req.IP) != ""),
+			attribute.Bool("ban.reason_present", req.Reason != ""),
+		)
 
 		db := storage.NewDatabase()
 
 		username, ok := getContextString(c, "username")
 		if !ok {
+			span.SetStatus(codes.Error, "unauthorized")
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 			return
 		}
+		span.SetAttributes(hashedAttribute("admin.user.ref", username))
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 		defer cancel()
 
@@ -425,6 +525,7 @@ func CreateBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 		} else {
 			ipAddress = normalizeIP(req.IP)
 			if ipAddress == "" {
+				span.SetStatus(codes.Error, "invalid ip address format")
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid IP address format"})
 				return
 			}
@@ -432,6 +533,7 @@ func CreateBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 
 		if ipAddress != "" {
 			if isPrivateOrLocalIP(ipAddress) {
+				span.SetStatus(codes.Error, "internal ip ban rejected")
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot ban internal/local IP address"})
 				return
 			}
@@ -440,16 +542,20 @@ func CreateBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 		if req.ExpiryDate != "" {
 			parsedExpiry, err := time.Parse(time.RFC3339, req.ExpiryDate)
 			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, "invalid expiry date")
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid expiry_date"})
 				return
 			}
 
 			if !parsedExpiry.After(time.Now()) {
+				span.SetStatus(codes.Error, "expiry must be in future")
 				c.JSON(http.StatusBadRequest, gin.H{"error": "expiry_date must be in the future"})
 				return
 			}
 
 			if time.Until(parsedExpiry) > 365*24*time.Hour {
+				span.SetStatus(codes.Error, "expiry too large")
 				c.JSON(http.StatusBadRequest, gin.H{"error": "expiry_date cannot exceed 1 year"})
 				return
 			}
@@ -490,6 +596,8 @@ func CreateBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 		})
 
 		if err == nil && alreadyBanned {
+			span.SetAttributes(attribute.Bool("ban.already_present", true))
+			observability.RecordBusinessEvent(c.Request.Context(), "ban.already_present")
 			c.JSON(http.StatusOK, gin.H{
 				"status": "already_banned",
 				"ban_id": existingBan.ID,
@@ -498,9 +606,20 @@ func CreateBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 		}
 
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed to create ban")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create ban"})
 			return
 		}
+		banTarget := "ip"
+		if sessionID != "" {
+			banTarget = "session"
+		}
+		observability.RecordBusinessEvent(
+			c.Request.Context(),
+			"ban.created",
+			attribute.String("ban.target", banTarget),
+		)
 
 		redisTTL := time.Duration(0)
 		if expiresAt != nil {
@@ -565,6 +684,7 @@ func CreateBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 		}
 
 		if redisPropagationFailed {
+			span.SetStatus(codes.Error, "redis propagation failed")
 			c.JSON(http.StatusBadGateway, gin.H{
 				"error": "Ban saved, but Redis propagation failed",
 			})
@@ -641,10 +761,15 @@ func GetBansHandlerGin(c *gin.Context) {
 
 func DeleteBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		span := startHandlerSpan(c, "moderation.ban.delete")
+		defer span.End()
+
 		banIdentifier := c.Param("session_id")
+		span.SetAttributes(hashedAttribute("ban.ref", banIdentifier))
 
 		// Validate that banIdentifier is a valid UUID to prevent injection
 		if !uuidRe.MatchString(banIdentifier) {
+			span.SetStatus(codes.Error, "invalid ban identifier format")
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ban identifier format"})
 			return
 		}
@@ -653,9 +778,11 @@ func DeleteBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 
 		username, ok := getContextString(c, "username")
 		if !ok {
+			span.SetStatus(codes.Error, "unauthorized")
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 			return
 		}
+		span.SetAttributes(hashedAttribute("admin.user.ref", username))
 		now := time.Now()
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 		defer cancel()
@@ -713,11 +840,14 @@ func DeleteBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 		})
 
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			span.SetStatus(codes.Error, "ban not found")
 			c.JSON(http.StatusNotFound, gin.H{"error": "Ban not found"})
 			return
 		}
 
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed to unban")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to unban"})
 			return
 		}
@@ -790,11 +920,21 @@ func DeleteBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 		}
 
 		if redisPropagationFailed {
+			span.SetStatus(codes.Error, "redis propagation failed")
 			c.JSON(http.StatusBadGateway, gin.H{
 				"error": "Unban saved, but Redis propagation failed",
 			})
 			return
 		}
+		banTarget := "ip"
+		if ban.SessionID != "" {
+			banTarget = "session"
+		}
+		observability.RecordBusinessEvent(
+			c.Request.Context(),
+			"ban.deleted",
+			attribute.String("ban.target", banTarget),
+		)
 
 		c.JSON(http.StatusOK, gin.H{
 			"status": "unbanned",
@@ -1127,13 +1267,21 @@ func canCreateAdminRole(currentRole, targetRole string) bool {
 }
 
 func verifySessionToken(ctx context.Context, redisClient redis.UniversalClient, sessionID, providedToken string) bool {
+	ctx, span := startChildSpanFromContext(ctx, "moderation.verify_session_token", hashedAttribute("session.ref", sessionID))
+	defer span.End()
+
 	route, err := appredis.ResolveSessionRouteForReport(ctx, redisClient, sessionID)
 	if err != nil {
+		span.RecordError(err)
+		span.SetAttributes(attribute.String("session.route.lookup", "report"))
 		return false
 	}
 
 	expectedToken, err := redisClient.Get(ctx, appredis.SessionTokenKey(sessionID, route)).Result()
 	if err != nil || expectedToken == "" {
+		if err != nil {
+			span.RecordError(err)
+		}
 		return false
 	}
 
@@ -1144,8 +1292,17 @@ func verifySessionToken(ctx context.Context, redisClient redis.UniversalClient, 
 }
 
 func sessionCanReportPeer(ctx context.Context, redisClient redis.UniversalClient, reporterSessionID, reportedSessionID string) bool {
+	ctx, span := startChildSpanFromContext(
+		ctx,
+		"moderation.report_peer_check",
+		hashedAttribute("reporter.session.ref", reporterSessionID),
+		hashedAttribute("reported.session.ref", reportedSessionID),
+	)
+	defer span.End()
+
 	route, err := appredis.ResolveSessionRouteForReport(ctx, redisClient, reporterSessionID)
 	if err != nil {
+		span.RecordError(err)
 		return false
 	}
 
@@ -1158,6 +1315,10 @@ func sessionCanReportPeer(ctx context.Context, redisClient redis.UniversalClient
 		peerID, err := redisClient.Get(ctx, key).Result()
 		if err == nil && peerID == reportedSessionID {
 			return true
+		}
+
+		if err != nil && !errors.Is(err, redis.Nil) {
+			span.RecordError(err)
 		}
 	}
 
@@ -1358,13 +1519,18 @@ func lockBanTargets(tx *gorm.DB, sessionID, ipAddress string) error {
 }
 
 func lookupSessionIP(ctx context.Context, redisClient redis.UniversalClient, sessionID string) string {
+	ctx, span := startChildSpanFromContext(ctx, "moderation.lookup_session_ip", hashedAttribute("session.ref", sessionID))
+	defer span.End()
+
 	route, err := appredis.ResolveSessionRoute(ctx, redisClient, sessionID)
 	if err != nil {
+		span.RecordError(err)
 		return ""
 	}
 
 	raw, err := redisClient.Get(ctx, appredis.SessionIPKey(sessionID, route)).Result()
 	if err != nil {
+		span.RecordError(err)
 		return ""
 	}
 
@@ -1372,12 +1538,21 @@ func lookupSessionIP(ctx context.Context, redisClient redis.UniversalClient, ses
 }
 
 func resolveBanIPAddress(ctx context.Context, redisClient redis.UniversalClient, sessionID, requestedIP string) string {
+	ctx, span := startChildSpanFromContext(
+		ctx,
+		"moderation.resolve_ban_ip",
+		hashedAttribute("session.ref", sessionID),
+	)
+	defer span.End()
+
 	if redisClient != nil {
 		if ipAddress := lookupSessionIP(ctx, redisClient, sessionID); ipAddress != "" {
+			span.SetAttributes(attribute.String("ban.ip_source", "session_lookup"))
 			return ipAddress
 		}
 	}
 
+	span.SetAttributes(attribute.String("ban.ip_source", "request"))
 	return normalizeIP(requestedIP)
 }
 
@@ -1462,6 +1637,9 @@ type reportMetricRow struct {
 }
 
 func loadReportMetrics(ctx context.Context, db *gorm.DB) (map[string]int64, error) {
+	ctx, span := startChildSpanFromContext(ctx, "admin.report_metrics.load")
+	defer span.End()
+
 	rows := make([]reportMetricRow, 0, 3)
 	if err := db.WithContext(ctx).
 		Model(&storage.Report{}).
@@ -1469,6 +1647,7 @@ func loadReportMetrics(ctx context.Context, db *gorm.DB) (map[string]int64, erro
 		Where("status IN ?", []string{"pending", "approved", "rejected"}).
 		Group("status").
 		Scan(&rows).Error; err != nil {
+		span.RecordError(err)
 		return nil, err
 	}
 
@@ -1491,12 +1670,16 @@ type banMetricRow struct {
 }
 
 func loadBanMetrics(ctx context.Context, db *gorm.DB) (map[string]int64, error) {
+	ctx, span := startChildSpanFromContext(ctx, "admin.ban_metrics.load")
+	defer span.End()
+
 	rows := make([]banMetricRow, 0, 2)
 	if err := db.WithContext(ctx).
 		Model(&storage.Ban{}).
 		Select("is_active, COUNT(*) AS count").
 		Group("is_active").
 		Scan(&rows).Error; err != nil {
+		span.RecordError(err)
 		return nil, err
 	}
 

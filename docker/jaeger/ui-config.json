@@ -1,0 +1,9 @@
+{
+  "monitor": {
+    "menuEnabled": true,
+    "docsLink": "https://www.jaegertracing.io/docs/1.55/spm/"
+  },
+  "dependencies": {
+    "menuEnabled": true
+  }
+}

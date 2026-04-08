@@ -32,11 +32,17 @@ import (
 
 	"github.com/anish/omegle/backend/golang/internal/handlers"
 	"github.com/anish/omegle/backend/golang/internal/middleware"
+	"github.com/anish/omegle/backend/golang/internal/observability"
 	appredis "github.com/anish/omegle/backend/golang/internal/redis"
 	"github.com/anish/omegle/backend/golang/internal/storage"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Server struct {
@@ -48,6 +54,7 @@ type Server struct {
 	serviceName  string
 	enableAdmin  bool
 	enablePublic bool
+	shutdownOTel func(context.Context) error
 }
 
 func NewServer() *Server {
@@ -91,6 +98,33 @@ func newServer(enablePublic, enableAdmin bool, serviceName string) *Server {
 		enableAdmin:  enableAdmin,
 		enablePublic: enablePublic,
 		router:       gin.New(),
+		shutdownOTel: func(context.Context) error { return nil },
+	}
+
+	traceShutdown, err := observability.InitTracing(context.Background(), serviceName)
+	if err != nil {
+		log.Printf("Failed to initialize tracing for %s: %v", serviceName, err)
+	} else {
+		s.shutdownOTel = traceShutdown
+	}
+
+	metricsShutdown, err := observability.InitMetrics(context.Background(), serviceName)
+	if err != nil {
+		log.Printf("Failed to initialize metrics for %s: %v", serviceName, err)
+	} else {
+		prevShutdown := s.shutdownOTel
+		s.shutdownOTel = func(ctx context.Context) error {
+			var firstErr error
+			if prevShutdown != nil {
+				firstErr = prevShutdown(ctx)
+			}
+			if metricsShutdown != nil {
+				if err := metricsShutdown(ctx); err != nil && firstErr == nil {
+					firstErr = err
+				}
+			}
+			return firstErr
+		}
 	}
 
 	trustedProxies := trustedProxyCIDRsFromEnv()
@@ -113,6 +147,7 @@ func newServer(enablePublic, enableAdmin bool, serviceName string) *Server {
 }
 
 func (s *Server) syncActiveBansToRedis() {
+	startedAt := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -169,6 +204,7 @@ func (s *Server) syncActiveBansToRedis() {
 	}
 
 	log.Printf("Synced %d active ban keys to Redis from Postgres", syncedKeys)
+	observability.RecordBanSync(ctx, time.Since(startedAt), syncedKeys)
 
 	if err := s.reconcileBanKeys(ctx, bans); err != nil {
 		log.Printf("Failed reconciling Redis bans: %v", err)
@@ -277,6 +313,93 @@ func LimitBodySizeMiddleware() gin.HandlerFunc {
 	}
 }
 
+func TracingMiddleware(serviceName string) gin.HandlerFunc {
+	tracer := otel.Tracer("pairline/go/http")
+
+	return func(c *gin.Context) {
+		ctx := otel.GetTextMapPropagator().Extract(c.Request.Context(), headerCarrier(c.Request.Header))
+		startedAt := time.Now()
+		route := routeLabel(c)
+		observability.AddHTTPInflight(ctx, 1, c.Request.Method, route)
+		ctx, span := tracer.Start(ctx, c.Request.Method+" "+route, trace.WithSpanKind(trace.SpanKindServer))
+		c.Request = c.Request.WithContext(ctx)
+		defer func() {
+			observability.AddHTTPInflight(ctx, -1, c.Request.Method, route)
+
+			finalRoute := routeLabel(c)
+			spanName := c.Request.Method + " " + finalRoute
+			span.SetName(spanName)
+
+			statusCode := c.Writer.Status()
+			if statusCode == 0 {
+				statusCode = http.StatusOK
+			}
+
+			span.SetAttributes(
+				semconv.HTTPRequestMethodKey.String(c.Request.Method),
+				semconv.URLPath(finalRoute),
+				attribute.String("service.name", serviceName),
+				attribute.String("span.kind", "server"),
+				attribute.String("pairline.span.layer", "server"),
+				attribute.String("pairline.operation.name", spanName),
+				attribute.String("http.route", finalRoute),
+				attribute.Int("http.response.status_code", statusCode),
+			)
+			observability.RecordHTTPRequest(
+				ctx,
+				c.Request.Method,
+				finalRoute,
+				statusCode,
+				time.Since(startedAt),
+			)
+
+			if requestID, ok := c.Get("request_id"); ok {
+				if requestIDStr, ok := requestID.(string); ok && requestIDStr != "" {
+					span.SetAttributes(attribute.String("request.id", requestIDStr))
+				}
+			}
+
+			if len(c.Errors) > 0 {
+				span.RecordError(c.Errors.Last())
+			}
+
+			if statusCode >= http.StatusBadRequest {
+				span.SetStatus(codes.Error, http.StatusText(statusCode))
+			}
+
+			span.End()
+		}()
+
+		c.Next()
+	}
+}
+
+func routeLabel(c *gin.Context) string {
+	if route := c.FullPath(); route != "" {
+		return route
+	}
+
+	return "unmatched"
+}
+
+type headerCarrier http.Header
+
+func (h headerCarrier) Get(key string) string {
+	return http.Header(h).Get(key)
+}
+
+func (h headerCarrier) Set(key, value string) {
+	http.Header(h).Set(key, value)
+}
+
+func (h headerCarrier) Keys() []string {
+	keys := make([]string, 0, len(h))
+	for key := range h {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
 // ---------------------------------------------------------------------------
 // Login rate limiter – sliding window, 10 attempts per 15 minutes per IP
 // ---------------------------------------------------------------------------
@@ -347,8 +470,9 @@ func LoginRateLimitMiddleware(maxAttempts int, window time.Duration) gin.Handler
 
 func (s *Server) setupRoutes() {
 	s.router.Use(gin.Logger())
-	s.router.Use(gin.Recovery())
 	s.router.Use(RequestIDMiddleware())
+	s.router.Use(TracingMiddleware(s.serviceName))
+	s.router.Use(gin.Recovery())
 	s.router.Use(SecurityHeadersMiddleware())
 	s.router.Use(LimitBodySizeMiddleware())
 
@@ -506,6 +630,13 @@ func (s *Server) Run(addr string) error {
 	}
 
 	cleanup := func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := s.shutdownOTel(shutdownCtx); err != nil {
+			log.Printf("Error shutting down tracing: %v", err)
+		}
+
 		if err := s.db.Close(); err != nil {
 			log.Printf("Error closing DB: %v", err)
 		}

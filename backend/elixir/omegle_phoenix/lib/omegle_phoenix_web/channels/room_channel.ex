@@ -18,6 +18,8 @@
 defmodule OmeglePhoenixWeb.RoomChannel do
   use Phoenix.Channel
   require Logger
+  require OpenTelemetry.Tracer, as: Tracer
+  alias OmeglePhoenix.Tracing
 
   @max_messages_per_window 30
   @rate_window_ms 5_000
@@ -50,31 +52,43 @@ defmodule OmeglePhoenixWeb.RoomChannel do
 
   @impl true
   def handle_in("search", %{"data" => data}, socket) when is_map(data) do
-    {socket, allowed} = check_rate_limit(socket)
+    Tracer.with_span "phoenix.room.search", %{kind: :server} do
+      Tracing.annotate_server("phoenix.room.search")
+      Tracer.set_attributes(channel_span_attributes(socket))
+      {socket, allowed} = check_rate_limit(socket)
 
-    if not allowed do
-      {:reply, {:error, %{reason: "Rate limit exceeded"}}, socket}
-    else
-      case teardown_existing_session(socket) do
-        {:error, reason, socket} ->
-          {:reply, {:error, %{reason: reason}}, socket}
+      if not allowed do
+        Tracer.set_attribute("room.rate_limited", true)
+        {:reply, {:error, %{reason: "Rate limit exceeded"}}, socket}
+      else
+        case teardown_existing_session(socket) do
+          {:error, reason, socket} ->
+            Tracer.set_attribute("room.teardown_error", reason)
+            {:reply, {:error, %{reason: reason}}, socket}
 
-        {:ok, socket} ->
-          with_captcha_verified(socket, data, fn socket ->
-            preferences = build_preferences(socket, %{})
-            client_ip = socket.assigns[:client_ip] || "unknown"
+          {:ok, socket} ->
+            with_captcha_verified(socket, data, fn socket ->
+              preferences = build_preferences(socket, %{})
+              client_ip = socket.assigns[:client_ip] || "unknown"
 
-            case OmeglePhoenix.SessionManager.ip_ban_reason(client_ip) do
-              {:ok, nil} ->
-                create_and_queue_session(socket, client_ip, preferences, "searching")
+              Tracer.set_attributes(%{
+                "client.ip_hash" => Tracing.safe_ref(client_ip),
+                "room.interests_count" => interests_count(preferences)
+              })
 
-              {:ok, reason} ->
-                {:reply, {:error, %{type: "banned", data: %{reason: reason}}}, socket}
+              case OmeglePhoenix.SessionManager.ip_ban_reason(client_ip) do
+                {:ok, nil} ->
+                  create_and_queue_session(socket, client_ip, preferences, "searching")
 
-              {:error, _reason} ->
-                {:reply, {:error, %{reason: "Unable to verify access right now"}}, socket}
-            end
-          end)
+                {:ok, reason} ->
+                  Tracer.set_attribute("room.banned", true)
+                  {:reply, {:error, %{type: "banned", data: %{reason: reason}}}, socket}
+
+                {:error, _reason} ->
+                  {:reply, {:error, %{reason: "Unable to verify access right now"}}, socket}
+              end
+            end)
+        end
       end
     end
   end
@@ -84,31 +98,43 @@ defmodule OmeglePhoenixWeb.RoomChannel do
   end
 
   def handle_in("start", %{"data" => data}, socket) when is_map(data) do
-    {socket, allowed} = check_rate_limit(socket)
+    Tracer.with_span "phoenix.room.start", %{kind: :server} do
+      Tracing.annotate_server("phoenix.room.start")
+      Tracer.set_attributes(channel_span_attributes(socket))
+      {socket, allowed} = check_rate_limit(socket)
 
-    if not allowed do
-      {:reply, {:error, %{reason: "Rate limit exceeded"}}, socket}
-    else
-      case teardown_existing_session(socket) do
-        {:error, reason, socket} ->
-          {:reply, {:error, %{reason: reason}}, socket}
+      if not allowed do
+        Tracer.set_attribute("room.rate_limited", true)
+        {:reply, {:error, %{reason: "Rate limit exceeded"}}, socket}
+      else
+        case teardown_existing_session(socket) do
+          {:error, reason, socket} ->
+            Tracer.set_attribute("room.teardown_error", reason)
+            {:reply, {:error, %{reason: reason}}, socket}
 
-        {:ok, socket} ->
-          with_captcha_verified(socket, data, fn socket ->
-            preferences = build_preferences(socket, Map.get(data, "preferences", %{}))
-            client_ip = socket.assigns[:client_ip] || "unknown"
+          {:ok, socket} ->
+            with_captcha_verified(socket, data, fn socket ->
+              preferences = build_preferences(socket, Map.get(data, "preferences", %{}))
+              client_ip = socket.assigns[:client_ip] || "unknown"
 
-            case OmeglePhoenix.SessionManager.ip_ban_reason(client_ip) do
-              {:ok, nil} ->
-                create_and_queue_session(socket, client_ip, preferences, "connected")
+              Tracer.set_attributes(%{
+                "client.ip_hash" => Tracing.safe_ref(client_ip),
+                "room.preference_keys" => preferences |> Map.keys() |> length()
+              })
 
-              {:ok, reason} ->
-                {:reply, {:error, %{type: "banned", data: %{reason: reason}}}, socket}
+              case OmeglePhoenix.SessionManager.ip_ban_reason(client_ip) do
+                {:ok, nil} ->
+                  create_and_queue_session(socket, client_ip, preferences, "connected")
 
-              {:error, _reason} ->
-                {:reply, {:error, %{reason: "Unable to verify access right now"}}, socket}
-            end
-          end)
+                {:ok, reason} ->
+                  Tracer.set_attribute("room.banned", true)
+                  {:reply, {:error, %{type: "banned", data: %{reason: reason}}}, socket}
+
+                {:error, _reason} ->
+                  {:reply, {:error, %{reason: "Unable to verify access right now"}}, socket}
+              end
+            end)
+        end
       end
     end
   end
@@ -118,92 +144,111 @@ defmodule OmeglePhoenixWeb.RoomChannel do
   end
 
   def handle_in("skip", _payload, socket) do
-    session_id = socket.assigns[:session_id]
+    Tracer.with_span "phoenix.room.skip", %{kind: :server} do
+      Tracing.annotate_server("phoenix.room.skip")
+      Tracer.set_attributes(channel_span_attributes(socket))
+      session_id = socket.assigns[:session_id]
 
-    case with_session_partner_lock(session_id, fn session ->
-           if session && session.partner_id do
-             reset_match(session_id, session.partner_id, "partner skipped")
+      case with_session_partner_lock(session_id, fn session ->
+             if session && session.partner_id do
+               reset_match(session_id, session.partner_id, "partner skipped")
 
-             case OmeglePhoenix.Matchmaker.join_queue(session_id, session.preferences) do
-               :ok ->
-                 :telemetry.execute([:omegle_phoenix, :room, :skipped], %{count: 1}, %{
-                   session_id: session_id
-                 })
-
-                 {:ok, %{type: "skipped"}}
-
-               {:error, _reason} ->
-                 _ =
-                   OmeglePhoenix.SessionManager.update_session(session_id, %{
-                     status: :disconnecting,
-                     signaling_ready: false,
-                     webrtc_started: false
+               case OmeglePhoenix.Matchmaker.join_queue(session_id, session.preferences) do
+                 :ok ->
+                   :telemetry.execute([:omegle_phoenix, :room, :skipped], %{count: 1}, %{
+                     session_id: session_id
                    })
 
-                 {:error, %{reason: "Matchmaking unavailable"}}
-             end
-           else
-             {:error, %{reason: "No partner to skip"}}
-           end
-         end) do
-      {:ok, payload} ->
-        {:reply, {:ok, payload}, clear_match_assigns(socket)}
+                   {:ok, %{type: "skipped"}}
 
-      {:error, payload} ->
-        {:reply, {:error, payload}, socket}
+                 {:error, _reason} ->
+                   _ =
+                     OmeglePhoenix.SessionManager.update_session(session_id, %{
+                       status: :disconnecting,
+                       signaling_ready: false,
+                       webrtc_started: false
+                     })
+
+                   {:error, %{reason: "Matchmaking unavailable"}}
+               end
+             else
+               {:error, %{reason: "No partner to skip"}}
+             end
+           end) do
+        {:ok, payload} ->
+          {:reply, {:ok, payload}, clear_match_assigns(socket)}
+
+        {:error, payload} ->
+          {:reply, {:error, payload}, socket}
+      end
     end
   end
 
   def handle_in("message", %{"data" => data}, socket) when is_map(data) do
-    session_id = socket.assigns[:session_id]
-    partner_id = socket.assigns[:partner_id]
-    match_generation = socket.assigns[:match_generation]
-    partner_route = socket.assigns[:partner_route]
-    partner_owner_node = socket.assigns[:partner_owner_node]
+    Tracer.with_span "phoenix.room.message", %{kind: :server} do
+      Tracing.annotate_server("phoenix.room.message")
+      session_id = socket.assigns[:session_id]
+      partner_id = socket.assigns[:partner_id]
+      match_generation = socket.assigns[:match_generation]
+      partner_route = socket.assigns[:partner_route]
+      partner_owner_node = socket.assigns[:partner_owner_node]
 
-    if is_nil(session_id) do
-      {:reply, {:error, %{reason: "No active session"}}, socket}
-    else
-      if is_nil(partner_id) do
-        # Return ok to swallow error for in-flight messages sent right at disconnect time
-        Logger.debug("Swallowed in-flight message from #{session_id}: no partner assigned")
-        {:reply, {:ok, %{status: "ignored"}}, socket}
+      Tracer.set_attributes(
+        Map.merge(channel_span_attributes(socket), %{
+          "room.partner_ref" => Tracing.safe_ref(partner_id || ""),
+          "room.has_match_generation" => is_binary(match_generation)
+        })
+      )
+
+      if is_nil(session_id) do
+        {:reply, {:error, %{reason: "No active session"}}, socket}
       else
-        {socket, allowed} = check_rate_limit(socket)
-
-        if not allowed do
-          {:reply, {:error, %{reason: "Rate limit exceeded"}}, socket}
+        if is_nil(partner_id) do
+          Logger.debug("Swallowed in-flight message from #{session_id}: no partner assigned")
+          {:reply, {:ok, %{status: "ignored"}}, socket}
         else
-          content = Map.get(data, "content")
+          {socket, allowed} = check_rate_limit(socket)
 
-          if is_binary(content) and byte_size(content) <= 2_000 do
-            if is_binary(match_generation) and is_map(partner_route) do
-              OmeglePhoenix.Router.send_message(
-                partner_id,
-                %{
-                  type: "message",
-                  from: session_id,
-                  match_generation: match_generation,
-                  data: %{content: content}
-                },
-                route_hint: partner_route,
-                owner_hint: partner_owner_node
-              )
-
-              :telemetry.execute([:omegle_phoenix, :room, :message_sent], %{count: 1}, %{
-                session_id: session_id
-              })
-
-              {:noreply, socket}
-            else
-              Logger.debug(
-                "Swallowed in-flight message from #{session_id}: match state unavailable"
-              )
-
-              {:reply, {:ok, %{status: "ignored"}}, clear_match_assigns(socket)}
-            end
+          if not allowed do
+            Tracer.set_attribute("room.rate_limited", true)
+            {:reply, {:error, %{reason: "Rate limit exceeded"}}, socket}
           else
-            {:reply, {:error, %{reason: "Invalid message content"}}, socket}
+            content = Map.get(data, "content")
+
+            Tracer.set_attribute(
+              "room.message_length",
+              if(is_binary(content), do: byte_size(content), else: 0)
+            )
+
+            if is_binary(content) and byte_size(content) <= 2_000 do
+              if is_binary(match_generation) and is_map(partner_route) do
+                OmeglePhoenix.Router.send_message(
+                  partner_id,
+                  %{
+                    type: "message",
+                    from: session_id,
+                    match_generation: match_generation,
+                    data: %{content: content}
+                  },
+                  route_hint: partner_route,
+                  owner_hint: partner_owner_node
+                )
+
+                :telemetry.execute([:omegle_phoenix, :room, :message_sent], %{count: 1}, %{
+                  session_id: session_id
+                })
+
+                {:noreply, socket}
+              else
+                Logger.debug(
+                  "Swallowed in-flight message from #{session_id}: match state unavailable"
+                )
+
+                {:reply, {:ok, %{status: "ignored"}}, clear_match_assigns(socket)}
+              end
+            else
+              {:reply, {:error, %{reason: "Invalid message content"}}, socket}
+            end
           end
         end
       end
@@ -215,51 +260,61 @@ defmodule OmeglePhoenixWeb.RoomChannel do
   end
 
   def handle_in("typing", %{"data" => data}, socket) when is_map(data) do
-    session_id = socket.assigns[:session_id]
-    partner_id = socket.assigns[:partner_id]
-    match_generation = socket.assigns[:match_generation]
-    partner_route = socket.assigns[:partner_route]
-    partner_owner_node = socket.assigns[:partner_owner_node]
+    Tracer.with_span "phoenix.room.typing", %{kind: :server} do
+      Tracing.annotate_server("phoenix.room.typing")
+      session_id = socket.assigns[:session_id]
+      partner_id = socket.assigns[:partner_id]
+      match_generation = socket.assigns[:match_generation]
+      partner_route = socket.assigns[:partner_route]
+      partner_owner_node = socket.assigns[:partner_owner_node]
 
-    if is_nil(session_id) or is_nil(partner_id) do
-      {:noreply, socket}
-    else
-      case Map.fetch(data, "typing") do
-        {:ok, is_typing} when is_boolean(is_typing) ->
-          # Never rate-limit typing: false — if the stop signal is dropped,
-          # the partner's typing indicator stays permanently stuck.
-          {socket, allowed} =
-            if is_typing do
-              check_typing_rate_limit(socket)
-            else
-              {socket, true}
+      Tracer.set_attributes(
+        Map.merge(channel_span_attributes(socket), %{
+          "room.partner_ref" => Tracing.safe_ref(partner_id || ""),
+          "room.has_match_generation" => is_binary(match_generation)
+        })
+      )
+
+      if is_nil(session_id) or is_nil(partner_id) do
+        {:noreply, socket}
+      else
+        case Map.fetch(data, "typing") do
+          {:ok, is_typing} when is_boolean(is_typing) ->
+            Tracer.set_attribute("room.typing", is_typing)
+
+            {socket, allowed} =
+              if is_typing do
+                check_typing_rate_limit(socket)
+              else
+                {socket, true}
+              end
+
+            if allowed do
+              if is_binary(match_generation) and is_map(partner_route) do
+                OmeglePhoenix.Router.send_message(
+                  partner_id,
+                  %{
+                    type: "typing",
+                    from: session_id,
+                    match_generation: match_generation,
+                    data: %{typing: is_typing}
+                  },
+                  route_hint: partner_route,
+                  owner_hint: partner_owner_node
+                )
+
+                :telemetry.execute([:omegle_phoenix, :room, :typing_sent], %{count: 1}, %{
+                  session_id: session_id,
+                  typing: is_typing
+                })
+              end
             end
 
-          if allowed do
-            if is_binary(match_generation) and is_map(partner_route) do
-              OmeglePhoenix.Router.send_message(
-                partner_id,
-                %{
-                  type: "typing",
-                  from: session_id,
-                  match_generation: match_generation,
-                  data: %{typing: is_typing}
-                },
-                route_hint: partner_route,
-                owner_hint: partner_owner_node
-              )
+            {:noreply, socket}
 
-              :telemetry.execute([:omegle_phoenix, :room, :typing_sent], %{count: 1}, %{
-                session_id: session_id,
-                typing: is_typing
-              })
-            end
-          end
-
-          {:noreply, socket}
-
-        _ ->
-          {:reply, {:error, %{reason: "Invalid typing payload"}}, socket}
+          _ ->
+            {:reply, {:error, %{reason: "Invalid typing payload"}}, socket}
+        end
       end
     end
   end
@@ -269,97 +324,159 @@ defmodule OmeglePhoenixWeb.RoomChannel do
   end
 
   def handle_in("webrtc_ready", _payload, socket) do
-    session_id = socket.assigns[:session_id]
-    expected_partner_id = socket.assigns[:partner_id]
-    expected_generation = socket.assigns[:match_generation]
+    Tracer.with_span "phoenix.room.webrtc_ready", %{kind: :server} do
+      Tracing.annotate_server("phoenix.room.webrtc_ready")
+      session_id = socket.assigns[:session_id]
+      expected_partner_id = socket.assigns[:partner_id]
+      expected_generation = socket.assigns[:match_generation]
 
-    case run_webrtc_ready(session_id) do
-      {:ok, payload} ->
-        {:reply, {:ok, payload}, socket}
+      Tracer.set_attributes(
+        Map.merge(channel_span_attributes(socket), %{
+          "room.partner_ref" => Tracing.safe_ref(expected_partner_id || ""),
+          "room.has_match_generation" => is_binary(expected_generation)
+        })
+      )
 
-      {:error, %{reason: "Session busy, please retry"}} ->
-        Logger.debug(
-          "webrtc_ready lock contention for #{inspect(session_id)} with partner #{inspect(expected_partner_id)} generation #{inspect(expected_generation)}; scheduling async retry"
-        )
+      case run_webrtc_ready(session_id) do
+        {:ok, payload} ->
+          Tracer.set_attribute("room.webrtc_ready.outcome", "ok")
+          {:reply, {:ok, payload}, socket}
 
-        schedule_webrtc_ready_retry(session_id, expected_partner_id, expected_generation, 1)
-        {:reply, {:ok, %{type: "webrtc_ready"}}, socket}
+        {:error, %{reason: "Session busy, please retry"}} ->
+          Tracer.set_attribute("room.webrtc_ready.outcome", "retry_scheduled")
 
-      {:error, payload} ->
-        {:reply, {:error, payload}, socket}
+          Logger.debug(
+            "webrtc_ready lock contention for #{inspect(session_id)} with partner #{inspect(expected_partner_id)} generation #{inspect(expected_generation)}; scheduling async retry"
+          )
+
+          schedule_webrtc_ready_retry(session_id, expected_partner_id, expected_generation, 1)
+          {:reply, {:ok, %{type: "webrtc_ready"}}, socket}
+
+        {:error, payload} ->
+          Tracer.set_attribute("room.webrtc_ready.outcome", "error")
+          {:reply, {:error, payload}, socket}
+      end
     end
   end
 
   def handle_in("stop", _payload, socket) do
-    session_id = socket.assigns[:session_id]
+    Tracer.with_span "phoenix.room.stop", %{kind: :server} do
+      Tracing.annotate_server("phoenix.room.stop")
+      session_id = socket.assigns[:session_id]
+      Tracer.set_attributes(channel_span_attributes(socket))
 
-    case with_session_partner_lock(session_id, fn session ->
-           cond do
-             is_nil(session) ->
-               {:ok, %{type: "stopped"}}
+      case with_session_partner_lock(session_id, fn session ->
+             cond do
+               is_nil(session) ->
+                 Tracer.set_attribute("room.stop.state", "missing_session")
+                 {:ok, %{type: "stopped"}}
 
-             is_nil(session.partner_id) ->
-               with :ok <- OmeglePhoenix.Matchmaker.leave_queue(session_id),
-                    {:ok, _updated_session} <-
-                      OmeglePhoenix.SessionManager.update_session(session_id, %{
-                        status: :waiting,
-                        signaling_ready: false,
-                        webrtc_started: false
-                      }) do
+               is_nil(session.partner_id) ->
+                 Tracer.set_attribute("room.stop.state", "queue_only")
+
+                 with :ok <- OmeglePhoenix.Matchmaker.leave_queue(session_id),
+                      {:ok, _updated_session} <-
+                        OmeglePhoenix.SessionManager.update_session(session_id, %{
+                          status: :waiting,
+                          signaling_ready: false,
+                          webrtc_started: false
+                        }) do
+                   :telemetry.execute([:omegle_phoenix, :room, :stopped], %{count: 1}, %{
+                     session_id: session_id
+                   })
+
+                   {:ok, %{type: "stopped"}}
+                 else
+                   {:error, _reason} ->
+                     {:error, %{reason: "Failed to stop matchmaking"}}
+                 end
+
+               true ->
+                 Tracer.set_attributes(%{
+                   "room.stop.state" => "matched",
+                   "room.partner_ref" => Tracing.safe_ref(session.partner_id || "")
+                 })
+
+                 reset_match(session_id, session.partner_id, "partner cancelled")
+
                  :telemetry.execute([:omegle_phoenix, :room, :stopped], %{count: 1}, %{
                    session_id: session_id
                  })
 
                  {:ok, %{type: "stopped"}}
-               else
-                 {:error, _reason} ->
-                   {:error, %{reason: "Failed to stop matchmaking"}}
-               end
+             end
+           end) do
+        {:ok, payload} ->
+          {:reply, {:ok, payload}, clear_match_assigns(socket)}
 
-             true ->
-               reset_match(session_id, session.partner_id, "partner cancelled")
-
-               :telemetry.execute([:omegle_phoenix, :room, :stopped], %{count: 1}, %{
-                 session_id: session_id
-               })
-
-               {:ok, %{type: "stopped"}}
-           end
-         end) do
-      {:ok, payload} ->
-        {:reply, {:ok, payload}, clear_match_assigns(socket)}
-
-      {:error, payload} ->
-        {:reply, {:error, payload}, socket}
+        {:error, payload} ->
+          Tracer.set_attribute("room.stop.state", "error")
+          {:reply, {:error, payload}, socket}
+      end
     end
   end
 
   def handle_in("disconnect", _payload, socket) do
-    session_id = socket.assigns[:session_id]
+    Tracer.with_span "phoenix.room.disconnect", %{kind: :server} do
+      Tracing.annotate_server("phoenix.room.disconnect")
+      session_id = socket.assigns[:session_id]
+      Tracer.set_attributes(channel_span_attributes(socket))
 
-    case close_session(session_id, "partner disconnected") do
-      :ok ->
-        {:reply, {:ok, %{}}, clear_session_assigns(socket)}
+      case close_session(session_id, "partner disconnected") do
+        :ok ->
+          Tracer.set_attribute("room.disconnect.outcome", "ok")
+          {:reply, {:ok, %{}}, clear_session_assigns(socket)}
 
-      {:error, :not_found} ->
-        {:reply, {:error, %{reason: "Session not found"}}, socket}
+        {:error, :not_found} ->
+          Tracer.set_attribute("room.disconnect.outcome", "not_found")
+          {:reply, {:error, %{reason: "Session not found"}}, socket}
 
-      {:error, %{reason: reason}} ->
-        {:reply, {:error, %{reason: reason}}, socket}
+        {:error, %{reason: reason}} ->
+          Tracer.set_attributes(%{
+            "room.disconnect.outcome" => "error",
+            "room.disconnect.reason" => reason
+          })
+
+          {:reply, {:error, %{reason: reason}}, socket}
+      end
     end
   end
 
   def handle_in("ping", _payload, socket) do
-    if session_id = socket.assigns[:session_id] do
-      _ = OmeglePhoenix.SessionManager.refresh_session(session_id)
-      _ = OmeglePhoenix.Router.refresh_owner(session_id, self())
-    end
+    Tracer.with_span "phoenix.room.ping", %{kind: :server} do
+      Tracing.annotate_server("phoenix.room.ping")
+      Tracer.set_attributes(channel_span_attributes(socket))
 
-    {:reply, {:ok, %{type: "pong"}}, socket}
+      if session_id = socket.assigns[:session_id] do
+        _ = OmeglePhoenix.SessionManager.refresh_session(session_id)
+        _ = OmeglePhoenix.Router.refresh_owner(session_id, self())
+        Tracer.set_attribute("room.ping.refreshed", true)
+      else
+        Tracer.set_attribute("room.ping.refreshed", false)
+      end
+
+      {:reply, {:ok, %{type: "pong"}}, socket}
+    end
   end
 
   def handle_in(_event, _payload, socket) do
     {:noreply, socket}
+  end
+
+  defp channel_span_attributes(socket) do
+    %{
+      "room.mode" => socket.assigns[:mode] || "unknown",
+      "room.session_ref" => Tracing.safe_ref(socket.assigns[:session_id] || ""),
+      "client.ip_hash" => Tracing.safe_ref(socket.assigns[:client_ip] || "")
+    }
+  end
+
+  defp interests_count(preferences) do
+    preferences
+    |> Map.get("interests", "")
+    |> to_string()
+    |> String.split(",", trim: true)
+    |> length()
   end
 
   defp build_preferences(socket, preferences) do

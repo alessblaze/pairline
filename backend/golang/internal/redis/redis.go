@@ -26,7 +26,9 @@ import (
 	"strings"
 	"time"
 
+	redisotel "github.com/redis/go-redis/extra/redisotel/v9"
 	"github.com/redis/go-redis/v9"
+	"github.com/redis/go-redis/v9/maintnotifications"
 )
 
 const AdminActionStream = "admin:action:stream"
@@ -44,9 +46,18 @@ func NewClient() *Client {
 	password := os.Getenv("REDIS_PASSWORD")
 
 	rdb := redis.NewClusterClient(&redis.ClusterOptions{
-		Addrs:    addrs,
-		Password: password,
+		Addrs:                    addrs,
+		Password:                 password,
+		MaintNotificationsConfig: redisMaintNotificationsConfig(),
 	})
+
+	if err := redisotel.InstrumentTracing(rdb); err != nil {
+		log.Printf("Failed to enable Redis tracing: %v", err)
+	}
+
+	if err := redisotel.InstrumentMetrics(rdb); err != nil {
+		log.Printf("Failed to enable Redis metrics: %v", err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -58,6 +69,22 @@ func NewClient() *Client {
 
 	log.Println("Connected to Redis Cluster successfully")
 	return &Client{client: rdb}
+}
+
+func redisMaintNotificationsConfig() *maintnotifications.Config {
+	raw := strings.TrimSpace(strings.ToLower(os.Getenv("REDIS_MAINT_NOTIFICATIONS_MODE")))
+
+	switch raw {
+	case "", "disabled", "false", "0":
+		return &maintnotifications.Config{Mode: maintnotifications.ModeDisabled}
+	case "auto":
+		return &maintnotifications.Config{Mode: maintnotifications.ModeAuto}
+	case "enabled", "true", "1":
+		return &maintnotifications.Config{Mode: maintnotifications.ModeEnabled}
+	default:
+		log.Printf("Unknown REDIS_MAINT_NOTIFICATIONS_MODE=%q; defaulting to disabled", raw)
+		return &maintnotifications.Config{Mode: maintnotifications.ModeDisabled}
+	}
 }
 
 func (r *Client) PublishBanAction(ctx context.Context, sessionID, ipAddress, reason string) error {

@@ -29,6 +29,7 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	gormotel "gorm.io/plugin/opentelemetry/tracing"
 )
 
 type Database struct {
@@ -121,6 +122,10 @@ func NewDatabase() *Database {
 		db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 		if err != nil {
 			panic(fmt.Errorf("open database: %w", err))
+		}
+
+		if err := db.Use(gormotel.NewPlugin()); err != nil {
+			panic(fmt.Errorf("enable database tracing: %w", err))
 		}
 
 		sqlDB, err := db.DB()

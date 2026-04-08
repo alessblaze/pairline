@@ -17,6 +17,8 @@
 
 defmodule OmeglePhoenix.Redis do
   use Supervisor
+  require OpenTelemetry.Tracer, as: Tracer
+  alias OmeglePhoenix.Tracing
 
   alias OmeglePhoenix.Redis.AdminSubscriber
 
@@ -56,16 +58,27 @@ defmodule OmeglePhoenix.Redis do
     command = normalize_command(cmd)
     command_name = command_name(command)
 
-    with_timeout(opts, fn ->
-      case :eredis_cluster.q(@cluster_name, command) do
-        {:error, :invalid_cluster_command} ->
-          :eredis_cluster.qk(@cluster_name, command, @any_route_key)
+    Tracer.with_span "redis.command", %{kind: :client} do
+      Tracing.annotate_client("redis.command")
 
-        other ->
-          other
-      end
-    end)
-    |> normalize_command_result(command_name)
+      Tracer.set_attributes(%{
+        "db.system" => "redis",
+        "db.operation" => command_name,
+        "redis.args_count" => max(length(command) - 1, 0)
+      })
+
+      with_timeout(opts, fn ->
+        case :eredis_cluster.q(@cluster_name, command) do
+          {:error, :invalid_cluster_command} ->
+            :eredis_cluster.qk(@cluster_name, command, @any_route_key)
+
+          other ->
+            other
+        end
+      end)
+      |> normalize_command_result(command_name)
+      |> tap_redis_result()
+    end
   end
 
   def pipeline(commands, opts \\ [])
@@ -74,8 +87,18 @@ defmodule OmeglePhoenix.Redis do
   def pipeline(commands, opts) do
     normalized = Enum.map(commands, &normalize_command/1)
 
-    with_timeout(opts, fn -> run_pipeline(normalized) end)
-    |> normalize_pipeline_result(normalized)
+    Tracer.with_span "redis.pipeline", %{kind: :client} do
+      Tracing.annotate_client("redis.pipeline")
+
+      Tracer.set_attributes(%{
+        "db.system" => "redis",
+        "redis.pipeline.size" => length(normalized)
+      })
+
+      with_timeout(opts, fn -> run_pipeline(normalized) end)
+      |> normalize_pipeline_result(normalized)
+      |> tap_redis_result()
+    end
   end
 
   def mget(keys, opts \\ [])
@@ -83,14 +106,37 @@ defmodule OmeglePhoenix.Redis do
   def mget([], _opts), do: {:ok, []}
 
   def mget(keys, opts) when is_list(keys) do
-    keys
-    |> Enum.map(&["GET", &1])
-    |> pipeline(opts)
+    Tracer.with_span "redis.mget", %{kind: :client} do
+      Tracing.annotate_client("redis.mget")
+
+      Tracer.set_attributes(%{
+        "db.system" => "redis",
+        "db.operation" => "MGET",
+        "redis.key_count" => length(keys)
+      })
+
+      keys
+      |> Enum.map(&["GET", &1])
+      |> pipeline(opts)
+      |> tap_redis_result()
+    end
   end
 
   def publish(channel, message, opts \\ []) do
     payload = Jason.encode!(message)
-    command(["PUBLISH", channel, payload], opts)
+
+    Tracer.with_span "redis.publish", %{kind: :client} do
+      Tracing.annotate_client("redis.publish")
+
+      Tracer.set_attributes(%{
+        "db.system" => "redis",
+        "db.operation" => "PUBLISH",
+        "messaging.destination" => channel
+      })
+
+      command(["PUBLISH", channel, payload], opts)
+      |> tap_redis_result()
+    end
   end
 
   def subscribe(_channel), do: {:error, :unsupported}
@@ -150,6 +196,18 @@ defmodule OmeglePhoenix.Redis do
     catch
       _, _ -> :ok
     end
+  end
+
+  defp tap_redis_result({:error, reason} = result) do
+    Tracer.set_attribute("redis.outcome", "error")
+    Tracer.set_attribute("error", true)
+    Tracer.set_attribute("error.type", inspect(reason))
+    result
+  end
+
+  defp tap_redis_result(result) do
+    Tracer.set_attribute("redis.outcome", "ok")
+    result
   end
 
   defp with_timeout(opts, fun) do

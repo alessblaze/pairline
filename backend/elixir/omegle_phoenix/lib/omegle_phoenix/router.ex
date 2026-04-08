@@ -22,6 +22,8 @@ defmodule OmeglePhoenix.Router do
 
   use GenServer
   require Logger
+  require OpenTelemetry.Tracer, as: Tracer
+  alias OmeglePhoenix.Tracing
 
   @owner_table :omegle_phoenix_router_owners
   @owner_value_separator "|"
@@ -91,7 +93,11 @@ defmodule OmeglePhoenix.Router do
   end
 
   def send_message(session_id, message, opts \\ []) do
-    route(session_id, {:router_message, message}, opts)
+    Tracer.with_span "router.send_message", %{kind: :internal} do
+      Tracing.annotate_internal("router.send_message")
+      Tracer.set_attribute("session.ref", Tracing.safe_ref(session_id))
+      route(session_id, {:router_message, message}, opts)
+    end
   end
 
   def notify_match(
@@ -102,33 +108,70 @@ defmodule OmeglePhoenix.Router do
         route_hint \\ nil,
         owner_hint \\ nil
       ) do
-    route(
-      session_id,
-      {:router_match, partner_session_id, common_interests, match_generation, route_hint,
-       owner_hint}
-    )
+    Tracer.with_span "router.notify_match", %{kind: :internal} do
+      Tracing.annotate_internal("router.notify_match")
+
+      Tracer.set_attributes(%{
+        "session.ref" => Tracing.safe_ref(session_id),
+        "session.partner_ref" => Tracing.safe_ref(partner_session_id),
+        "match.common_interests_count" => length(common_interests)
+      })
+
+      route(
+        session_id,
+        {:router_match, partner_session_id, common_interests, match_generation, route_hint,
+         owner_hint}
+      )
+    end
   end
 
   def owner_node(session_id, opts \\ []) when is_binary(session_id) do
-    case owner_record(session_id, opts) do
-      {:ok, %{node: owner_node}} when is_binary(owner_node) -> {:ok, owner_node}
-      {:ok, nil} -> {:error, :not_found}
-      {:error, reason} -> {:error, reason}
-      _ -> {:error, :not_found}
+    Tracer.with_span "router.owner_node", %{kind: :internal} do
+      Tracing.annotate_internal("router.owner_node")
+      Tracer.set_attribute("session.ref", Tracing.safe_ref(session_id))
+
+      case owner_record(session_id, opts) do
+        {:ok, %{node: owner_node}} when is_binary(owner_node) -> {:ok, owner_node}
+        {:ok, nil} -> {:error, :not_found}
+        {:error, reason} -> {:error, reason}
+        _ -> {:error, :not_found}
+      end
     end
   end
 
   def notify_disconnect(session_id, reason, match_generation \\ nil) do
-    Logger.info("Notifying disconnect for session: #{session_id}, reason: #{reason}")
-    route(session_id, {:router_disconnect, reason, match_generation})
+    Tracer.with_span "router.notify_disconnect", %{kind: :internal} do
+      Tracing.annotate_internal("router.notify_disconnect")
+
+      Tracer.set_attributes(%{
+        "session.ref" => Tracing.safe_ref(session_id),
+        "disconnect.reason" => reason
+      })
+
+      Logger.info("Notifying disconnect for session: #{session_id}, reason: #{reason}")
+      route(session_id, {:router_disconnect, reason, match_generation})
+    end
   end
 
   def notify_timeout(session_id) do
-    route(session_id, :router_timeout)
+    Tracer.with_span "router.notify_timeout", %{kind: :internal} do
+      Tracing.annotate_internal("router.notify_timeout")
+      Tracer.set_attribute("session.ref", Tracing.safe_ref(session_id))
+      route(session_id, :router_timeout)
+    end
   end
 
   def notify_banned(session_id, reason) do
-    route(session_id, {:router_banned, reason})
+    Tracer.with_span "router.notify_banned", %{kind: :internal} do
+      Tracing.annotate_internal("router.notify_banned")
+
+      Tracer.set_attributes(%{
+        "session.ref" => Tracing.safe_ref(session_id),
+        "ban.reason_present" => reason not in [nil, ""]
+      })
+
+      route(session_id, {:router_banned, reason})
+    end
   end
 
   @impl true

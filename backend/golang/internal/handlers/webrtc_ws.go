@@ -21,8 +21,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/json"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"hash/fnv"
 	"log"
@@ -33,10 +33,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/anish/omegle/backend/golang/internal/observability"
 	appredis "github.com/anish/omegle/backend/golang/internal/redis"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
 
 var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -240,10 +243,10 @@ type redisSignalEnvelope struct {
 }
 
 type RedisSignalingHub struct {
-	shards           [clientShardCount]clientShard
-	redis            *appredis.Client
-	instanceID       string
-	startOnce        sync.Once
+	shards     [clientShardCount]clientShard
+	redis      *appredis.Client
+	instanceID string
+	startOnce  sync.Once
 }
 
 var Signaling = NewRedisSignalingHub()
@@ -703,9 +706,14 @@ type SignalingMessage struct {
 
 func WebRTCWebSocketHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		span := startHandlerSpan(c, "webrtc.signal.connect")
+		defer span.End()
+
 		sessionID := c.Query("session_id")
 		sessionToken := c.Query("session_token")
+		span.SetAttributes(hashedAttribute("webrtc.session.ref", sessionID))
 		if sessionID == "" || sessionToken == "" || len(sessionID) > 100 || len(sessionToken) > 128 || !uuidRe.MatchString(sessionID) {
+			span.SetStatus(codes.Error, "invalid session format")
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid session_id or session_token format"})
 			return
 		}
@@ -713,6 +721,7 @@ func WebRTCWebSocketHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		if !verifySessionTokenWebRTC(ctx, redisClient.GetClient(), sessionID, sessionToken) {
 			cancel()
+			span.SetStatus(codes.Error, "invalid session")
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid session"})
 			return
 		}
@@ -720,6 +729,8 @@ func WebRTCWebSocketHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 
 		conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "websocket upgrade failed")
 			log.Printf("WebRTC WS Upgrade failed: %v", err)
 			return
 		}
@@ -731,15 +742,20 @@ func WebRTCWebSocketHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 
 		client, pendingMessages, err := Signaling.Register(sessionID, conn)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "signaling registration failed")
 			log.Printf("Failed to register signaling session %s: %v", sessionID, err)
 			_ = writeCloseControl(conn, websocket.ClosePolicyViolation, "already connected")
 			_ = conn.Close()
 			return
 		}
+		span.SetAttributes(attribute.String("webrtc.connection_state", "registered"))
+		observability.AddWebRTCConnection(c.Request.Context(), 1)
 
 		unregisterOnce := sync.Once{}
 		unregister := func() {
 			unregisterOnce.Do(func() {
+				observability.AddWebRTCConnection(c.Request.Context(), -1)
 				Signaling.Unregister(sessionID)
 			})
 		}
@@ -760,24 +776,24 @@ func WebRTCWebSocketHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 			return
 		}
 
-		ownershipJitter := time.Duration(time.Now().UnixNano()%int64(5*time.Second)) // 0-5s
+		ownershipJitter := time.Duration(time.Now().UnixNano() % int64(5*time.Second)) // 0-5s
 		go client.writePump(func() func(time.Time) {
 			nextOwnershipRefresh := time.Now().Add(ownershipJitter)
 			return func(now time.Time) {
-			if now.Before(nextOwnershipRefresh) {
-				return
-			}
-			nextOwnershipRefresh = now.Add(ownerRefreshEvery)
-
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			err := Signaling.refreshOwnerKey(ctx, ownerKey(sessionID, sessionRoute))
-			cancel()
-			if err != nil {
-				log.Printf("WebRTC WS ownership refresh failed for %s: %v", sessionID, err)
-				if errors.Is(err, errOwnershipLost) {
-					client.close()
+				if now.Before(nextOwnershipRefresh) {
+					return
 				}
-			}
+				nextOwnershipRefresh = now.Add(ownerRefreshEvery)
+
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				err := Signaling.refreshOwnerKey(ctx, ownerKey(sessionID, sessionRoute))
+				cancel()
+				if err != nil {
+					log.Printf("WebRTC WS ownership refresh failed for %s: %v", sessionID, err)
+					if errors.Is(err, errOwnershipLost) {
+						client.close()
+					}
+				}
 			}
 		}(), unregister)
 
@@ -859,14 +875,21 @@ func WebRTCWebSocketHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 }
 
 func verifySessionTokenWebRTC(ctx context.Context, redisClient redis.UniversalClient, sessionID, providedToken string) bool {
+	ctx, span := startChildSpanFromContext(ctx, "webrtc.verify_session_token", hashedAttribute("session.ref", sessionID))
+	defer span.End()
+
 	// WebRTC signaling requires the current session route; do not fall back to report locators.
 	route, err := appredis.ResolveSessionRoute(ctx, redisClient, sessionID)
 	if err != nil {
+		span.RecordError(err)
 		return false
 	}
 
 	expectedToken, err := redisClient.Get(ctx, appredis.SessionTokenKey(sessionID, route)).Result()
 	if err != nil || expectedToken == "" {
+		if err != nil {
+			span.RecordError(err)
+		}
 		return false
 	}
 

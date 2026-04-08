@@ -18,6 +18,8 @@
 defmodule OmeglePhoenixWeb.Socket do
   use Phoenix.Socket
   import Bitwise
+  require OpenTelemetry.Tracer, as: Tracer
+  alias OmeglePhoenix.Tracing
 
   @trusted_proxy_env "TRUSTED_PROXY_CIDRS"
 
@@ -25,8 +27,17 @@ defmodule OmeglePhoenixWeb.Socket do
 
   @impl true
   def connect(_params, socket, connect_info) do
-    client_ip = extract_ip(connect_info)
-    {:ok, assign(socket, :client_ip, client_ip)}
+    Tracer.with_span "phoenix.socket.connect", %{kind: :server} do
+      client_ip = extract_ip(connect_info)
+      Tracing.annotate_server("phoenix.socket.connect")
+
+      Tracer.set_attributes(%{
+        "client.ip_hash" => Tracing.safe_ref(client_ip),
+        "phoenix.channel.topic_pattern" => "room:*"
+      })
+
+      {:ok, assign(socket, :client_ip, client_ip)}
+    end
   end
 
   defp extract_ip(connect_info) do
@@ -40,7 +51,7 @@ defmodule OmeglePhoenixWeb.Socket do
 
     forwarded_ip =
       get_header(x_headers, "cf-connecting-ipv6", true) ||
-      get_header(x_headers, "cf-connecting-ip", true) ||
+        get_header(x_headers, "cf-connecting-ip", true) ||
         get_header(x_headers, "x-real-ip", true) ||
         get_forwarded_for_ip(x_headers)
 
