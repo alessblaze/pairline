@@ -520,6 +520,10 @@ func (s *Server) setupRoutes() {
 				adminOnlyEnforcement.GET("/accounts", handlers.ListAdminAccountsHandlerGin)
 				adminOnlyEnforcement.POST("/accounts", handlers.CreateAdminHandlerGin)
 				adminOnlyEnforcement.DELETE("/accounts/:username", handlers.DeleteAdminHandlerGin)
+
+				rootOnly := adminAuth.Group("")
+				rootOnly.Use(s.RoleAuthMiddleware([]string{"root"}))
+				rootOnly.GET("/infra/health", handlers.InfraHealthHandlerGin(s.redis, s.db, s.serviceName))
 			}
 		}
 	}

@@ -74,3 +74,87 @@ export interface AdminAccount {
   created_by_username: string;
   is_active: boolean;
 }
+
+export interface InfraSummary {
+  healthy_services: number;
+  degraded_services: number;
+  total_services: number;
+}
+
+export interface InfraTopology {
+  phoenix_configured_nodes: number;
+  phoenix_connected_nodes: number;
+  phoenix_node_names: string[];
+  go_configured_services: number;
+  redis_configured_nodes: number;
+  redis_reachable_nodes: number;
+}
+
+export interface PostgresConnectionStats {
+  open: number;
+  in_use: number;
+  idle: number;
+  max_open: number;
+}
+
+export interface PostgresHealth {
+  status: string;
+  latency_ms: number;
+  error?: string;
+  connections: PostgresConnectionStats;
+}
+
+export interface RedisNodeHealth {
+  address: string;
+  status: string;
+  latency_ms: number;
+  error?: string;
+}
+
+export interface RedisHealth {
+  status: string;
+  latency_ms: number;
+  error?: string;
+  configured_nodes: string[];
+  nodes: RedisNodeHealth[];
+}
+
+export interface CollectorHealth {
+  url: string;
+  status: string;
+  latency_ms: number;
+  error?: string;
+}
+
+export interface ObservabilityHealth {
+  status: string;
+  traces_configured: boolean;
+  metrics_configured: boolean;
+  otlp_endpoint: string;
+  collector: CollectorHealth;
+}
+
+export interface RemoteServiceHealth {
+  name: string;
+  kind: string;
+  url: string;
+  status: string;
+  http_status: number;
+  latency_ms: number;
+  error?: string;
+  service?: string;
+  reported_at?: number;
+  details?: Record<string, unknown>;
+}
+
+export interface InfraHealthResponse {
+  status: string;
+  service: string;
+  timestamp: number;
+  topology: InfraTopology;
+  postgres: PostgresHealth;
+  redis: RedisHealth;
+  observability: ObservabilityHealth;
+  services: RemoteServiceHealth[];
+  summary: InfraSummary;
+}

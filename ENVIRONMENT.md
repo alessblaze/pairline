@@ -158,6 +158,11 @@ This file focuses on **what each variable changes in runtime behavior**, not jus
 ### Redis client compatibility
 - **`REDIS_MAINT_NOTIFICATIONS_MODE`** (default: `disabled`): controls whether the Go Redis client sends `CLIENT MAINT_NOTIFICATIONS` on connect. Use `disabled` for Valkey or older Redis servers, `auto` to probe support safely, or `enabled` only when you know the server supports it.
 
+### Root-only infra health dashboard
+- **`ADMIN_HEALTH_PHOENIX_URLS`** (default: unset in code): comma-separated Phoenix health endpoints the Go admin service should poll for topology and node details. In Docker, set this explicitly on the admin service.
+- **`ADMIN_HEALTH_GO_URLS`** (default: unset in code): comma-separated Go service health endpoints the admin dashboard should poll. In Docker, set this explicitly on the admin service.
+- **`OTEL_COLLECTOR_HEALTH_URL`** (default: unset in code): health endpoint used to confirm the OTLP collector is reachable from the admin service. In Docker, set this explicitly on the admin service.
+
 ### OpenTelemetry tracing
 - **`OTEL_EXPORTER_OTLP_ENDPOINT`** (default: unset): base OTLP endpoint for traces and metrics, for example `http://jaeger:4318` or `http://otel-collector:4318`. When unset, Go telemetry stays disabled.
 - **`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`** (default: unset): trace-specific endpoint, for example `http://otel-collector:4318/v1/traces`. This is useful when your collector uses a non-default path.

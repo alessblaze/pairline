@@ -634,6 +634,9 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       OTEL_EXPORTER_OTLP_INSECURE: "true"
       OTEL_ENVIRONMENT: docker
+      ADMIN_HEALTH_PHOENIX_URLS: http://phoenix1:8080/api/health,http://phoenix2:8080/api/health,http://phoenix3:8080/api/health
+      ADMIN_HEALTH_GO_URLS: http://golang-admin:8082/health,http://golang-public-1:8081/health,http://golang-public-2:8081/health
+      OTEL_COLLECTOR_HEALTH_URL: http://otel-collector:13133/
     networks:
       pairline_cluster:
         ipv4_address: 172.30.0.41

@@ -28,12 +28,15 @@ import {
   Eye,
   EyeOff,
   Activity,
+  Server,
+  Database,
+  Network,
   Menu,
   Moon,
   Sun,
   X
 } from 'lucide-react';
-import type { AdminAccount, AdminRole, Ban, CreateBanRequest, LoginResponse, Report } from '../types';
+import type { AdminAccount, AdminRole, Ban, CreateBanRequest, InfraHealthResponse, LoginResponse, Report } from '../types';
 
 interface BanModalState {
   open: boolean;
@@ -133,6 +136,17 @@ function reportStatusClass(status: Report['status']) {
   return 'bg-amber-500/10 text-amber-400 border border-amber-500/20';
 }
 
+function healthStatusClass(status?: string) {
+  if (status === 'ok') return 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-400';
+  if (status === 'degraded') return 'border border-amber-500/20 bg-amber-500/10 text-amber-400';
+  return 'border border-rose-500/20 bg-rose-500/10 text-rose-400';
+}
+
+function formatLatency(ms?: number) {
+  if (!Number.isFinite(ms) || !ms || ms < 0) return '0ms';
+  return `${ms}ms`;
+}
+
 function buildExpiryDate(durationValue: string, durationUnit: 'hours' | 'days') {
   const amount = Number(durationValue);
   if (!Number.isFinite(amount) || amount <= 0) return null;
@@ -162,13 +176,14 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [reports, setReports] = useState<Report[]>([]);
   const [accounts, setAccounts] = useState<AdminAccount[]>([]);
+  const [infraHealth, setInfraHealth] = useState<InfraHealthResponse | null>(null);
   const [selectedReports, setSelectedReports] = useState<Set<string>>(new Set());
   const [expandedReport, setExpandedReport] = useState<string | null>(null);
   const [viewingDescription, setViewingDescription] = useState<string | null>(null);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [bans, setBans] = useState<Ban[]>([]);
-  const [currentTab, setCurrentTab] = useState<'reports' | 'bans' | 'accounts'>('reports');
+  const [currentTab, setCurrentTab] = useState<'reports' | 'bans' | 'accounts' | 'infra'>('reports');
   const [reportStatusFilter, setReportStatusFilter] = useState<'pending' | 'decided' | 'all'>('pending');
   const [reportLimit, setReportLimit] = useState<string>('10');
   const [serverReportMetrics, setServerReportMetrics] = useState({ pending: 0, approved: 0, rejected: 0 });
@@ -204,6 +219,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
   const canCreateBans = role === 'moderator' || role === 'admin' || role === 'root';
   const canManageBans = role === 'admin' || role === 'root';
   const canManageAccounts = role === 'admin' || role === 'root';
+  const canViewInfraHealth = role === 'root';
   const deferredBanSearch = useDeferredValue(banSearch);
   const deferredAccountSearch = useDeferredValue(accountSearch);
   const accountPageSize = accountLimit === 'all' ? Math.max(accountTotal, accounts.length, 1) : Number(accountLimit);
@@ -336,6 +352,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
     setReports([]);
     setBans([]);
     setAccounts([]);
+    setInfraHealth(null);
     setSelectedReports(new Set());
     navigate(loginRoute);
   };
@@ -422,6 +439,22 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
       }
     } catch (error) {
       console.error('Failed to fetch admin accounts:', error);
+    }
+  };
+
+  const fetchInfraHealth = async () => {
+    if (!canViewInfraHealth) return;
+    try {
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/infra/health`);
+      if (response.status === 401) return logout();
+      if (response.ok) {
+        const data: InfraHealthResponse = await response.json();
+        setInfraHealth(data);
+      } else if (response.status === 403) {
+        setInfraHealth(null);
+      }
+    } catch (error) {
+      console.error('Failed to fetch infra health:', error);
     }
   };
 
@@ -660,6 +693,10 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
     void fetchAccounts();
   });
 
+  const syncInfraHealth = useEffectEvent(() => {
+    void fetchInfraHealth();
+  });
+
   // Effects for data sync
   useEffect(() => {
     setAccountPage(1);
@@ -672,6 +709,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
   useEffect(() => { if (authReady && isAuthenticated) syncReports(); }, [authReady, isAuthenticated, reportStatusFilter, reportLimit]);
   useEffect(() => { if (authReady && isAuthenticated) syncBans(); }, [authReady, isAuthenticated, banFilter, banLimit, deferredBanSearch]);
   useEffect(() => { if (authReady && isAuthenticated && canManageAccounts) syncAccounts(); }, [authReady, isAuthenticated, canManageAccounts, accountPage, accountLimit, deferredAccountSearch]);
+  useEffect(() => { if (authReady && isAuthenticated && canViewInfraHealth) syncInfraHealth(); }, [authReady, isAuthenticated, canViewInfraHealth]);
 
   if (!authReady) {
     return (
@@ -853,6 +891,18 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                   <BanIcon size={18} />
                   Ban Registry
                 </button>
+                {canViewInfraHealth && (
+                  <button 
+                    onClick={() => {
+                      setCurrentTab('infra');
+                      setIsMobileMenuOpen(false);
+                    }} 
+                    className={tabButtonClass(currentTab === 'infra')}
+                  >
+                    <Server size={18} />
+                    Infra Health
+                  </button>
+                )}
                 {canManageAccounts && (
                   <button 
                     onClick={() => {
@@ -926,6 +976,12 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                 <BanIcon size={18} />
                 Ban Registry
               </button>
+              {canViewInfraHealth && (
+                <button onClick={() => setCurrentTab('infra')} className={tabButtonClass(currentTab === 'infra')}>
+                  <Server size={18} />
+                  Infra Health
+                </button>
+              )}
               {canManageAccounts && (
                 <button onClick={() => setCurrentTab('accounts')} className={tabButtonClass(currentTab === 'accounts')}>
                   <Users size={18} />
@@ -1000,10 +1056,22 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
             <header className="mb-10 flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h1 className="text-3xl font-bold text-slate-300">
-                  {currentTab === 'reports' ? 'Reports Queue' : currentTab === 'bans' ? 'Ban Registry' : 'Admin Accounts'}
+                  {currentTab === 'reports'
+                    ? 'Reports Queue'
+                    : currentTab === 'bans'
+                      ? 'Ban Registry'
+                      : currentTab === 'infra'
+                        ? 'Infra Health'
+                        : 'Admin Accounts'}
                 </h1>
                 <p className="mt-1 text-slate-400">
-                  {currentTab === 'reports' ? 'Review and act on user reports in real-time.' : currentTab === 'bans' ? 'Manage active and historical user bans.' : 'Manage moderation team access.'}
+                  {currentTab === 'reports'
+                    ? 'Review and act on user reports in real-time.'
+                    : currentTab === 'bans'
+                      ? 'Manage active and historical user bans.'
+                      : currentTab === 'infra'
+                        ? 'Inspect cluster topology, service health, data stores, and observability lanes.'
+                        : 'Manage moderation team access.'}
                 </p>
               </div>
 
@@ -1569,6 +1637,175 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                           ))}
                         </AnimatePresence>
                       )}
+                    </div>
+                  </div>
+                )}
+
+                {currentTab === 'infra' && canViewInfraHealth && (
+                  <div className="space-y-6">
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                      <div className={metricCardClass('active')}>
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-success-emerald/10 text-success-emerald border border-success-emerald/20 shadow-[inset_0_0_20px_rgba(52,211,153,0.05)]">
+                          <CheckCircle2 size={20} />
+                          <div className="hud-bracket hud-bracket-tl" />
+                          <div className="hud-bracket-br" />
+                        </div>
+                        <div className="flex flex-col">
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-slate-700 mb-0.5">Healthy Services</p>
+                          <p className="font-heading text-2xl font-bold text-slate-300">{infraHealth?.summary.healthy_services || 0}</p>
+                        </div>
+                      </div>
+                      <div className={metricCardClass('inactive')}>
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-amber-500/10 text-amber-400 border border-amber-500/20 shadow-[inset_0_0_20px_rgba(245,158,11,0.05)]">
+                          <AlertTriangle size={20} />
+                          <div className="hud-bracket hud-bracket-tl" />
+                          <div className="hud-bracket-br" />
+                        </div>
+                        <div className="flex flex-col">
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-slate-700 mb-0.5">Degraded Services</p>
+                          <p className="font-heading text-2xl font-bold text-slate-300">{infraHealth?.summary.degraded_services || 0}</p>
+                        </div>
+                      </div>
+                      <div className={metricCardClass('total')}>
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-electric-cyan/10 text-electric-cyan border border-electric-cyan/20 shadow-[inset_0_0_20px_rgba(34,211,238,0.05)]">
+                          <Network size={20} />
+                          <div className="hud-bracket hud-bracket-tl" />
+                          <div className="hud-bracket-br" />
+                        </div>
+                        <div className="flex flex-col">
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-slate-700 mb-0.5">Phoenix Nodes</p>
+                          <p className="font-heading text-2xl font-bold text-slate-300">{infraHealth?.topology.phoenix_connected_nodes || 0}</p>
+                        </div>
+                      </div>
+                      <div className={metricCardClass('total')}>
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-electric-cyan/10 text-electric-cyan border border-electric-cyan/20 shadow-[inset_0_0_20px_rgba(34,211,238,0.05)]">
+                          <Database size={20} />
+                          <div className="hud-bracket hud-bracket-tl" />
+                          <div className="hud-bracket-br" />
+                        </div>
+                        <div className="flex flex-col">
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-slate-700 mb-0.5">Redis Reachable</p>
+                          <p className="font-heading text-2xl font-bold text-slate-300">
+                            {infraHealth ? `${infraHealth.topology.redis_reachable_nodes}/${infraHealth.topology.redis_configured_nodes}` : '0/0'}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-6 xl:grid-cols-3">
+                      <div className={`${surfaceCardClass} xl:col-span-2`}>
+                        <div className="mb-4 flex items-center justify-between">
+                          <div>
+                            <h2 className="text-sm font-bold uppercase tracking-[0.16em] text-slate-300">Service Health Matrix</h2>
+                            <p className="mt-1 text-xs text-slate-500">Live status for Phoenix and Go service endpoints.</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void fetchInfraHealth()}
+                            className="flex h-10 items-center gap-2 rounded-none border border-[var(--admin-input-border)] bg-[var(--admin-input-bg)] px-4 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text)] transition-all hover:bg-[var(--admin-input-focus-bg)]"
+                          >
+                            <RefreshCw size={14} />
+                            Refresh
+                          </button>
+                        </div>
+                        <div className="space-y-3">
+                          {(infraHealth?.services || []).map((service) => (
+                            <div key={`${service.kind}-${service.name}`} className="border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] p-4">
+                              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                <div>
+                                  <div className="flex items-center gap-3">
+                                    <p className="text-sm font-bold uppercase tracking-[0.14em] text-slate-300">{service.name}</p>
+                                    <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${healthStatusClass(service.status)}`}>{service.status}</span>
+                                  </div>
+                                  <p className="mt-1 text-xs text-slate-500">{service.kind} · {service.url}</p>
+                                </div>
+                                <div className="text-left sm:text-right">
+                                  <p className="text-xs text-slate-500">Latency {formatLatency(service.latency_ms)}</p>
+                                  <p className="text-xs text-slate-500">HTTP {service.http_status || 'n/a'}</p>
+                                </div>
+                              </div>
+                              {service.details && (
+                                <div className="mt-3 grid gap-2 text-xs text-slate-400 sm:grid-cols-2">
+                                  {'node' in service.details && <p>Node: {String(service.details.node)}</p>}
+                                  {'status' in service.details && <p>Reported status: {String(service.details.status)}</p>}
+                                </div>
+                              )}
+                              {service.error && <p className="mt-3 text-xs text-rose-400">{service.error}</p>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="space-y-6">
+                        <div className={surfaceCardClass}>
+                          <h2 className="mb-4 text-sm font-bold uppercase tracking-[0.16em] text-slate-300">Topology</h2>
+                          <div className="space-y-3 text-sm text-slate-400">
+                            <div className="flex items-center justify-between"><span>Phoenix configured</span><span className="font-bold text-slate-300">{infraHealth?.topology.phoenix_configured_nodes || 0}</span></div>
+                            <div className="flex items-center justify-between"><span>Phoenix connected</span><span className="font-bold text-slate-300">{infraHealth?.topology.phoenix_connected_nodes || 0}</span></div>
+                            <div className="flex items-center justify-between"><span>Go services</span><span className="font-bold text-slate-300">{infraHealth?.topology.go_configured_services || 0}</span></div>
+                            <div className="flex items-center justify-between"><span>Redis configured</span><span className="font-bold text-slate-300">{infraHealth?.topology.redis_configured_nodes || 0}</span></div>
+                          </div>
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            {(infraHealth?.topology.phoenix_node_names || []).map((nodeName) => (
+                              <span key={nodeName} className="border border-electric-cyan/20 bg-electric-cyan/10 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-electric-cyan">
+                                {nodeName}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className={surfaceCardClass}>
+                          <h2 className="mb-4 text-sm font-bold uppercase tracking-[0.16em] text-slate-300">Data Stores</h2>
+                          <div className="space-y-4">
+                            <div className="border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] p-4">
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm font-bold uppercase tracking-[0.14em] text-slate-300">Postgres</p>
+                                <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${healthStatusClass(infraHealth?.postgres.status)}`}>{infraHealth?.postgres.status || 'unknown'}</span>
+                              </div>
+                              <p className="mt-2 text-xs text-slate-500">Latency {formatLatency(infraHealth?.postgres.latency_ms)}</p>
+                              <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-400">
+                                <p>Open: {infraHealth?.postgres.connections.open || 0}</p>
+                                <p>In use: {infraHealth?.postgres.connections.in_use || 0}</p>
+                                <p>Idle: {infraHealth?.postgres.connections.idle || 0}</p>
+                                <p>Max: {infraHealth?.postgres.connections.max_open || 0}</p>
+                              </div>
+                            </div>
+
+                            <div className="border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] p-4">
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm font-bold uppercase tracking-[0.14em] text-slate-300">Redis Cluster</p>
+                                <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${healthStatusClass(infraHealth?.redis.status)}`}>{infraHealth?.redis.status || 'unknown'}</span>
+                              </div>
+                              <p className="mt-2 text-xs text-slate-500">Latency {formatLatency(infraHealth?.redis.latency_ms)}</p>
+                              <div className="mt-3 space-y-2">
+                                {(infraHealth?.redis.nodes || []).map((node) => (
+                                  <div key={node.address} className="flex items-center justify-between text-xs text-slate-400">
+                                    <span>{node.address}</span>
+                                    <span className={node.status === 'ok' ? 'text-emerald-400' : 'text-rose-400'}>
+                                      {node.status} · {formatLatency(node.latency_ms)}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className={surfaceCardClass}>
+                          <h2 className="mb-4 text-sm font-bold uppercase tracking-[0.16em] text-slate-300">Observability</h2>
+                          <div className="space-y-3 text-sm text-slate-400">
+                            <div className="flex items-center justify-between"><span>Traces configured</span><span className="font-bold text-slate-300">{infraHealth?.observability.traces_configured ? 'yes' : 'no'}</span></div>
+                            <div className="flex items-center justify-between"><span>Metrics configured</span><span className="font-bold text-slate-300">{infraHealth?.observability.metrics_configured ? 'yes' : 'no'}</span></div>
+                            <div className="flex items-center justify-between"><span>Collector</span><span className={`font-bold ${infraHealth?.observability.collector.status === 'ok' ? 'text-emerald-400' : 'text-amber-400'}`}>{infraHealth?.observability.collector.status || 'unknown'}</span></div>
+                            <div className="flex items-center justify-between"><span>Collector latency</span><span className="font-bold text-slate-300">{formatLatency(infraHealth?.observability.collector.latency_ms)}</span></div>
+                            <p className="break-all text-xs text-slate-500">Health URL: {infraHealth?.observability.collector.url || 'No collector health URL configured'}</p>
+                            <p className="break-all text-xs text-slate-500">OTLP endpoint: {infraHealth?.observability.otlp_endpoint || 'No OTLP endpoint configured'}</p>
+                            {infraHealth?.observability.collector.error && (
+                              <p className="break-all text-xs text-rose-400">{infraHealth.observability.collector.error}</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 )}

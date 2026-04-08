@@ -24,11 +24,12 @@ defmodule OmeglePhoenixWeb.HealthController do
   def index(conn, _params) do
     Tracer.with_span "phoenix.health.index", %{kind: :server} do
       Tracing.annotate_server("phoenix.health.index")
+      details_allowed = health_details_allowed?(conn)
 
       Tracer.set_attributes(%{
         "http.route" => "/api/health",
         "service.name" => "omegle-phoenix",
-        "health.details_enabled" => OmeglePhoenix.Config.health_details_enabled?()
+        "health.details_enabled" => details_allowed
       })
 
       response = %{
@@ -38,7 +39,7 @@ defmodule OmeglePhoenixWeb.HealthController do
       }
 
       response =
-        if OmeglePhoenix.Config.health_details_enabled?() do
+        if details_allowed do
           details = %{
             node: Atom.to_string(Node.self()),
             connected_nodes: Enum.map(Node.list(), &Atom.to_string/1),
@@ -67,5 +68,21 @@ defmodule OmeglePhoenixWeb.HealthController do
 
       json(conn, response)
     end
+  end
+
+  defp health_details_allowed?(conn) do
+    OmeglePhoenix.Config.health_details_enabled?() or valid_internal_secret?(conn)
+  end
+
+  defp valid_internal_secret?(conn) do
+    expected = System.get_env("SHARED_SECRET") || ""
+
+    provided =
+      conn
+      |> get_req_header("x-shared-secret")
+      |> List.first()
+      |> to_string()
+
+    expected != "" and provided == expected
   end
 end

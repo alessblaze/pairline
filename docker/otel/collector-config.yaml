@@ -6,6 +6,10 @@ receivers:
       http:
         endpoint: 0.0.0.0:4318
 
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
 connectors:
   spanmetrics:
     histogram:
@@ -24,6 +28,7 @@ processors:
   batch: {}
 
 service:
+  extensions: [health_check]
   pipelines:
     metrics:
       receivers: [otlp, spanmetrics]
