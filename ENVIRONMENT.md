@@ -164,9 +164,10 @@ This file focuses on **what each variable changes in runtime behavior**, not jus
 - **`OTEL_COLLECTOR_HEALTH_URL`** (default: unset in code): health endpoint used to confirm the OTLP collector is reachable from the admin service. In Docker, set this explicitly on the admin service.
 
 ### OpenTelemetry tracing
-- **`OTEL_EXPORTER_OTLP_ENDPOINT`** (default: unset): base OTLP endpoint for traces and metrics, for example `http://jaeger:4318` or `http://otel-collector:4318`. When unset, Go telemetry stays disabled.
+- **`OTEL_EXPORTER_OTLP_ENDPOINT`** (default: unset): base OTLP endpoint for traces and metrics, typically your collector such as `http://otel-collector:4318`. When unset, Go telemetry stays disabled.
 - **`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`** (default: unset): trace-specific endpoint, for example `http://otel-collector:4318/v1/traces`. This is useful when your collector uses a non-default path.
 - **`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`** (default: unset): metric-specific endpoint, for example `http://otel-collector:4318/v1/metrics`.
+- If you send traces directly to Jaeger, prefer `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` instead of pointing the shared base endpoint at Jaeger, because metrics should still go to an OTLP collector.
 - **`OTEL_EXPORTER_OTLP_INSECURE`** (default: exporter default; common dev value: `true`): use plaintext HTTP for local/dev collectors.
 - **`OTEL_ENVIRONMENT`** (default: `development`): emitted as `deployment.environment` on spans.
 - **`OTEL_SERVICE_INSTANCE_ID`** (default: hostname): optional override for instance identity if hostnames are ephemeral or not unique enough.

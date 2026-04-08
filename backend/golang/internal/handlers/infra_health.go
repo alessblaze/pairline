@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -64,14 +65,64 @@ type RedisHealth struct {
 	LatencyMS       int64             `json:"latency_ms"`
 	Error           string            `json:"error,omitempty"`
 	ConfiguredNodes []string          `json:"configured_nodes"`
+	Cluster         RedisClusterInfo  `json:"cluster"`
 	Nodes           []RedisNodeHealth `json:"nodes"`
 }
 
+type RedisClusterInfo struct {
+	State                                string `json:"state"`
+	SlotsAssigned                        int    `json:"slots_assigned"`
+	SlotsOK                              int    `json:"slots_ok"`
+	SlotsPFail                           int    `json:"slots_pfail"`
+	SlotsFail                            int    `json:"slots_fail"`
+	KnownNodes                           int    `json:"known_nodes"`
+	Size                                 int    `json:"size"`
+	CurrentEpoch                         int    `json:"current_epoch"`
+	MyEpoch                              int    `json:"my_epoch"`
+	TotalClusterLinksBufferLimitExceeded int    `json:"total_cluster_links_buffer_limit_exceeded"`
+}
+
 type RedisNodeHealth struct {
-	Address   string `json:"address"`
-	Status    string `json:"status"`
-	LatencyMS int64  `json:"latency_ms"`
-	Error     string `json:"error,omitempty"`
+	NodeID                string             `json:"node_id"`
+	Address               string             `json:"address"`
+	Role                  string             `json:"role"`
+	Status                string             `json:"status"`
+	LinkState             string             `json:"link_state"`
+	Flags                 []string           `json:"flags"`
+	MasterID              string             `json:"master_id,omitempty"`
+	Slots                 []string           `json:"slots,omitempty"`
+	MasterLinkStatus      string             `json:"master_link_status,omitempty"`
+	ReplicationLagSeconds int64              `json:"replication_lag_seconds,omitempty"`
+	Memory                RedisMemoryInfo    `json:"memory"`
+	CommandStats          []RedisCommandStat `json:"command_stats,omitempty"`
+	Error                 string             `json:"error,omitempty"`
+}
+
+type RedisMemoryInfo struct {
+	UsedMemoryBytes        int64   `json:"used_memory_bytes"`
+	UsedMemoryHuman        string  `json:"used_memory_human"`
+	UsedMemoryRSSBytes     int64   `json:"used_memory_rss_bytes"`
+	UsedMemoryRSSHuman     string  `json:"used_memory_rss_human"`
+	UsedMemoryPeakBytes    int64   `json:"used_memory_peak_bytes"`
+	UsedMemoryPeakHuman    string  `json:"used_memory_peak_human"`
+	UsedMemoryPeakPerc     string  `json:"used_memory_peak_perc"`
+	UsedMemoryDatasetBytes int64   `json:"used_memory_dataset_bytes"`
+	UsedMemoryDatasetPerc  string  `json:"used_memory_dataset_perc"`
+	TotalSystemMemoryBytes int64   `json:"total_system_memory_bytes"`
+	TotalSystemMemoryHuman string  `json:"total_system_memory_human"`
+	MaxMemoryBytes         int64   `json:"maxmemory_bytes"`
+	MaxMemoryHuman         string  `json:"maxmemory_human"`
+	MaxMemoryPolicy        string  `json:"maxmemory_policy"`
+	Allocator              string  `json:"allocator"`
+	FragmentationRatio     float64 `json:"fragmentation_ratio"`
+	FragmentationBytes     int64   `json:"fragmentation_bytes"`
+}
+
+type RedisCommandStat struct {
+	Command     string  `json:"command"`
+	Calls       int64   `json:"calls"`
+	UsecTotal   int64   `json:"usec_total"`
+	UsecPerCall float64 `json:"usec_per_call"`
 }
 
 type ObservabilityHealth struct {
@@ -195,51 +246,92 @@ func checkRedisHealth(ctx context.Context, redisClient *appredis.Client) RedisHe
 	}
 
 	startedAt := time.Now()
-	if err := redisClient.GetClient().Ping(ctx).Err(); err != nil {
-		result.Status = "error"
-		result.Error = err.Error()
-		result.LatencyMS = durationMillisCeil(time.Since(startedAt))
-		return result
-	}
+	pingErr := redisClient.GetClient().Ping(ctx).Err()
 	result.LatencyMS = durationMillisCeil(time.Since(startedAt))
+	if pingErr != nil {
+		result.Status = "error"
+		result.Error = pingErr.Error()
+	}
 
 	clusterClient, ok := redisClient.GetClient().(*goredis.ClusterClient)
 	if !ok {
 		return result
 	}
 
-	seen := map[string]struct{}{}
-	nodeStatuses := make([]RedisNodeHealth, 0)
-
-	_ = clusterClient.ForEachShard(ctx, func(shardCtx context.Context, shard *goredis.Client) error {
-		addr := shard.Options().Addr
-		if _, exists := seen[addr]; exists {
-			return nil
+	clusterInfoRaw, err := clusterClient.ClusterInfo(ctx).Result()
+	if err != nil {
+		if result.Error == "" {
+			result.Status = "error"
+			result.Error = err.Error()
 		}
-		seen[addr] = struct{}{}
+		return result
+	}
 
-		nodeStartedAt := time.Now()
-		pingErr := shard.Ping(shardCtx).Err()
-		nodeStatus := RedisNodeHealth{
-			Address:   addr,
-			LatencyMS: durationMillisCeil(time.Since(nodeStartedAt)),
+	clusterInfo := parseRedisClusterInfo(clusterInfoRaw)
+	clusterState := strings.ToLower(clusterInfo["cluster_state"])
+	slotsAssigned := redisClusterInfoInt(clusterInfo, "cluster_slots_assigned")
+	slotsOK := redisClusterInfoInt(clusterInfo, "cluster_slots_ok")
+	slotsPFail := redisClusterInfoInt(clusterInfo, "cluster_slots_pfail")
+	slotsFail := redisClusterInfoInt(clusterInfo, "cluster_slots_fail")
+	result.Cluster = RedisClusterInfo{
+		State:                                clusterState,
+		SlotsAssigned:                        slotsAssigned,
+		SlotsOK:                              slotsOK,
+		SlotsPFail:                           slotsPFail,
+		SlotsFail:                            slotsFail,
+		KnownNodes:                           redisClusterInfoInt(clusterInfo, "cluster_known_nodes"),
+		Size:                                 redisClusterInfoInt(clusterInfo, "cluster_size"),
+		CurrentEpoch:                         redisClusterInfoInt(clusterInfo, "cluster_current_epoch"),
+		MyEpoch:                              redisClusterInfoInt(clusterInfo, "cluster_my_epoch"),
+		TotalClusterLinksBufferLimitExceeded: redisClusterInfoInt(clusterInfo, "total_cluster_links_buffer_limit_exceeded"),
+	}
+
+	switch {
+	case clusterState != "" && clusterState != "ok":
+		result.Status = "error"
+		if result.Error == "" {
+			result.Error = "cluster_state=" + clusterState
 		}
-		if pingErr != nil {
-			nodeStatus.Status = "error"
-			nodeStatus.Error = pingErr.Error()
+	case slotsFail > 0:
+		result.Status = "error"
+		if result.Error == "" {
+			result.Error = "cluster reports failing slots"
+		}
+	case slotsAssigned > 0 && slotsAssigned < 16384:
+		result.Status = "error"
+		if result.Error == "" {
+			result.Error = "cluster has unassigned slots"
+		}
+	case slotsPFail > 0 || (slotsAssigned > 0 && slotsOK > 0 && slotsOK < slotsAssigned):
+		if result.Status == "ok" {
 			result.Status = "degraded"
-		} else {
-			nodeStatus.Status = "ok"
 		}
+		if result.Error == "" {
+			result.Error = "cluster reports pfail or reduced slot coverage"
+		}
+	case pingErr != nil:
+		result.Status = "degraded"
+	}
 
-		nodeStatuses = append(nodeStatuses, nodeStatus)
-		return nil
-	})
+	clusterNodesRaw, err := clusterClient.ClusterNodes(ctx).Result()
+	if err != nil {
+		if result.Status == "ok" {
+			result.Status = "degraded"
+		}
+		if result.Error == "" {
+			result.Error = "cluster nodes unavailable: " + err.Error()
+		}
+		return result
+	}
+	result.Nodes = parseRedisClusterNodes(clusterNodesRaw)
+	enrichRedisNodeDiagnostics(ctx, &result)
+	for _, node := range result.Nodes {
+		if node.Status != "ok" && result.Status == "ok" {
+			result.Status = "degraded"
+			break
+		}
+	}
 
-	sort.Slice(nodeStatuses, func(i, j int) bool {
-		return nodeStatuses[i].Address < nodeStatuses[j].Address
-	})
-	result.Nodes = nodeStatuses
 	return result
 }
 
@@ -248,16 +340,21 @@ func checkObservabilityHealth(ctx context.Context) ObservabilityHealth {
 		strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")) != ""
 	metricsConfigured := strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")) != "" ||
 		strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT")) != ""
+	telemetryConfigured := tracesConfigured || metricsConfigured
 
 	collectorURL := strings.TrimSpace(os.Getenv("OTEL_COLLECTOR_HEALTH_URL"))
-	collector := CollectorHealth{Status: "degraded"}
+	collector := CollectorHealth{
+		URL:    collectorURL,
+		Status: "ok",
+	}
 	if collectorURL != "" {
 		collector = pingCollectorHealthURL(ctx, collectorURL)
-	} else {
+	} else if telemetryConfigured {
+		collector.Status = "degraded"
 		collector.Error = "collector health URL not configured"
 	}
 	status := "ok"
-	if (!tracesConfigured && !metricsConfigured) || collector.Status != "ok" {
+	if telemetryConfigured && collector.Status != "ok" {
 		status = "degraded"
 	}
 
@@ -495,6 +592,9 @@ func buildInfraTopology(services []RemoteServiceHealth, redisHealth RedisHealth)
 			reachableRedis++
 		}
 	}
+	if len(redisHealth.Nodes) == 0 && redisHealth.Status == "ok" {
+		reachableRedis = len(redisHealth.ConfiguredNodes)
+	}
 
 	return InfraTopology{
 		PhoenixConfiguredNodes: phoenixConfigured,
@@ -504,6 +604,290 @@ func buildInfraTopology(services []RemoteServiceHealth, redisHealth RedisHealth)
 		RedisConfiguredNodes:   len(redisHealth.ConfiguredNodes),
 		RedisReachableNodes:    reachableRedis,
 	}
+}
+
+func parseRedisClusterInfo(raw string) map[string]string {
+	info := make(map[string]string)
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		key, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		info[strings.TrimSpace(key)] = strings.TrimSpace(value)
+	}
+	return info
+}
+
+func redisClusterInfoInt(info map[string]string, key string) int {
+	value := strings.TrimSpace(info[key])
+	if value == "" {
+		return 0
+	}
+
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0
+	}
+	return parsed
+}
+
+func redisInfoInt64(info map[string]string, key string) int64 {
+	value := strings.TrimSpace(info[key])
+	if value == "" {
+		return 0
+	}
+
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return parsed
+}
+
+func redisInfoFloat64(info map[string]string, key string) float64 {
+	value := strings.TrimSpace(strings.TrimSuffix(info[key], "%"))
+	if value == "" {
+		return 0
+	}
+
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0
+	}
+	return parsed
+}
+
+func parseRedisClusterNodes(raw string) []RedisNodeHealth {
+	nodes := make([]RedisNodeHealth, 0)
+
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		fields := strings.Fields(line)
+		if len(fields) < 8 {
+			continue
+		}
+
+		flags := splitRedisClusterFlags(fields[2])
+		masterID := strings.TrimSpace(fields[3])
+		if masterID == "-" {
+			masterID = ""
+		}
+
+		node := RedisNodeHealth{
+			NodeID:    fields[0],
+			Address:   parseRedisClusterNodeAddress(fields[1]),
+			Role:      inferRedisClusterNodeRole(flags),
+			Status:    inferRedisClusterNodeStatus(flags, fields[7]),
+			LinkState: fields[7],
+			Flags:     flags,
+			MasterID:  masterID,
+			Slots:     append([]string(nil), fields[8:]...),
+		}
+		nodes = append(nodes, node)
+	}
+
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodes[i].Address < nodes[j].Address
+	})
+
+	return nodes
+}
+
+func enrichRedisNodeDiagnostics(ctx context.Context, health *RedisHealth) {
+	if health == nil || len(health.Nodes) == 0 {
+		return
+	}
+
+	password := strings.TrimSpace(os.Getenv("REDIS_PASSWORD"))
+
+	for i := range health.Nodes {
+		node := &health.Nodes[i]
+		if strings.TrimSpace(node.Address) == "" {
+			continue
+		}
+
+		client := goredis.NewClient(&goredis.Options{
+			Addr:         node.Address,
+			Password:     password,
+			DialTimeout:  750 * time.Millisecond,
+			ReadTimeout:  time.Second,
+			WriteTimeout: time.Second,
+		})
+
+		enrichSingleRedisNode(ctx, client, node)
+		_ = client.Close()
+
+		if node.Status == "ok" && node.Error != "" {
+			node.Status = "degraded"
+		}
+	}
+}
+
+func enrichSingleRedisNode(ctx context.Context, client *goredis.Client, node *RedisNodeHealth) {
+	memoryRaw, err := client.Info(ctx, "memory").Result()
+	if err != nil {
+		node.Error = appendError(node.Error, "memory info unavailable: "+err.Error())
+	} else {
+		memoryInfo := parseRedisClusterInfo(memoryRaw)
+		node.Memory = RedisMemoryInfo{
+			UsedMemoryBytes:        redisInfoInt64(memoryInfo, "used_memory"),
+			UsedMemoryHuman:        memoryInfo["used_memory_human"],
+			UsedMemoryRSSBytes:     redisInfoInt64(memoryInfo, "used_memory_rss"),
+			UsedMemoryRSSHuman:     memoryInfo["used_memory_rss_human"],
+			UsedMemoryPeakBytes:    redisInfoInt64(memoryInfo, "used_memory_peak"),
+			UsedMemoryPeakHuman:    memoryInfo["used_memory_peak_human"],
+			UsedMemoryPeakPerc:     memoryInfo["used_memory_peak_perc"],
+			UsedMemoryDatasetBytes: redisInfoInt64(memoryInfo, "used_memory_dataset"),
+			UsedMemoryDatasetPerc:  memoryInfo["used_memory_dataset_perc"],
+			TotalSystemMemoryBytes: redisInfoInt64(memoryInfo, "total_system_memory"),
+			TotalSystemMemoryHuman: memoryInfo["total_system_memory_human"],
+			MaxMemoryBytes:         redisInfoInt64(memoryInfo, "maxmemory"),
+			MaxMemoryHuman:         memoryInfo["maxmemory_human"],
+			MaxMemoryPolicy:        memoryInfo["maxmemory_policy"],
+			Allocator:              memoryInfo["mem_allocator"],
+			FragmentationRatio:     redisInfoFloat64(memoryInfo, "mem_fragmentation_ratio"),
+			FragmentationBytes:     redisInfoInt64(memoryInfo, "mem_fragmentation_bytes"),
+		}
+	}
+
+	replicationRaw, err := client.Info(ctx, "replication").Result()
+	if err != nil {
+		node.Error = appendError(node.Error, "replication info unavailable: "+err.Error())
+	} else {
+		replicationInfo := parseRedisClusterInfo(replicationRaw)
+		node.MasterLinkStatus = replicationInfo["master_link_status"]
+		node.ReplicationLagSeconds = redisInfoInt64(replicationInfo, "master_last_io_seconds_ago")
+	}
+
+	commandStatsRaw, err := client.Info(ctx, "commandstats").Result()
+	if err != nil {
+		node.Error = appendError(node.Error, "commandstats unavailable: "+err.Error())
+	} else {
+		node.CommandStats = parseRedisCommandStats(commandStatsRaw)
+	}
+}
+
+func parseRedisCommandStats(raw string) []RedisCommandStat {
+	stats := make([]RedisCommandStat, 0)
+	info := parseRedisClusterInfo(raw)
+
+	for key, value := range info {
+		if !strings.HasPrefix(key, "cmdstat_") {
+			continue
+		}
+
+		command := strings.TrimPrefix(key, "cmdstat_")
+		metrics := parseRedisInfoCSV(value)
+		stats = append(stats, RedisCommandStat{
+			Command:     command,
+			Calls:       redisInfoInt64(metrics, "calls"),
+			UsecTotal:   redisInfoInt64(metrics, "usec"),
+			UsecPerCall: redisInfoFloat64(metrics, "usec_per_call"),
+		})
+	}
+
+	sort.Slice(stats, func(i, j int) bool {
+		if stats[i].Calls == stats[j].Calls {
+			return stats[i].Command < stats[j].Command
+		}
+		return stats[i].Calls > stats[j].Calls
+	})
+
+	return stats
+}
+
+func parseRedisInfoCSV(raw string) map[string]string {
+	values := make(map[string]string)
+
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+
+		key, value, ok := strings.Cut(part, "=")
+		if !ok {
+			continue
+		}
+		values[strings.TrimSpace(key)] = strings.TrimSpace(value)
+	}
+
+	return values
+}
+
+func splitRedisClusterFlags(raw string) []string {
+	parts := strings.Split(raw, ",")
+	flags := make([]string, 0, len(parts))
+	for _, part := range parts {
+		flag := strings.TrimSpace(part)
+		if flag != "" {
+			flags = append(flags, flag)
+		}
+	}
+	return flags
+}
+
+func parseRedisClusterNodeAddress(raw string) string {
+	address := raw
+	if trimmed, _, ok := strings.Cut(address, "@"); ok {
+		address = trimmed
+	}
+	if trimmed, _, ok := strings.Cut(address, ","); ok {
+		address = trimmed
+	}
+	return strings.TrimSpace(address)
+}
+
+func inferRedisClusterNodeRole(flags []string) string {
+	switch {
+	case containsString(flags, "master"):
+		return "master"
+	case containsString(flags, "slave"), containsString(flags, "replica"):
+		return "replica"
+	default:
+		return "unknown"
+	}
+}
+
+func inferRedisClusterNodeStatus(flags []string, linkState string) string {
+	switch {
+	case containsString(flags, "fail"), containsString(flags, "noaddr"):
+		return "error"
+	case containsString(flags, "fail?"), containsString(flags, "pfail"), containsString(flags, "handshake"):
+		return "degraded"
+	case strings.TrimSpace(strings.ToLower(linkState)) != "connected":
+		return "degraded"
+	default:
+		return "ok"
+	}
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func appendError(existing, next string) string {
+	if strings.TrimSpace(existing) == "" {
+		return next
+	}
+	if strings.TrimSpace(next) == "" {
+		return existing
+	}
+	return existing + "; " + next
 }
 
 func summarizeInfraHealth(postgres PostgresHealth, redis RedisHealth, observability ObservabilityHealth, services []RemoteServiceHealth) InfraSummary {

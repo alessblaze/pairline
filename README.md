@@ -40,7 +40,7 @@ Phoenix handles websocket sessions, matchmaking, and session IP tracking. The Go
 ## Notes
 
 - Local app defaults are `5173` for the chat frontend, `5174` for the admin frontend, `8080` for Phoenix, and `8082` for the combined Go service.
-- The Docker cluster stack exposes `8080` for Phoenix through Nginx and `8081` for Go through Nginx.
+- The Docker cluster stack exposes `8080` for Phoenix traffic through Nginx and `8081` for Go traffic through Nginx, but service health endpoints remain internal-only.
 - `docker compose up -d` at the repo root now boots a 6-node local Valkey/Redis Cluster on ports `7000` through `7005` for migration work.
 - `SHARED_SECRET` must match across the backend services.
 

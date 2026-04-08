@@ -36,7 +36,7 @@ import {
   Sun,
   X
 } from 'lucide-react';
-import type { AdminAccount, AdminRole, Ban, CreateBanRequest, InfraHealthResponse, LoginResponse, Report } from '../types';
+import type { AdminAccount, AdminRole, Ban, CreateBanRequest, InfraHealthResponse, LoginResponse, RedisNodeHealth, Report } from '../types';
 
 interface BanModalState {
   open: boolean;
@@ -147,6 +147,62 @@ function formatLatency(ms?: number) {
   return `${ms}ms`;
 }
 
+function formatBytes(bytes?: number) {
+  if (!Number.isFinite(bytes) || bytes === undefined || bytes < 0) return '0 B';
+  if (bytes === 0) return '0 B';
+
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let unitIndex = 0;
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+
+  return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function asNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function goMemorySummary(details?: Record<string, unknown>) {
+  const memory = asRecord(details?.memory);
+  if (!memory) return null;
+
+  return {
+    primary: formatBytes(asNumber(memory.heap_alloc_bytes) ?? undefined),
+    secondary: formatBytes(asNumber(memory.sys_bytes) ?? undefined),
+    goroutines: asNumber(memory.goroutines) ?? 0,
+  };
+}
+
+function phoenixMemorySummary(details?: Record<string, unknown>) {
+  const memory = asRecord(details?.memory);
+  if (!memory) return null;
+
+  return {
+    total: formatBytes(asNumber(memory.total_bytes) ?? undefined),
+    binary: formatBytes(asNumber(memory.binary_bytes) ?? undefined),
+    processes: asNumber(memory.process_count) ?? 0,
+  };
+}
+
+function topRedisCommandStats(node: RedisNodeHealth) {
+  return (node.command_stats || []).slice(0, 8);
+}
+
 function buildExpiryDate(durationValue: string, durationUnit: 'hours' | 'days') {
   const amount = Number(durationValue);
   if (!Number.isFinite(amount) || amount <= 0) return null;
@@ -180,6 +236,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
   const [selectedReports, setSelectedReports] = useState<Set<string>>(new Set());
   const [expandedReport, setExpandedReport] = useState<string | null>(null);
   const [viewingDescription, setViewingDescription] = useState<string | null>(null);
+  const [isRedisModalOpen, setIsRedisModalOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [bans, setBans] = useState<Ban[]>([]);
@@ -353,6 +410,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
     setBans([]);
     setAccounts([]);
     setInfraHealth(null);
+    setIsRedisModalOpen(false);
     setSelectedReports(new Set());
     navigate(loginRoute);
   };
@@ -1709,30 +1767,41 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                           </button>
                         </div>
                         <div className="space-y-3">
-                          {(infraHealth?.services || []).map((service) => (
-                            <div key={`${service.kind}-${service.name}`} className="border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] p-4">
-                              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                <div>
-                                  <div className="flex items-center gap-3">
-                                    <p className="text-sm font-bold uppercase tracking-[0.14em] text-slate-300">{service.name}</p>
-                                    <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${healthStatusClass(service.status)}`}>{service.status}</span>
+                          {(infraHealth?.services || []).map((service) => {
+                            const goMemory = service.kind === 'go' ? goMemorySummary(service.details) : null;
+                            const phoenixMemory = service.kind === 'phoenix' ? phoenixMemorySummary(service.details) : null;
+
+                            return (
+                              <div key={`${service.kind}-${service.name}`} className="border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] p-4">
+                                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                  <div>
+                                    <div className="flex items-center gap-3">
+                                      <p className="text-sm font-bold uppercase tracking-[0.14em] text-slate-300">{service.name}</p>
+                                      <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${healthStatusClass(service.status)}`}>{service.status}</span>
+                                    </div>
+                                    <p className="mt-1 text-xs text-slate-500">{service.kind} · {service.url}</p>
                                   </div>
-                                  <p className="mt-1 text-xs text-slate-500">{service.kind} · {service.url}</p>
+                                  <div className="text-left sm:text-right">
+                                    <p className="text-xs text-slate-500">Latency {formatLatency(service.latency_ms)}</p>
+                                    <p className="text-xs text-slate-500">HTTP {service.http_status || 'n/a'}</p>
+                                  </div>
                                 </div>
-                                <div className="text-left sm:text-right">
-                                  <p className="text-xs text-slate-500">Latency {formatLatency(service.latency_ms)}</p>
-                                  <p className="text-xs text-slate-500">HTTP {service.http_status || 'n/a'}</p>
-                                </div>
+                                {service.details && (
+                                  <div className="mt-3 grid gap-2 text-xs text-slate-400 sm:grid-cols-2">
+                                    {'node' in service.details && <p>Node: {String(service.details.node)}</p>}
+                                    {'status' in service.details && <p>Reported status: {String(service.details.status)}</p>}
+                                    {goMemory && <p>Heap alloc: {goMemory.primary}</p>}
+                                    {goMemory && <p>Runtime sys: {goMemory.secondary}</p>}
+                                    {goMemory && <p>Goroutines: {goMemory.goroutines}</p>}
+                                    {phoenixMemory && <p>Memory total: {phoenixMemory.total}</p>}
+                                    {phoenixMemory && <p>Binary memory: {phoenixMemory.binary}</p>}
+                                    {phoenixMemory && <p>Processes: {phoenixMemory.processes}</p>}
+                                  </div>
+                                )}
+                                {service.error && <p className="mt-3 text-xs text-rose-400">{service.error}</p>}
                               </div>
-                              {service.details && (
-                                <div className="mt-3 grid gap-2 text-xs text-slate-400 sm:grid-cols-2">
-                                  {'node' in service.details && <p>Node: {String(service.details.node)}</p>}
-                                  {'status' in service.details && <p>Reported status: {String(service.details.status)}</p>}
-                                </div>
-                              )}
-                              {service.error && <p className="mt-3 text-xs text-rose-400">{service.error}</p>}
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
 
@@ -1777,15 +1846,28 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                                 <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${healthStatusClass(infraHealth?.redis.status)}`}>{infraHealth?.redis.status || 'unknown'}</span>
                               </div>
                               <p className="mt-2 text-xs text-slate-500">Latency {formatLatency(infraHealth?.redis.latency_ms)}</p>
-                              <div className="mt-3 space-y-2">
-                                {(infraHealth?.redis.nodes || []).map((node) => (
-                                  <div key={node.address} className="flex items-center justify-between text-xs text-slate-400">
-                                    <span>{node.address}</span>
-                                    <span className={node.status === 'ok' ? 'text-emerald-400' : 'text-rose-400'}>
-                                      {node.status} · {formatLatency(node.latency_ms)}
-                                    </span>
-                                  </div>
-                                ))}
+                              <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-400">
+                                <p>Cluster state: {infraHealth?.redis.cluster.state || 'unknown'}</p>
+                                <p>Known nodes: {infraHealth?.redis.cluster.known_nodes || 0}</p>
+                                <p>Slots assigned: {infraHealth?.redis.cluster.slots_assigned || 0}</p>
+                                <p>Slots ok: {infraHealth?.redis.cluster.slots_ok || 0}</p>
+                                <p>Slots pfail: {infraHealth?.redis.cluster.slots_pfail || 0}</p>
+                                <p>Slots fail: {infraHealth?.redis.cluster.slots_fail || 0}</p>
+                                <p>Primary shards: {infraHealth?.redis.cluster.size || 0}</p>
+                                <p>Epoch: {infraHealth?.redis.cluster.current_epoch || 0}</p>
+                              </div>
+                              {infraHealth?.redis.error && (
+                                <p className="mt-3 break-all text-xs text-rose-400">{infraHealth.redis.error}</p>
+                              )}
+                              <div className="mt-4 flex items-center justify-between gap-3">
+                                <p className="text-xs text-slate-500">{infraHealth?.redis.nodes?.length || 0} node entries available for detailed inspection.</p>
+                                <button
+                                  type="button"
+                                  onClick={() => setIsRedisModalOpen(true)}
+                                  className="inline-flex h-10 items-center justify-center gap-2 rounded-none border border-[var(--admin-input-border)] bg-[var(--admin-input-bg)] px-4 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text)] transition-all hover:bg-[var(--admin-input-focus-bg)]"
+                                >
+                                  Inspect Redis
+                                </button>
                               </div>
                             </div>
                           </div>
@@ -2249,6 +2331,143 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                   className="h-11 w-full rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-input-bg)] text-xs font-bold uppercase tracking-widest text-[var(--admin-text)] transition-all hover:bg-[var(--admin-input-focus-bg)] active:scale-[0.98]"
                 >
                   DISMISS_VIEW
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {isRedisModalOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsRedisModalOpen(false)}
+              className="absolute inset-0 bg-slate-950/90 backdrop-blur-md"
+            />
+
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ type: 'spring', stiffness: 350, damping: 30 }}
+              className="relative flex max-h-[85vh] w-full max-w-[1100px] flex-col overflow-hidden rounded-none border border-[var(--admin-surface-border)] bg-[var(--admin-bg)] shadow-[0_32px_128px_rgba(0,0,0,0.8)]"
+            >
+              <div className="hud-bracket hud-bracket-tl opacity-20" />
+              <div className="hud-bracket-tr opacity-20" />
+              <div className="hud-bracket hud-bracket-bl opacity-20" />
+              <div className="hud-bracket-br opacity-20" />
+
+              <div className="flex items-center justify-between border-b border-[var(--admin-surface-border)] px-6 py-5 sm:px-8 sm:py-6" style={{ background: 'var(--admin-transcript-header-bg)' }}>
+                <div className="flex items-center gap-4">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-none border border-electric-cyan/20 bg-electric-cyan/10 text-electric-cyan shadow-[0_0_15px_rgba(34,211,238,0.1)]">
+                    <Database size={18} />
+                  </div>
+                  <div className="flex flex-col">
+                    <h3 className="font-heading text-lg font-bold uppercase tracking-wide text-white">REDIS_CLUSTER_DETAILS</h3>
+                    <p className="mt-0.5 font-heading text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                      Nodes: {infraHealth?.redis.nodes.length || 0} · Cluster state: {infraHealth?.redis.cluster.state || 'unknown'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsRedisModalOpen(false)}
+                  className="flex h-10 w-10 items-center justify-center rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] text-[var(--admin-text-soft)] transition-all hover:bg-[var(--admin-muted-surface-hover)] hover:text-[var(--admin-text)]"
+                >
+                  <XCircle size={18} />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-6 py-6 sm:px-8" style={{ background: 'var(--admin-transcript-bg)' }}>
+                <div className="space-y-4">
+                  {(infraHealth?.redis.nodes || []).map((node) => (
+                    <div key={node.node_id || node.address} className="detail-panel rounded-none p-5 scanlines">
+                      <div className="flex flex-col gap-3 border-b border-white/[0.06] pb-4 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <p className="font-mono text-sm text-slate-200">{node.address}</p>
+                          <p className="mt-1 break-all text-[11px] text-slate-500">{node.node_id}</p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${
+                            node.role === 'master'
+                              ? 'border border-electric-cyan/20 bg-electric-cyan/10 text-electric-cyan'
+                              : 'border border-white/10 bg-white/5 text-slate-300'
+                          }`}>
+                            {node.role}
+                          </span>
+                          <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${healthStatusClass(node.status)}`}>
+                            {node.status}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid gap-6 lg:grid-cols-2">
+                        <div className="space-y-3 text-xs text-slate-400">
+                          <h4 className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-300">Topology</h4>
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <p>Link state: {node.link_state || 'unknown'}</p>
+                            <p>Master ID: {node.master_id || 'self'}</p>
+                            <p>Master link: {node.master_link_status || 'n/a'}</p>
+                            <p>Replication lag: {node.replication_lag_seconds ?? 0}s</p>
+                          </div>
+                          {node.flags?.length > 0 && (
+                            <p className="break-all text-[11px] text-slate-500">Flags: {node.flags.join(', ')}</p>
+                          )}
+                          {node.slots && node.slots.length > 0 && (
+                            <p className="break-all text-[11px] text-slate-500">Slots: {node.slots.join(' ')}</p>
+                          )}
+                          {node.error && (
+                            <p className="break-all text-[11px] text-rose-400">{node.error}</p>
+                          )}
+                        </div>
+
+                        <div className="space-y-3 text-xs text-slate-400">
+                          <h4 className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-300">Memory</h4>
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <p>Used: {node.memory.used_memory_human || formatBytes(node.memory.used_memory_bytes)}</p>
+                            <p>RSS: {node.memory.used_memory_rss_human || formatBytes(node.memory.used_memory_rss_bytes)}</p>
+                            <p>Peak: {node.memory.used_memory_peak_human || formatBytes(node.memory.used_memory_peak_bytes)}</p>
+                            <p>Dataset: {formatBytes(node.memory.used_memory_dataset_bytes)}</p>
+                            <p>Fragmentation ratio: {node.memory.fragmentation_ratio ? node.memory.fragmentation_ratio.toFixed(2) : '0.00'}</p>
+                            <p>Fragmentation bytes: {formatBytes(node.memory.fragmentation_bytes)}</p>
+                            <p>Max memory: {node.memory.maxmemory_human || formatBytes(node.memory.maxmemory_bytes)}</p>
+                            <p>Policy: {node.memory.maxmemory_policy || 'unknown'}</p>
+                            <p>Total system: {node.memory.total_system_memory_human || formatBytes(node.memory.total_system_memory_bytes)}</p>
+                            <p>Allocator: {node.memory.allocator || 'unknown'}</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-5">
+                        <h4 className="mb-3 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-300">Top Command Totals Since Start</h4>
+                        <div className="space-y-2">
+                          {topRedisCommandStats(node).length > 0 ? topRedisCommandStats(node).map((command) => (
+                            <div key={`${node.node_id}-${command.command}`} className="flex items-center justify-between gap-3 border border-white/[0.05] bg-black/10 px-3 py-2 text-xs text-slate-400">
+                              <span className="font-mono text-slate-300">{command.command}</span>
+                              <div className="flex flex-wrap items-center justify-end gap-3 text-right">
+                                <span>{command.calls.toLocaleString()} calls</span>
+                                <span>{command.usec_total.toLocaleString()} us total</span>
+                                <span>{command.usec_per_call.toFixed(2)} us/call</span>
+                              </div>
+                            </div>
+                          )) : (
+                            <p className="text-xs text-slate-500">No command stats available for this node.</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="border-t border-[var(--admin-surface-border)] bg-[var(--admin-muted-surface)] px-6 py-4 sm:px-8">
+                <button
+                  onClick={() => setIsRedisModalOpen(false)}
+                  className="h-11 w-full rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-input-bg)] text-xs font-bold uppercase tracking-widest text-[var(--admin-text)] transition-all hover:bg-[var(--admin-input-focus-bg)] active:scale-[0.98]"
+                >
+                  CLOSE_REDIS_VIEW
                 </button>
               </div>
             </motion.div>

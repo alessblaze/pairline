@@ -44,7 +44,19 @@ defmodule OmeglePhoenixWeb.HealthController do
             node: Atom.to_string(Node.self()),
             connected_nodes: Enum.map(Node.list(), &Atom.to_string/1),
             queue_depths: OmeglePhoenix.Matchmaker.queue_depths(),
-            metrics: OmeglePhoenix.Metrics.snapshot()
+            metrics: OmeglePhoenix.Metrics.snapshot(),
+            memory: %{
+              total_bytes: :erlang.memory(:total),
+              processes_bytes: :erlang.memory(:processes),
+              processes_used_bytes: :erlang.memory(:processes_used),
+              system_bytes: :erlang.memory(:system),
+              atom_bytes: :erlang.memory(:atom),
+              binary_bytes: :erlang.memory(:binary),
+              code_bytes: :erlang.memory(:code),
+              ets_bytes: :erlang.memory(:ets),
+              process_count: :erlang.system_info(:process_count),
+              port_count: :erlang.system_info(:port_count)
+            }
           }
 
           details =

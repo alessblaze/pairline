@@ -32,6 +32,7 @@ import (
 	"net/netip"
 	"os"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -52,10 +53,24 @@ import (
 
 func HealthHandlerGin(serviceName string) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		var mem runtime.MemStats
+		runtime.ReadMemStats(&mem)
+
 		c.JSON(http.StatusOK, gin.H{
 			"status":    "ok",
 			"service":   serviceName,
 			"timestamp": time.Now().UnixMilli(),
+			"memory": gin.H{
+				"heap_alloc_bytes":  mem.HeapAlloc,
+				"heap_inuse_bytes":  mem.HeapInuse,
+				"heap_sys_bytes":    mem.HeapSys,
+				"stack_inuse_bytes": mem.StackInuse,
+				"stack_sys_bytes":   mem.StackSys,
+				"sys_bytes":         mem.Sys,
+				"total_alloc_bytes": mem.TotalAlloc,
+				"num_gc":            mem.NumGC,
+				"goroutines":        runtime.NumGoroutine(),
+			},
 		})
 	}
 }

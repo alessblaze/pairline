@@ -119,7 +119,7 @@ func RecordHTTPRequest(ctx context.Context, method, route string, status int, du
 		attribute.Int("http.status_code", status),
 	)
 	httpRequestsTotal.Add(ctx, 1, attrs)
-	httpRequestDuration.Record(ctx, float64(duration.Milliseconds()), attrs)
+	httpRequestDuration.Record(ctx, durationMilliseconds(duration), attrs)
 }
 
 func AddHTTPInflight(ctx context.Context, delta int64, method, route string) {
@@ -148,10 +148,14 @@ func RecordTURNRequest(ctx context.Context, duration time.Duration, outcome stri
 		attribute.Bool("turn.cache_hit", cacheHit),
 	)
 	turnRequestsTotal.Add(ctx, 1, attrs)
-	turnRequestDuration.Record(ctx, float64(duration.Milliseconds()), attrs)
+	turnRequestDuration.Record(ctx, durationMilliseconds(duration), attrs)
 }
 
 func RecordBanSync(ctx context.Context, duration time.Duration, keys int) {
-	banSyncDuration.Record(ctx, float64(duration.Milliseconds()))
+	banSyncDuration.Record(ctx, durationMilliseconds(duration))
 	banSyncKeysTotal.Add(ctx, int64(keys))
+}
+
+func durationMilliseconds(duration time.Duration) float64 {
+	return float64(duration) / float64(time.Millisecond)
 }

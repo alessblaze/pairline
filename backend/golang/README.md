@@ -29,6 +29,7 @@ The legacy combined binary defaults to port `8082`.
   - `POST /api/v1/admin/login`
   - `POST /api/v1/admin/refresh`
   - `POST /api/v1/admin/logout`
+  - `GET /api/v1/admin/infra/health`
   - `GET /api/v1/admin/reports`
   - `POST /api/v1/admin/ban`
   - account-management routes
@@ -56,6 +57,7 @@ For the full backend env var reference (Phoenix + Go), see [`ENVIRONMENT.md`](..
 `BAN_SYNC_INTERVAL_SECONDS` defaults to disabled behavior when unset or `0`, which means startup reconciliation plus event-driven Redis updates only.
 Go services are Redis Cluster only and require `REDIS_CLUSTER_NODES`.
 Set `IGNORE_DOTENV=1` (or any non-empty value) to skip loading a local `.env` file even if one is present in the working directory.
+`ADMIN_HEALTH_PHOENIX_URLS`, `ADMIN_HEALTH_GO_URLS`, and `OTEL_COLLECTOR_HEALTH_URL` are used by the admin binary to build the authenticated infra-health summary consumed by the admin dashboard.
 
 ## Useful commands
 

@@ -157,4 +157,6 @@ CLUSTER_NODES=phoenix1@example.internal,phoenix2@example.internal \
 ./start.sh
 ```
 
-After boot, `GET /api/health` will show the current BEAM node and connected peers.
+After boot, `GET /api/health` returns the Phoenix service health response. When
+health details are enabled or the shared secret is provided, the response also
+includes the current BEAM node, connected peers, and local runtime details.

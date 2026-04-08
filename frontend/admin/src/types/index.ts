@@ -105,10 +105,59 @@ export interface PostgresHealth {
 }
 
 export interface RedisNodeHealth {
+  node_id: string;
   address: string;
+  role: string;
   status: string;
-  latency_ms: number;
+  link_state: string;
+  flags: string[];
+  master_id?: string;
+  slots?: string[];
+  master_link_status?: string;
+  replication_lag_seconds?: number;
+  memory: RedisMemoryInfo;
+  command_stats?: RedisCommandStat[];
   error?: string;
+}
+
+export interface RedisClusterInfo {
+  state: string;
+  slots_assigned: number;
+  slots_ok: number;
+  slots_pfail: number;
+  slots_fail: number;
+  known_nodes: number;
+  size: number;
+  current_epoch: number;
+  my_epoch: number;
+  total_cluster_links_buffer_limit_exceeded: number;
+}
+
+export interface RedisMemoryInfo {
+  used_memory_bytes: number;
+  used_memory_human: string;
+  used_memory_rss_bytes: number;
+  used_memory_rss_human: string;
+  used_memory_peak_bytes: number;
+  used_memory_peak_human: string;
+  used_memory_peak_perc: string;
+  used_memory_dataset_bytes: number;
+  used_memory_dataset_perc: string;
+  total_system_memory_bytes: number;
+  total_system_memory_human: string;
+  maxmemory_bytes: number;
+  maxmemory_human: string;
+  maxmemory_policy: string;
+  allocator: string;
+  fragmentation_ratio: number;
+  fragmentation_bytes: number;
+}
+
+export interface RedisCommandStat {
+  command: string;
+  calls: number;
+  usec_total: number;
+  usec_per_call: number;
 }
 
 export interface RedisHealth {
@@ -116,6 +165,7 @@ export interface RedisHealth {
   latency_ms: number;
   error?: string;
   configured_nodes: string[];
+  cluster: RedisClusterInfo;
   nodes: RedisNodeHealth[];
 }
 

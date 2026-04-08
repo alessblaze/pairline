@@ -82,23 +82,34 @@ docker compose -f docker/docker-compose.yml up -d
 
 ## Check cluster health
 
-Phoenix health through Nginx:
+Regular service health endpoints stay internal to the Docker network and are no
+longer exposed through Nginx.
+
+Inspect Phoenix directly from inside a Phoenix container:
 
 ```bash
-curl http://localhost:8080/api/health
+docker compose -f docker/docker-compose.yml exec phoenix1 curl -s http://localhost:8080/api/health
+docker compose -f docker/docker-compose.yml exec phoenix2 curl -s http://localhost:8080/api/health
+docker compose -f docker/docker-compose.yml exec phoenix3 curl -s http://localhost:8080/api/health
 ```
 
-Go health through Nginx:
+Inspect Go services directly from inside the Docker network:
 
 ```bash
-curl http://localhost:8081/health
+docker compose -f docker/docker-compose.yml exec golang-admin curl -s http://localhost:8082/health
+docker compose -f docker/docker-compose.yml exec golang-public-1 curl -s http://localhost:8081/health
+docker compose -f docker/docker-compose.yml exec golang-public-2 curl -s http://localhost:8081/health
 ```
 
-You should see for `/api/health`:
+The authenticated cross-service infra summary lives on the admin API:
 
-- `node` set to one of `phoenix1@phoenix1`, `phoenix2@phoenix2`, or `phoenix3@phoenix3`
-- `connected_nodes` listing the peer Phoenix nodes
-- shared-state counters and `active_sessions`
+```text
+GET /api/v1/admin/infra/health
+```
+
+That route is intended for authenticated admin users and is what powers the
+admin dashboard health panels for Postgres, Redis, Phoenix, Go, and the OTEL
+collector.
 
 ## Run tests
 
@@ -203,20 +214,15 @@ Stop and remove volumes:
 docker compose -f docker/docker-compose.yml down -v
 ```
 
-Inspect a specific Phoenix node directly:
-
-```bash
-docker compose -f docker/docker-compose.yml exec phoenix1 curl -s http://localhost:8080/api/health
-docker compose -f docker/docker-compose.yml exec phoenix2 curl -s http://localhost:8080/api/health
-docker compose -f docker/docker-compose.yml exec phoenix3 curl -s http://localhost:8080/api/health
-```
-
 ## Notes
 
 - This is meant for local cluster testing, not production deployment.
 - The services mount the local Elixir app source into the containers.
 - Phoenix containers set `SKIP_DOTENV=1` so a local mounted `.env` does not
   override Docker-provided Redis/cluster settings.
+- Health endpoints are intentionally internal-only in this stack. Use direct
+  container-to-container access or the authenticated admin infra route instead
+  of public Nginx URLs.
 - The local Docker stack uses Cloudflare Turnstile test credentials, so the
   frontend test site key and Phoenix verification path work together without an
   insecure CAPTCHA bypass.
@@ -230,9 +236,10 @@ docker compose -f docker/docker-compose.yml exec phoenix3 curl -s http://localho
 - The network has a fixed subnet `172.30.0.0/24`, and each service has a static IP.
 - The Redis Cluster nodes expose ports `7000` through `7005` on the host for direct cluster debugging.
 - Nginx routes:
-  - port `8080`: `/ws` and `/api/health` to the Phoenix cluster
-  - port `8081`: `/api/v1/moderation/*`, `/api/v1/webrtc/*`, and `/health` to the public Go worker pool
+  - port `8080`: `/ws` to the Phoenix cluster
+  - port `8081`: `/api/v1/moderation/*` and `/api/v1/webrtc/*` to the public Go worker pool
   - port `8081`: `/api/v1/admin/*` to the admin Go service
+  - health endpoints are not proxied publicly; probe them from inside the Docker network or through the authenticated admin infra API
 - The Phoenix upstream currently uses Nginx `least_conn` balancing.
 - If you want to test more nodes, copy a Phoenix service block, change `PORT`,
   `hostname`, `NODE_NAME`, and `ipv4_address`, attach it to `pairline_cluster`,

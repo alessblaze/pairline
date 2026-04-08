@@ -5,7 +5,7 @@ This project runs as four app services plus Redis and Postgres:
 - `frontend/client`: React + Vite chat app on `http://localhost:5173`
 - `frontend/admin`: React + Vite admin app on `http://localhost:5174`
 - `backend/elixir/omegle_phoenix`: Phoenix websocket/matchmaking service on `http://localhost:8080`
-- `backend/golang`: Go moderation and TURN service on `http://localhost:8082`
+- `backend/golang`: Go public/admin services, with the legacy combined binary on `http://localhost:8082`
 - `redis`: local Redis Cluster seed nodes on `localhost:7000` through `localhost:7005`
 - `postgres`: moderation data on `localhost:5432`
 
@@ -143,6 +143,14 @@ cd backend/golang
 go run .
 ```
 
+Optional split-binary flow:
+
+```bash
+cd backend/golang
+go run ./cmd/public
+go run ./cmd/admin
+```
+
 Frontend:
 
 ```bash
@@ -161,8 +169,13 @@ npm run dev
 
 - Chat frontend: open `http://localhost:5173`
 - Admin frontend: open `http://localhost:5174`
-- Phoenix health: `http://localhost:8080/health`
+- Phoenix health: `http://localhost:8080/api/health`
 - Go health: `http://localhost:8082/health`
+
+If you are using the Docker stack through Nginx instead of running the services
+directly on the host, note that `/api/health` and `/health` are intentionally
+not exposed publicly. Use the authenticated admin infra endpoint or inspect the
+services from inside the Docker network.
 
 ## Useful commands
 
