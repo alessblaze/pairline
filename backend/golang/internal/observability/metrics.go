@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -27,6 +28,15 @@ var (
 	turnRequestDuration     metric.Float64Histogram
 	banSyncDuration         metric.Float64Histogram
 	banSyncKeysTotal        metric.Int64Counter
+	runtimeHeapAlloc        metric.Int64ObservableGauge
+	runtimeHeapInuse        metric.Int64ObservableGauge
+	runtimeHeapSys          metric.Int64ObservableGauge
+	runtimeStackInuse       metric.Int64ObservableGauge
+	runtimeStackSys         metric.Int64ObservableGauge
+	runtimeSys              metric.Int64ObservableGauge
+	runtimeTotalAlloc       metric.Int64ObservableGauge
+	runtimeNumGC            metric.Int64ObservableGauge
+	runtimeGoroutines       metric.Int64ObservableGauge
 )
 
 func InitMetrics(ctx context.Context, serviceName string) (func(context.Context) error, error) {
@@ -104,6 +114,70 @@ func initInstruments() error {
 	}
 
 	banSyncKeysTotal, err = meter.Int64Counter("pairline.ban_sync.keys_total")
+	if err != nil {
+		return err
+	}
+
+	runtimeHeapAlloc, err = meter.Int64ObservableGauge("pairline.runtime.memory.heap_alloc_bytes", metric.WithUnit("By"))
+	if err != nil {
+		return err
+	}
+
+	runtimeHeapInuse, err = meter.Int64ObservableGauge("pairline.runtime.memory.heap_inuse_bytes", metric.WithUnit("By"))
+	if err != nil {
+		return err
+	}
+
+	runtimeHeapSys, err = meter.Int64ObservableGauge("pairline.runtime.memory.heap_sys_bytes", metric.WithUnit("By"))
+	if err != nil {
+		return err
+	}
+
+	runtimeStackInuse, err = meter.Int64ObservableGauge("pairline.runtime.memory.stack_inuse_bytes", metric.WithUnit("By"))
+	if err != nil {
+		return err
+	}
+
+	runtimeStackSys, err = meter.Int64ObservableGauge("pairline.runtime.memory.stack_sys_bytes", metric.WithUnit("By"))
+	if err != nil {
+		return err
+	}
+
+	runtimeSys, err = meter.Int64ObservableGauge("pairline.runtime.memory.sys_bytes", metric.WithUnit("By"))
+	if err != nil {
+		return err
+	}
+
+	runtimeTotalAlloc, err = meter.Int64ObservableGauge("pairline.runtime.memory.total_alloc_bytes", metric.WithUnit("By"))
+	if err != nil {
+		return err
+	}
+
+	runtimeNumGC, err = meter.Int64ObservableGauge("pairline.runtime.gc.cycles")
+	if err != nil {
+		return err
+	}
+
+	runtimeGoroutines, err = meter.Int64ObservableGauge("pairline.runtime.goroutines")
+	if err != nil {
+		return err
+	}
+
+	_, err = meter.RegisterCallback(func(ctx context.Context, observer metric.Observer) error {
+		var mem runtime.MemStats
+		runtime.ReadMemStats(&mem)
+
+		observer.ObserveInt64(runtimeHeapAlloc, int64(mem.HeapAlloc))
+		observer.ObserveInt64(runtimeHeapInuse, int64(mem.HeapInuse))
+		observer.ObserveInt64(runtimeHeapSys, int64(mem.HeapSys))
+		observer.ObserveInt64(runtimeStackInuse, int64(mem.StackInuse))
+		observer.ObserveInt64(runtimeStackSys, int64(mem.StackSys))
+		observer.ObserveInt64(runtimeSys, int64(mem.Sys))
+		observer.ObserveInt64(runtimeTotalAlloc, int64(mem.TotalAlloc))
+		observer.ObserveInt64(runtimeNumGC, int64(mem.NumGC))
+		observer.ObserveInt64(runtimeGoroutines, int64(runtime.NumGoroutine()))
+		return nil
+	}, runtimeHeapAlloc, runtimeHeapInuse, runtimeHeapSys, runtimeStackInuse, runtimeStackSys, runtimeSys, runtimeTotalAlloc, runtimeNumGC, runtimeGoroutines)
 	return err
 }
 

@@ -487,6 +487,187 @@
       ],
       "title": "Business Events",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 42
+      },
+      "id": 13,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (service_name, service_instance_id) (pairline_runtime_memory_heap_alloc_bytes)",
+          "legendFormat": "{{service_name}} {{service_instance_id}} heap_alloc",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (service_name, service_instance_id) (pairline_runtime_memory_sys_bytes)",
+          "legendFormat": "{{service_name}} {{service_instance_id}} sys",
+          "refId": "B"
+        }
+      ],
+      "title": "Go Runtime Memory",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 42
+      },
+      "id": 14,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (service_name, service_instance_id) (pairline_runtime_goroutines)",
+          "legendFormat": "{{service_name}} {{service_instance_id}} goroutines",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (service_name, service_instance_id) (pairline_runtime_gc_cycles)",
+          "legendFormat": "{{service_name}} {{service_instance_id}} gc_cycles",
+          "refId": "B"
+        }
+      ],
+      "title": "Go Runtime Activity",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 50
+      },
+      "id": 15,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (service_instance_id) (pairline_phoenix_runtime_memory_total_bytes)",
+          "legendFormat": "{{service_instance_id}} total",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (service_instance_id) (pairline_phoenix_runtime_memory_binary_bytes)",
+          "legendFormat": "{{service_instance_id}} binary",
+          "refId": "B"
+        },
+        {
+          "expr": "sum by (service_instance_id) (pairline_phoenix_runtime_memory_ets_bytes)",
+          "legendFormat": "{{service_instance_id}} ets",
+          "refId": "C"
+        }
+      ],
+      "title": "Phoenix BEAM Memory",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 50
+      },
+      "id": 16,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (service_instance_id) (pairline_phoenix_runtime_process_count)",
+          "legendFormat": "{{service_instance_id}} processes",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (service_instance_id) (pairline_phoenix_runtime_port_count)",
+          "legendFormat": "{{service_instance_id}} ports",
+          "refId": "B"
+        }
+      ],
+      "title": "Phoenix BEAM Runtime Counts",
+      "type": "timeseries"
     }
   ],
   "refresh": "10s",
@@ -508,6 +689,6 @@
   "timezone": "",
   "title": "Pairline Overview",
   "uid": "pairline-overview",
-  "version": 2,
+  "version": 3,
   "weekStart": ""
 }
