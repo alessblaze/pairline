@@ -36,6 +36,7 @@ interface BanModalState {
   open: boolean;
   sessionId: string;
   ip: string;
+  sourceReportId?: string;
   target: 'session' | 'ip';
   reason: string;
   mode: 'permanent' | 'temporary';
@@ -184,6 +185,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
     open: false,
     sessionId: '',
     ip: '',
+    sourceReportId: '',
     target: 'session',
     reason: '',
     mode: 'permanent',
@@ -419,6 +421,28 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
     }
   };
 
+  const handleSingleReportAction = (
+    event: React.MouseEvent<HTMLButtonElement>,
+    reportId: string,
+    newStatus: 'approved' | 'rejected'
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectedReports((current) => {
+      if (!current.has(reportId)) return current;
+      const next = new Set(current);
+      next.delete(reportId);
+      return next;
+    });
+    void updateReportStatus(reportId, newStatus);
+  };
+
+  const handleBanModalSubmit = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    void submitBanModal();
+  };
+
   const createBan = async (request: CreateBanRequest) => {
     if (!canCreateBans) return false;
     try {
@@ -441,12 +465,14 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
   const openBanModal = ({
     sessionId = '',
     ip = '',
+    sourceReportId = '',
     target,
     reason = '',
     clearManualInputsOnSubmit = false,
   }: {
     sessionId?: string;
     ip?: string;
+    sourceReportId?: string;
     target?: 'session' | 'ip';
     reason?: string;
     clearManualInputsOnSubmit?: boolean;
@@ -456,6 +482,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
       open: true,
       sessionId,
       ip,
+      sourceReportId,
       target: nextTarget,
       reason,
       mode: 'permanent',
@@ -530,6 +557,9 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
     const request: CreateBanRequest = {
       reason: banModal.reason.trim(),
     };
+    if (banModal.sourceReportId) {
+      request.report_id = banModal.sourceReportId;
+    }
     if (banModal.target === 'session') {
       request.session_id = banModal.sessionId.trim();
       if (banModal.ip) request.ip = banModal.ip.trim();
@@ -943,9 +973,9 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                         <div>
                           <p className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-700">Status Filter</p>
                           <div className="flex flex-wrap gap-2">
-                            <button onClick={() => setReportStatusFilter('pending')} className={filterButtonClass(reportStatusFilter === 'pending')}>Pending</button>
-                            <button onClick={() => setReportStatusFilter('decided')} className={filterButtonClass(reportStatusFilter === 'decided')}>Decided</button>
-                            <button onClick={() => setReportStatusFilter('all')} className={filterButtonClass(reportStatusFilter === 'all')}>All</button>
+                            <button type="button" onClick={() => setReportStatusFilter('pending')} className={filterButtonClass(reportStatusFilter === 'pending')}>Pending</button>
+                            <button type="button" onClick={() => setReportStatusFilter('decided')} className={filterButtonClass(reportStatusFilter === 'decided')}>Decided</button>
+                            <button type="button" onClick={() => setReportStatusFilter('all')} className={filterButtonClass(reportStatusFilter === 'all')}>All</button>
                           </div>
                         </div>
                         <div>
@@ -963,6 +993,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                         </div>
                         <div className="flex flex-wrap gap-2 lg:justify-end">
                           <button
+                            type="button"
                             onClick={fetchReports}
                             className={`${actionButtonClass} bg-white text-slate-950 hover:bg-cyan-100`}
                           >
@@ -970,6 +1001,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                             Refresh Reports
                           </button>
                           <button
+                            type="button"
                             onClick={() => {
                               void Promise.all([...selectedReports].map((id) => updateReportStatus(id, 'approved')));
                               setSelectedReports(new Set());
@@ -981,6 +1013,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                             Approve Selected ({selectedReports.size})
                           </button>
                           <button
+                            type="button"
                             onClick={() => {
                               void Promise.all([...selectedReports].map((id) => updateReportStatus(id, 'rejected')));
                               setSelectedReports(new Set());
@@ -1057,6 +1090,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                                     </p>
                                     {(report.description.length > 100) && (
                                       <button 
+                                        type="button"
                                         onClick={() => setViewingDescription(report.id)}
                                         className="mt-2 text-[10px] font-bold uppercase tracking-widest text-electric-cyan/70 hover:text-electric-cyan transition-colors flex items-center gap-1"
                                       >
@@ -1091,6 +1125,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                             <div className="flex flex-col gap-3 p-5 sm:p-6 lg:p-7 lg:justify-center border-t lg:border-t-0 lg:border-l border-white/5 bg-white/[0.01]">
                               {report.chat_log.length > 0 && (
                                 <button
+                                  type="button"
                                   onClick={() => setExpandedReport(expandedReport === report.id ? null : report.id)}
                                   className={`${actionButtonClass} w-full bg-white/[0.04] border border-white/10 text-slate-300 hover:bg-white/[0.08] hover:text-slate-300 transition-all`}
                                 >
@@ -1102,14 +1137,16 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                               {report.status === 'pending' && (
                                 <div className="grid grid-cols-2 gap-3 lg:grid-cols-1">
                                   <button
-                                    onClick={() => updateReportStatus(report.id, 'approved')}
+                                    type="button"
+                                    onClick={(event) => handleSingleReportAction(event, report.id, 'approved')}
                                     className={`${actionButtonClass} w-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 shadow-[0_0_12px_rgba(52,211,153,0.1)]`}
                                   >
                                     <CheckCircle2 size={14} className="mr-0.5" />
                                     Approve
                                   </button>
                                   <button
-                                    onClick={() => updateReportStatus(report.id, 'rejected')}
+                                    type="button"
+                                    onClick={(event) => handleSingleReportAction(event, report.id, 'rejected')}
                                     className={`${actionButtonClass} w-full bg-rose-500/10 border border-rose-500/20 text-rose-400 hover:bg-rose-500/20 shadow-[0_0_12px_rgba(244,63,94,0.1)]`}
                                   >
                                     <XCircle size={14} className="mr-0.5" />
@@ -1120,7 +1157,9 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                               
                               {canCreateBans && (
                                 <button
+                                  type="button"
                                   onClick={() => openBanModal({
+                                    sourceReportId: report.id,
                                     sessionId: report.reported_session_id,
                                     ip: report.reported_ip,
                                     reason: report.reason,
@@ -1212,9 +1251,9 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                           <div className="flex flex-col gap-2">
                             <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Status Filter</label>
                             <div className="flex items-center gap-2">
-                              <button onClick={() => setBanFilter('active')} className={filterButtonClass(banFilter === 'active', 'rose')}>Active</button>
-                              <button onClick={() => setBanFilter('inactive')} className={filterButtonClass(banFilter === 'inactive')}>Inactive</button>
-                              <button onClick={() => setBanFilter('all')} className={filterButtonClass(banFilter === 'all')}>All</button>
+                              <button type="button" onClick={() => setBanFilter('active')} className={filterButtonClass(banFilter === 'active', 'rose')}>Active</button>
+                              <button type="button" onClick={() => setBanFilter('inactive')} className={filterButtonClass(banFilter === 'inactive')}>Inactive</button>
+                              <button type="button" onClick={() => setBanFilter('all')} className={filterButtonClass(banFilter === 'all')}>All</button>
                             </div>
                           </div>
 
@@ -1234,6 +1273,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                             </div>
                             <div className="pt-[22px]">
                               <button
+                                type="button"
                                 onClick={fetchBans}
                                 className="flex h-11 w-11 shrink-0 items-center justify-center rounded-none border border-white/[0.07] bg-white/[0.04] text-slate-400 transition-all hover:bg-white/[0.08] hover:text-slate-300"
                                 title="Refresh Registry"
@@ -1292,6 +1332,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                           </div>
                           <div className="pt-2 sm:pt-0">
                             <button
+                              type="button"
                               onClick={() => {
                                 if (!manualBanSessionId && !manualBanIP) {
                                   alert('Please enter either Session ID or IP Address');
@@ -1407,6 +1448,7 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                                 <div className="flex items-center justify-start md:justify-center px-4 pb-4 md:pb-0 md:px-4 border-t border-white/[0.05] md:border-t-0 md:border-l md:border-white/[0.05]">
                                   {ban.is_active && canManageBans ? (
                                     <button
+                                      type="button"
                                       onClick={() => unban(ban.id)}
                                       className="inline-flex h-9 min-w-[92px] items-center justify-center gap-1.5 rounded-none border border-emerald-500/20 bg-emerald-500/10 px-4 font-heading text-[11px] font-bold uppercase tracking-wide text-emerald-400 transition-all hover:bg-emerald-500/20 hover:border-emerald-500/40 hover:shadow-[0_0_16px_rgba(52,211,153,0.2)] active:scale-95"
                                     >
@@ -1649,12 +1691,14 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                       <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">TARGET_SCOPE</p>
                       <div className="flex gap-1.5 rounded-none bg-white/[0.04] p-1.5 border border-white/[0.06]">
                         <button
+                          type="button"
                           onClick={() => setBanModal({ ...banModal, target: 'session' })}
                           className={segmentedToggleButtonClass(banModal.target === 'session')}
                         >
                           SESSION_PLUS_IP
                         </button>
                         <button
+                          type="button"
                           onClick={() => setBanModal({ ...banModal, target: 'ip' })}
                           className={segmentedToggleButtonClass(banModal.target === 'ip')}
                         >
@@ -1666,12 +1710,14 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
                   <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">ENFORCEMENT_MODE</p>
                   <div className="flex gap-1.5 rounded-none bg-white/[0.04] p-1.5 border border-white/[0.06]">
                     <button
+                      type="button"
                       onClick={() => setBanModal({ ...banModal, mode: 'permanent' })}
                       className={segmentedToggleButtonClass(banModal.mode === 'permanent')}
                     >
                       PERMANENT_BAN
                     </button>
                     <button
+                      type="button"
                       onClick={() => setBanModal({ ...banModal, mode: 'temporary' })}
                       className={segmentedToggleButtonClass(banModal.mode === 'temporary')}
                     >
@@ -1733,13 +1779,15 @@ export function AdminPanel({ loginRoute = '/' }: AdminPanelProps) {
               {/* Footer */}
               <div className="px-6 py-5 sm:px-8 sm:py-6 border-t border-white/[0.06] bg-white/[0.02] flex flex-col sm:flex-row gap-3">
                 <button
+                  type="button"
                   onClick={closeBanModal}
                   className="flex-1 h-11 rounded-none bg-white/[0.04] border border-white/[0.1] text-xs font-bold text-slate-300 uppercase tracking-widest hover:bg-white/[0.08] hover:text-slate-300 transition-all active:scale-[0.98]"
                 >
                   CANCEL_OPERATION
                 </button>
                 <button
-                  onClick={submitBanModal}
+                  type="button"
+                  onClick={handleBanModalSubmit}
                   disabled={submittingBan}
                   className="flex-1 h-11 rounded-none bg-danger-rose text-slate-300 text-xs font-bold uppercase tracking-widest hover:bg-rose-600 shadow-[0_0_24px_rgba(244,63,94,0.25)] hover:shadow-[0_0_32px_rgba(244,63,94,0.4)] transition-all active:scale-[0.98] disabled:opacity-70 disabled:cursor-not-allowed"
                 >

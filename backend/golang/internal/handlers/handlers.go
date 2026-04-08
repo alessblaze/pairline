@@ -379,6 +379,7 @@ func CreateBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 		var req struct {
 			SessionID  string `json:"session_id" binding:"omitempty,uuid"`
 			IP         string `json:"ip" binding:"omitempty,max=45"`
+			ReportID   string `json:"report_id" binding:"omitempty,uuid"`
 			Reason     string `json:"reason" binding:"required,max=200"`
 			ExpiryDate string `json:"expiry_date"`
 		}
@@ -550,17 +551,10 @@ func CreateBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 		}
 
 		reviewedAt := time.Now()
+		filter, args := reportAutoApprovalFilter(req.ReportID, sessionID, ipAddress)
 		reportUpdate := db.GetDB().WithContext(ctx).Model(&storage.Report{}).
-			Where("status = ?", "pending")
-
-		switch {
-		case sessionID != "" && ipAddress != "":
-			reportUpdate = reportUpdate.Where("(reported_session_id = ? OR reported_ip = ?)", sessionID, ipAddress)
-		case sessionID != "":
-			reportUpdate = reportUpdate.Where("reported_session_id = ?", sessionID)
-		case ipAddress != "":
-			reportUpdate = reportUpdate.Where("reported_ip = ?", ipAddress)
-		}
+			Where("status = ?", "pending").
+			Where(filter, args...)
 
 		if err := reportUpdate.Updates(map[string]interface{}{
 			"status":               "approved",
@@ -1397,6 +1391,25 @@ func activeBanLookup(tx *gorm.DB, sessionID, ipAddress string, now time.Time) *g
 		return lookup.Where("session_id = ?", sessionID)
 	default:
 		return lookup.Where("ip_address = ?", ipAddress)
+	}
+}
+
+func reportAutoApprovalFilter(reportID, sessionID, ipAddress string) (string, []interface{}) {
+	switch {
+	case reportID != "" && sessionID != "" && ipAddress != "":
+		return "id = ? AND (reported_session_id = ? OR reported_ip = ?)", []interface{}{reportID, sessionID, ipAddress}
+	case reportID != "" && sessionID != "":
+		return "id = ? AND reported_session_id = ?", []interface{}{reportID, sessionID}
+	case reportID != "" && ipAddress != "":
+		return "id = ? AND reported_ip = ?", []interface{}{reportID, ipAddress}
+	case reportID != "":
+		return "id = ?", []interface{}{reportID}
+	case sessionID != "" && ipAddress != "":
+		return "(reported_session_id = ? OR reported_ip = ?)", []interface{}{sessionID, ipAddress}
+	case sessionID != "":
+		return "reported_session_id = ?", []interface{}{sessionID}
+	default:
+		return "reported_ip = ?", []interface{}{ipAddress}
 	}
 }
 

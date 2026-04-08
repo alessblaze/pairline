@@ -48,6 +48,7 @@ export interface Report {
 export interface CreateBanRequest {
   session_id?: string;
   ip?: string;
+  report_id?: string;
   reason: string;
   expiry_date?: string;
 }

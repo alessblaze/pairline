@@ -217,3 +217,56 @@ func TestWriteCloseControlNilConnNoop(t *testing.T) {
 		t.Fatalf("writeCloseControl(nil) returned error: %v", err)
 	}
 }
+
+func TestReportAutoApprovalFilterTargetsSpecificReportWhenProvided(t *testing.T) {
+	filter, args := reportAutoApprovalFilter(
+		"11111111-1111-1111-1111-111111111111",
+		"22222222-2222-2222-2222-222222222222",
+		"203.0.113.24",
+	)
+
+	wantFilter := "id = ? AND (reported_session_id = ? OR reported_ip = ?)"
+	if filter != wantFilter {
+		t.Fatalf("reportAutoApprovalFilter() filter = %q, want %q", filter, wantFilter)
+	}
+
+	wantArgs := []interface{}{
+		"11111111-1111-1111-1111-111111111111",
+		"22222222-2222-2222-2222-222222222222",
+		"203.0.113.24",
+	}
+	if len(args) != len(wantArgs) {
+		t.Fatalf("reportAutoApprovalFilter() args length = %d, want %d", len(args), len(wantArgs))
+	}
+	for i := range wantArgs {
+		if args[i] != wantArgs[i] {
+			t.Fatalf("reportAutoApprovalFilter() args[%d] = %v, want %v", i, args[i], wantArgs[i])
+		}
+	}
+}
+
+func TestReportAutoApprovalFilterFallsBackToRelatedReportsWithoutReportID(t *testing.T) {
+	filter, args := reportAutoApprovalFilter(
+		"",
+		"22222222-2222-2222-2222-222222222222",
+		"203.0.113.24",
+	)
+
+	wantFilter := "(reported_session_id = ? OR reported_ip = ?)"
+	if filter != wantFilter {
+		t.Fatalf("reportAutoApprovalFilter() filter = %q, want %q", filter, wantFilter)
+	}
+
+	wantArgs := []interface{}{
+		"22222222-2222-2222-2222-222222222222",
+		"203.0.113.24",
+	}
+	if len(args) != len(wantArgs) {
+		t.Fatalf("reportAutoApprovalFilter() args length = %d, want %d", len(args), len(wantArgs))
+	}
+	for i := range wantArgs {
+		if args[i] != wantArgs[i] {
+			t.Fatalf("reportAutoApprovalFilter() args[%d] = %v, want %v", i, args[i], wantArgs[i])
+		}
+	}
+}
