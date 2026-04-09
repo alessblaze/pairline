@@ -73,7 +73,7 @@ services:
       - "3000:3000"
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./grafana/dashboard.sjon:/etc/grafana/dashboards/pairline-dashboard.json:ro
+      - ./grafana/dashboard.json:/etc/grafana/dashboards/pairline-dashboard.json:ro
       - grafana_data:/var/lib/grafana
     networks:
       pairline_cluster:

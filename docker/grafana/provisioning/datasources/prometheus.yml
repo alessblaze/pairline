@@ -4,6 +4,8 @@ prune: true
 deleteDatasources:
   - name: prometheus
     orgId: 1
+  - name: jaeger
+    orgId: 1
 
 datasources:
   - name: prometheus
@@ -14,3 +16,15 @@ datasources:
     url: http://prometheus:9090
     isDefault: true
     editable: true
+    jsonData:
+      timeInterval: 30s
+
+  - name: jaeger
+    uid: jaeger
+    orgId: 1
+    type: jaeger
+    access: proxy
+    url: http://jaeger:16686
+    editable: true
+    jsonData:
+      timeInterval: 30s

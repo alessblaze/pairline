@@ -12,6 +12,11 @@ extensions:
 
 connectors:
   spanmetrics:
+    dimensions:
+      - name: service_name
+      - name: span_kind
+      - name: span_name
+      - name: http_route
     histogram:
       explicit:
         buckets: [2ms, 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2s, 5s, 10s]
@@ -25,16 +30,21 @@ exporters:
       insecure: true
 
 processors:
-  batch: {}
+  batch:
+    send_batch_size: 1024
+    timeout: 200ms
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
 
 service:
   extensions: [health_check]
   pipelines:
     metrics:
       receivers: [otlp, spanmetrics]
-      processors: [batch]
+      processors: [memory_limiter]
       exporters: [prometheus]
     traces:
       receivers: [otlp]
-      processors: [batch]
+      processors: [memory_limiter, batch]
       exporters: [otlp/jaeger, spanmetrics]

@@ -52,7 +52,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (service_name) (rate(calls_total[5m])) or sum by (service_name) (rate(calls[5m]))",
+          "expr": "sum by (service_name) (rate(traces_span_metrics_calls_total[5m])) or sum by (service_name) (rate(traces_span_metrics_calls[5m]))",
           "legendFormat": "{{service_name}}",
           "refId": "A"
         }
@@ -91,7 +91,7 @@
       },
       "targets": [
         {
-          "expr": "(sum by (service_name) (rate(calls_total{status_code=\"STATUS_CODE_ERROR\"}[5m])) or sum by (service_name) (rate(calls{status_code=\"STATUS_CODE_ERROR\"}[5m]))) / clamp_min((sum by (service_name) (rate(calls_total[5m])) or sum by (service_name) (rate(calls[5m]))), 0.0001)",
+          "expr": "(sum by (service_name) (rate(traces_span_metrics_calls_total{status_code=\"STATUS_CODE_ERROR\"}[5m])) or sum by (service_name) (rate(traces_span_metrics_calls{status_code=\"STATUS_CODE_ERROR\"}[5m]))) / clamp_min((sum by (service_name) (rate(traces_span_metrics_calls_total[5m])) or sum by (service_name) (rate(traces_span_metrics_calls[5m]))), 0.0001)",
           "legendFormat": "{{service_name}}",
           "refId": "A"
         }
@@ -130,7 +130,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le, service_name) (rate(duration_milliseconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, service_name) (rate(traces_span_metrics_duration_milliseconds_bucket[5m])))",
           "legendFormat": "{{service_name}}",
           "refId": "A"
         }
@@ -169,7 +169,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le, service_name) (rate(duration_milliseconds_bucket{span_kind=\"SPAN_KIND_SERVER\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, service_name) (rate(traces_span_metrics_duration_milliseconds_bucket{span_kind=\"SPAN_KIND_SERVER\"}[5m])))",
           "legendFormat": "{{service_name}}",
           "refId": "A"
         }
@@ -208,7 +208,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le, service_name) (rate(duration_milliseconds_bucket{span_kind=\"SPAN_KIND_INTERNAL\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, service_name) (rate(traces_span_metrics_duration_milliseconds_bucket{span_kind=\"SPAN_KIND_INTERNAL\"}[5m])))",
           "legendFormat": "{{service_name}}",
           "refId": "A"
         }
@@ -247,7 +247,7 @@
       },
       "targets": [
         {
-          "expr": "topk(10, histogram_quantile(0.95, sum by (le, span_name) (rate(duration_milliseconds_bucket{service_name=\"omegle-phoenix\",span_kind=\"SPAN_KIND_SERVER\"}[5m]))))",
+          "expr": "topk(10, histogram_quantile(0.95, sum by (le, span_name) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"omegle-phoenix\",span_kind=\"SPAN_KIND_SERVER\"}[5m]))))",
           "legendFormat": "{{span_name}}",
           "refId": "A"
         }
@@ -286,7 +286,7 @@
       },
       "targets": [
         {
-          "expr": "topk(10, histogram_quantile(0.95, sum by (le, span_name, service_name) (rate(duration_milliseconds_bucket{service_name=~\"omegle-go.*\",span_kind=\"SPAN_KIND_SERVER\"}[5m]))))",
+          "expr": "topk(10, histogram_quantile(0.95, sum by (le, span_name, service_name) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=~\"omegle-go.*\",span_kind=\"SPAN_KIND_SERVER\"}[5m]))))",
           "legendFormat": "{{service_name}} {{span_name}}",
           "refId": "A"
         }
@@ -325,7 +325,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le, service_name) (rate(duration_milliseconds_bucket{span_kind=\"SPAN_KIND_CLIENT\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, service_name) (rate(traces_span_metrics_duration_milliseconds_bucket{span_kind=\"SPAN_KIND_CLIENT\"}[5m])))",
           "legendFormat": "{{service_name}}",
           "refId": "A"
         }
