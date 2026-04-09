@@ -19,7 +19,7 @@ x-phoenix-image: &phoenix_image pairline-phoenix:local
 
 services:
   jaeger:
-    image: jaegertracing/jaeger:2.17.0
+    image: jaegertracing/jaeger:latest
     container_name: pairline-jaeger
     depends_on:
       - prometheus
@@ -46,7 +46,7 @@ services:
       - ./jaeger/config-v2.yaml:/jaeger/config-v2.yaml:ro
 
   prometheus:
-    image: prom/prometheus:v2.54.1
+    image: prom/prometheus:latest
     container_name: pairline-prometheus
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -61,7 +61,7 @@ services:
         ipv4_address: 172.30.0.7
 
   grafana:
-    image: grafana/grafana:11.2.0
+    image: grafana/grafana:latest
     container_name: pairline-grafana
     depends_on:
       - prometheus
@@ -80,7 +80,7 @@ services:
         ipv4_address: 172.30.0.8
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.108.0
+    image: otel/opentelemetry-collector-contrib:latest
     container_name: pairline-otel-collector
     depends_on:
       - jaeger
@@ -346,7 +346,7 @@ services:
         ipv4_address: 172.30.0.26
 
   postgres:
-    image: postgres:17-alpine
+    image: registry.suse.com/suse/postgres:17-contrib
     container_name: pairline-postgres
     environment:
       POSTGRES_DB: omegle
@@ -361,7 +361,7 @@ services:
       pairline_cluster:
         ipv4_address: 172.30.0.30
     volumes:
-      - postgres_cluster_data:/var/lib/postgresql/data
+      - postgres_cluster_data:/var/lib/pgsql/data
 
   phoenix1:
     image: *phoenix_image
@@ -514,7 +514,7 @@ services:
         ./start.sh
 
   golang-public-1:
-    image: golang:1.26.1-bookworm
+    image: registry.suse.com/bci/golang:1.26
     container_name: pairline-golang-public-1
     working_dir: /app
     depends_on:
@@ -555,11 +555,11 @@ services:
       - /bin/bash
       - -lc
       - |
-        /usr/local/go/bin/go mod download &&
-        /usr/local/go/bin/go run ./cmd/public
+        go mod download &&
+        go run ./cmd/public
 
   golang-public-2:
-    image: golang:1.26.1-bookworm
+    image: registry.suse.com/bci/golang:1.26
     container_name: pairline-golang-public-2
     working_dir: /app
     depends_on:
@@ -600,11 +600,11 @@ services:
       - /bin/bash
       - -lc
       - |
-        /usr/local/go/bin/go mod download &&
-        /usr/local/go/bin/go run ./cmd/public
+        go mod download &&
+        go run ./cmd/public
 
   golang-admin:
-    image: golang:1.26.1-bookworm
+    image: registry.suse.com/bci/golang:1.26
     container_name: pairline-golang-admin
     working_dir: /app
     depends_on:
@@ -648,8 +648,8 @@ services:
       - /bin/bash
       - -lc
       - |
-        /usr/local/go/bin/go mod download &&
-        /usr/local/go/bin/go run ./cmd/admin
+        go mod download &&
+        go run ./cmd/admin
 
 volumes:
   prometheus_data:
