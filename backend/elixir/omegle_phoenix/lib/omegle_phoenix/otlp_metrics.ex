@@ -15,8 +15,9 @@ defmodule OmeglePhoenix.OTLPMetrics do
     if export_enabled?() do
       :inets.start()
       :ssl.start()
+      :erlang.system_flag(:scheduler_wall_time, true)
       send(self(), :export_metrics)
-      {:ok, %{}}
+      {:ok, %{scheduler_sample: scheduler_sample()}}
     else
       :ignore
     end
@@ -24,9 +25,10 @@ defmodule OmeglePhoenix.OTLPMetrics do
 
   @impl true
   def handle_info(:export_metrics, state) do
-    export_metrics()
+    {cpu_usage_percent, scheduler_sample} = scheduler_usage_percent(state.scheduler_sample)
+    export_metrics(cpu_usage_percent)
     Process.send_after(self(), :export_metrics, @interval_ms)
-    {:noreply, state}
+    {:noreply, %{state | scheduler_sample: scheduler_sample}}
   end
 
   defp export_enabled? do
@@ -34,9 +36,9 @@ defmodule OmeglePhoenix.OTLPMetrics do
     |> present?()
   end
 
-  defp export_metrics do
+  defp export_metrics(cpu_usage_percent) do
     with {:ok, endpoint} <- fetch_endpoint(),
-         {:ok, request} <- build_request(),
+         {:ok, request} <- build_request(cpu_usage_percent),
          body <- :opentelemetry_exporter_metrics_service_pb.encode_msg(request, :export_metrics_service_request),
          headers <- otlp_headers(),
          {:ok, {{_, status, _}, _, _}} when status in 200..202 <-
@@ -61,11 +63,11 @@ defmodule OmeglePhoenix.OTLPMetrics do
     end
   end
 
-  defp build_request do
+  defp build_request(cpu_usage_percent) do
     timestamp = System.system_time(:nanosecond)
 
     metrics =
-      Enum.map(metric_defs(), fn {name, description, unit, fun} ->
+      Enum.map(metric_defs(cpu_usage_percent), fn {name, description, unit, value} ->
         %{
           name: name,
           description: description,
@@ -75,7 +77,7 @@ defmodule OmeglePhoenix.OTLPMetrics do
              data_points: [
                %{
                  time_unix_nano: timestamp,
-                 value: {:as_int, fun.()}
+                 value: value
                }
              ]
            }}
@@ -179,28 +181,60 @@ defmodule OmeglePhoenix.OTLPMetrics do
 
   defp present?(value), do: is_binary(value) and String.trim(value) != ""
 
-  defp metric_defs do
+  defp metric_defs(cpu_usage_percent) do
     [
       {"pairline.phoenix.runtime.memory.total_bytes", "Total BEAM memory", "By",
-       fn -> :erlang.memory(:total) end},
+       {:as_int, :erlang.memory(:total)}},
       {"pairline.phoenix.runtime.memory.processes_bytes", "BEAM process memory", "By",
-       fn -> :erlang.memory(:processes) end},
+       {:as_int, :erlang.memory(:processes)}},
       {"pairline.phoenix.runtime.memory.processes_used_bytes", "BEAM process memory used", "By",
-       fn -> :erlang.memory(:processes_used) end},
+       {:as_int, :erlang.memory(:processes_used)}},
       {"pairline.phoenix.runtime.memory.system_bytes", "BEAM system memory", "By",
-       fn -> :erlang.memory(:system) end},
+       {:as_int, :erlang.memory(:system)}},
       {"pairline.phoenix.runtime.memory.atom_bytes", "BEAM atom memory", "By",
-       fn -> :erlang.memory(:atom) end},
+       {:as_int, :erlang.memory(:atom)}},
       {"pairline.phoenix.runtime.memory.binary_bytes", "BEAM binary memory", "By",
-       fn -> :erlang.memory(:binary) end},
+       {:as_int, :erlang.memory(:binary)}},
       {"pairline.phoenix.runtime.memory.code_bytes", "BEAM code memory", "By",
-       fn -> :erlang.memory(:code) end},
+       {:as_int, :erlang.memory(:code)}},
       {"pairline.phoenix.runtime.memory.ets_bytes", "BEAM ETS memory", "By",
-       fn -> :erlang.memory(:ets) end},
+       {:as_int, :erlang.memory(:ets)}},
       {"pairline.phoenix.runtime.process_count", "BEAM process count", "{process}",
-       fn -> :erlang.system_info(:process_count) end},
+       {:as_int, :erlang.system_info(:process_count)}},
       {"pairline.phoenix.runtime.port_count", "BEAM port count", "{port}",
-       fn -> :erlang.system_info(:port_count) end}
+       {:as_int, :erlang.system_info(:port_count)}},
+      {"pairline.phoenix.runtime.cpu.scheduler_usage_percent", "BEAM scheduler CPU usage",
+       "percent", {:as_double, cpu_usage_percent}}
     ]
+  end
+
+  defp scheduler_usage_percent(nil) do
+    current = scheduler_sample()
+    {0.0, current}
+  end
+
+  defp scheduler_usage_percent(previous) do
+    current = scheduler_sample()
+    active_delta = current.active - previous.active
+    total_delta = current.total - previous.total
+
+    usage =
+      if total_delta > 0 and active_delta >= 0 do
+        active_delta / total_delta * 100.0
+      else
+        0.0
+      end
+
+    {usage, current}
+  end
+
+  defp scheduler_sample do
+    {active, total} =
+      :erlang.statistics(:scheduler_wall_time)
+      |> Enum.reduce({0, 0}, fn {_id, active, total}, {active_acc, total_acc} ->
+        {active_acc + active, total_acc + total}
+      end)
+
+    %{active: active, total: total}
   end
 end

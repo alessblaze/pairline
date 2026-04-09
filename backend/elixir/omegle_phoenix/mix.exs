@@ -25,7 +25,8 @@ defmodule OmeglePhoenix.MixProject do
       elixir: "~> 1.17",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      listeners: [Phoenix.CodeReloader]
     ]
   end
 
@@ -40,21 +41,21 @@ defmodule OmeglePhoenix.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:phoenix, "~> 1.7.14"},
-      {:phoenix_pubsub, "~> 2.1"},
-      {:phoenix_html, "~> 4.0"},
-      {:phoenix_live_reload, "~> 1.4", only: :dev},
-      {:phoenix_live_view, "~> 0.20"},
-      {:plug_cowboy, "~> 2.6"},
+      {:phoenix, "~> 1.8"},
+      {:phoenix_pubsub, "~> 2.2"},
+      {:phoenix_html, "~> 4.3"},
+      {:phoenix_live_reload, "~> 1.6", only: :dev},
+      {:phoenix_live_view, "~> 1.1"},
+      {:plug_cowboy, "~> 2.8"},
       {:jason, "~> 1.4"},
       {:eredis_cluster, "~> 0.9"},
       {:castore, "~> 1.0"},
       {:finch, "~> 0.17"},
       {:uuid, "~> 1.1"},
       {:gettext, "~> 0.23"},
-      {:opentelemetry_api, "~> 1.4"},
-      {:opentelemetry, "~> 1.4"},
-      {:opentelemetry_exporter, "~> 1.6"}
+      {:opentelemetry_api, "~> 1.5"},
+      {:opentelemetry, "~> 1.7"},
+      {:opentelemetry_exporter, "~> 1.10"}
     ]
   end
 

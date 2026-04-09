@@ -15,8 +15,9 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-FROM hexpm/elixir:1.17.3-erlang-27.1.2-debian-bookworm-20260316-slim
+FROM elixir:1.19.5-otp-28
 
 RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential \
  && rm -rf /var/lib/apt/lists/*

@@ -6,6 +6,8 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -37,12 +39,23 @@ var (
 	runtimeTotalAlloc       metric.Int64ObservableGauge
 	runtimeNumGC            metric.Int64ObservableGauge
 	runtimeGoroutines       metric.Int64ObservableGauge
+	runtimeCPUUsage         metric.Float64ObservableGauge
+	runtimeCPUUserSeconds   metric.Float64ObservableGauge
+	runtimeCPUSystemSeconds metric.Float64ObservableGauge
+	runtimeCPUTotalSeconds  metric.Float64ObservableGauge
+
+	runtimeCPUSampleMu       sync.Mutex
+	runtimeCPULastWall       time.Time
+	runtimeCPULastTotalSecs  float64
+	runtimeCPULastUsagePct   float64
 )
 
 func InitMetrics(ctx context.Context, serviceName string) (func(context.Context) error, error) {
 	if !metricsEnabled() {
 		return func(context.Context) error { return nil }, nil
 	}
+
+	resetRuntimeCPUSample()
 
 	exporter, err := otlpmetrichttp.New(ctx)
 	if err != nil {
@@ -163,9 +176,30 @@ func initInstruments() error {
 		return err
 	}
 
+	runtimeCPUUsage, err = meter.Float64ObservableGauge("pairline.runtime.cpu.usage_percent")
+	if err != nil {
+		return err
+	}
+
+	runtimeCPUUserSeconds, err = meter.Float64ObservableGauge("pairline.runtime.cpu.user_seconds")
+	if err != nil {
+		return err
+	}
+
+	runtimeCPUSystemSeconds, err = meter.Float64ObservableGauge("pairline.runtime.cpu.system_seconds")
+	if err != nil {
+		return err
+	}
+
+	runtimeCPUTotalSeconds, err = meter.Float64ObservableGauge("pairline.runtime.cpu.total_seconds")
+	if err != nil {
+		return err
+	}
+
 	_, err = meter.RegisterCallback(func(ctx context.Context, observer metric.Observer) error {
 		var mem runtime.MemStats
 		runtime.ReadMemStats(&mem)
+		cpuUsagePct, cpuUserSeconds, cpuSystemSeconds, cpuTotalSeconds := sampleProcessCPU()
 
 		observer.ObserveInt64(runtimeHeapAlloc, int64(mem.HeapAlloc))
 		observer.ObserveInt64(runtimeHeapInuse, int64(mem.HeapInuse))
@@ -176,8 +210,12 @@ func initInstruments() error {
 		observer.ObserveInt64(runtimeTotalAlloc, int64(mem.TotalAlloc))
 		observer.ObserveInt64(runtimeNumGC, int64(mem.NumGC))
 		observer.ObserveInt64(runtimeGoroutines, int64(runtime.NumGoroutine()))
+		observer.ObserveFloat64(runtimeCPUUsage, cpuUsagePct)
+		observer.ObserveFloat64(runtimeCPUUserSeconds, cpuUserSeconds)
+		observer.ObserveFloat64(runtimeCPUSystemSeconds, cpuSystemSeconds)
+		observer.ObserveFloat64(runtimeCPUTotalSeconds, cpuTotalSeconds)
 		return nil
-	}, runtimeHeapAlloc, runtimeHeapInuse, runtimeHeapSys, runtimeStackInuse, runtimeStackSys, runtimeSys, runtimeTotalAlloc, runtimeNumGC, runtimeGoroutines)
+	}, runtimeHeapAlloc, runtimeHeapInuse, runtimeHeapSys, runtimeStackInuse, runtimeStackSys, runtimeSys, runtimeTotalAlloc, runtimeNumGC, runtimeGoroutines, runtimeCPUUsage, runtimeCPUUserSeconds, runtimeCPUSystemSeconds, runtimeCPUTotalSeconds)
 	return err
 }
 
@@ -232,4 +270,44 @@ func RecordBanSync(ctx context.Context, duration time.Duration, keys int) {
 
 func durationMilliseconds(duration time.Duration) float64 {
 	return float64(duration) / float64(time.Millisecond)
+}
+
+func sampleProcessCPU() (usagePercent, userSeconds, systemSeconds, totalSeconds float64) {
+	var usage syscall.Rusage
+	if err := syscall.Getrusage(syscall.RUSAGE_SELF, &usage); err != nil {
+		return 0, 0, 0, 0
+	}
+
+	userSeconds = timevalSeconds(usage.Utime)
+	systemSeconds = timevalSeconds(usage.Stime)
+	totalSeconds = userSeconds + systemSeconds
+	now := time.Now()
+
+	runtimeCPUSampleMu.Lock()
+	defer runtimeCPUSampleMu.Unlock()
+
+	if !runtimeCPULastWall.IsZero() {
+		wallDelta := now.Sub(runtimeCPULastWall).Seconds()
+		cpuDelta := totalSeconds - runtimeCPULastTotalSecs
+		if wallDelta > 0 && cpuDelta >= 0 {
+			runtimeCPULastUsagePct = (cpuDelta / wallDelta) * 100
+		}
+	}
+
+	runtimeCPULastWall = now
+	runtimeCPULastTotalSecs = totalSeconds
+	return runtimeCPULastUsagePct, userSeconds, systemSeconds, totalSeconds
+}
+
+func resetRuntimeCPUSample() {
+	runtimeCPUSampleMu.Lock()
+	defer runtimeCPUSampleMu.Unlock()
+
+	runtimeCPULastWall = time.Time{}
+	runtimeCPULastTotalSecs = 0
+	runtimeCPULastUsagePct = 0
+}
+
+func timevalSeconds(tv syscall.Timeval) float64 {
+	return float64(tv.Sec) + float64(tv.Usec)/1_000_000
 }

@@ -668,6 +668,84 @@
       ],
       "title": "Phoenix BEAM Runtime Counts",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 58
+      },
+      "id": 17,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "expr": "max by (service_name, service_instance_id) (pairline_runtime_cpu_usage_percent)",
+          "legendFormat": "{{service_name}} {{service_instance_id}} cpu",
+          "refId": "A"
+        }
+      ],
+      "title": "Go Process CPU Usage",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 58
+      },
+      "id": 18,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "expr": "max by (service_instance_id) (pairline_phoenix_runtime_cpu_scheduler_usage_percent)",
+          "legendFormat": "{{service_instance_id}} scheduler_cpu",
+          "refId": "A"
+        }
+      ],
+      "title": "Phoenix Scheduler CPU Usage",
+      "type": "timeseries"
     }
   ],
   "refresh": "10s",
@@ -689,6 +767,6 @@
   "timezone": "",
   "title": "Pairline Overview",
   "uid": "pairline-overview",
-  "version": 3,
+  "version": 4,
   "weekStart": ""
 }

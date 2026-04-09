@@ -1355,13 +1355,14 @@ defmodule OmeglePhoenix.Matchmaker do
     OmeglePhoenix.RedisKeys.relaxed_bucket_queue_key("text", shard, family)
   end
 
-  defp relaxed_bucket_family(bucket) do
+  defp relaxed_bucket_family(bucket) when is_binary(bucket) do
     case String.slice(bucket, 0, 2) do
-      nil -> "misc"
       "" -> "misc"
       family -> family
     end
   end
+
+  defp relaxed_bucket_family(_), do: "misc"
 
   defp random_queue_key(mode, shard) when mode in ["lobby", "text", "video"] do
     OmeglePhoenix.RedisKeys.random_queue_key(mode, shard)
