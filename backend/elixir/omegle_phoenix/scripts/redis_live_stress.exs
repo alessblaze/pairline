@@ -49,7 +49,8 @@ defmodule RedisLiveStressHelpers do
       Enum.reduce_while(1..attempts, nil, fn _, _acc ->
         state = :sys.get_state(OmeglePhoenix.Matchmaker)
 
-        if is_nil(state.local_match_batch_ref) and MapSet.size(state.pending_local_match_keys) == 0 do
+        if is_nil(state.local_match_batch_ref) and
+             MapSet.size(state.pending_local_match_keys) == 0 do
           {:halt, :ok}
         else
           Process.sleep(50)
@@ -132,7 +133,7 @@ IO.puts("  disconnect_count=#{disconnect_count}")
 
 sessions =
   Enum.map(1..session_count, fn index ->
-    id = UUID.uuid4()
+    id = Uniq.UUID.uuid4()
     ip = "198.51.100.#{rem(index, 200) + 1}"
 
     preferences = %{

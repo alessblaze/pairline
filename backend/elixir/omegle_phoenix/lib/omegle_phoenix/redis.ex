@@ -123,7 +123,7 @@ defmodule OmeglePhoenix.Redis do
   end
 
   def publish(channel, message, opts \\ []) do
-    payload = Jason.encode!(message)
+    payload = JSON.encode!(message)
 
     Tracer.with_span "redis.publish", %{kind: :client} do
       Tracing.annotate_client("redis.publish")

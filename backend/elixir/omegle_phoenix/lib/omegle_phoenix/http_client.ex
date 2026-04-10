@@ -27,7 +27,7 @@ defmodule OmeglePhoenix.HTTPClient do
   end
 
   def post(url, headers, body) do
-    body_json = Jason.encode!(body)
+    body_json = JSON.encode!(body)
     all_headers = [{"content-type", "application/json"} | headers]
 
     request = Finch.build(:post, @go_service_url <> url, all_headers, body_json)
@@ -47,7 +47,7 @@ defmodule OmeglePhoenix.HTTPClient do
 
   def http_post_signed(url, payload, timeout) do
     timestamp = System.system_time(:millisecond)
-    nonce = UUID.uuid4()
+    nonce = Uniq.UUID.uuid4()
 
     payload_map = %{
       timestamp: timestamp,
@@ -63,7 +63,7 @@ defmodule OmeglePhoenix.HTTPClient do
       {"x-nonce", nonce}
     ]
 
-    body_json = Jason.encode!(payload_map)
+    body_json = JSON.encode!(payload_map)
     all_headers = [{"content-type", "application/json"} | headers]
 
     request =

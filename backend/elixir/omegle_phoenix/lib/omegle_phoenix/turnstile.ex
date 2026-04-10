@@ -59,7 +59,7 @@ defmodule OmeglePhoenix.Turnstile do
 
       case Finch.request(request, OmeglePhoenixFinch, receive_timeout: 5000) do
         {:ok, %Finch.Response{status: status, body: resp_body}} when status in 200..299 ->
-          case Jason.decode(resp_body) do
+          case JSON.decode(resp_body) do
             {:ok, %{"success" => true}} ->
               true
 

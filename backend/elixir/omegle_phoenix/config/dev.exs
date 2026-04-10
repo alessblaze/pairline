@@ -43,4 +43,4 @@ config :omegle_phoenix, OmeglePhoenix.PubSub, adapter: Phoenix.PubSub.PG2
 
 config :logger, :console, format: "[$level] $message\n"
 
-config :phoenix, :json_library, Jason
+config :phoenix, :json_library, JSON

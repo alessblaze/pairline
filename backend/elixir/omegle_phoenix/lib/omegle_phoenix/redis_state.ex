@@ -537,21 +537,21 @@ defmodule OmeglePhoenix.RedisState do
     with {:ok, route} <- resolve_route(session_id) do
       result =
         exec(
-        [
-          "EVAL",
-          @touch_session_script,
-          "6",
-          session_key(session_id, route),
-          session_ip_key(session_id, route),
-          session_token_key(session_id, route),
-          session_owner_key(session_id, route),
-          match_key(session_id, route),
-          queue_meta_key(session_id, route),
-          ttl,
-          now
-        ],
-        opts
-      )
+          [
+            "EVAL",
+            @touch_session_script,
+            "6",
+            session_key(session_id, route),
+            session_ip_key(session_id, route),
+            session_token_key(session_id, route),
+            session_owner_key(session_id, route),
+            match_key(session_id, route),
+            queue_meta_key(session_id, route),
+            ttl,
+            now
+          ],
+          opts
+        )
 
       case result do
         {:ok, _} = ok ->
@@ -568,7 +568,7 @@ defmodule OmeglePhoenix.RedisState do
       when is_binary(session_id) and is_map(updates) do
     ttl = normalize_ttl!(ttl_seconds)
     now = Integer.to_string(System.system_time(:second))
-    updates_json = updates |> stringify_updates() |> Jason.encode!()
+    updates_json = updates |> stringify_updates() |> JSON.encode!()
 
     with {:ok, route} <- resolve_route(session_id) do
       case OmeglePhoenix.Redis.command(["EXISTS", queue_meta_key(session_id, route)]) do
@@ -578,22 +578,22 @@ defmodule OmeglePhoenix.RedisState do
         {:ok, _} ->
           result =
             exec(
-            [
-              "EVAL",
-              @update_session_fields_script,
-              "6",
-              session_key(session_id, route),
-              session_ip_key(session_id, route),
-              session_token_key(session_id, route),
-              session_owner_key(session_id, route),
-              match_key(session_id, route),
-              queue_meta_key(session_id, route),
-              ttl,
-              now,
-              updates_json
-            ],
-            opts
-          )
+              [
+                "EVAL",
+                @update_session_fields_script,
+                "6",
+                session_key(session_id, route),
+                session_ip_key(session_id, route),
+                session_token_key(session_id, route),
+                session_owner_key(session_id, route),
+                match_key(session_id, route),
+                queue_meta_key(session_id, route),
+                ttl,
+                now,
+                updates_json
+              ],
+              opts
+            )
 
           case result do
             {:ok, _} = ok ->
@@ -703,8 +703,8 @@ defmodule OmeglePhoenix.RedisState do
      System.convert_time_unit(System.monotonic_time() - started_at, :native, :microsecond)}
   end
 
-  defp encode_session(session), do: session |> serialize_session() |> Jason.encode!()
-  defp encode_queue_meta(session), do: session |> build_queue_meta() |> Jason.encode!()
+  defp encode_session(session), do: session |> serialize_session() |> JSON.encode!()
+  defp encode_queue_meta(session), do: session |> build_queue_meta() |> JSON.encode!()
 
   defp stringify_updates(updates) do
     Enum.reduce(updates, %{}, fn {field, value}, acc ->

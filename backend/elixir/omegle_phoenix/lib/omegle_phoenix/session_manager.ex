@@ -762,7 +762,7 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   defp decode_session(payload) do
-    with {:ok, raw} <- Jason.decode(payload),
+    with {:ok, raw} <- JSON.decode(payload),
          {:ok, session} <- deserialize_session(raw) do
       {:ok, session}
     else
@@ -771,7 +771,7 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   defp decode_queue_meta(payload) do
-    with {:ok, raw} <- Jason.decode(payload),
+    with {:ok, raw} <- JSON.decode(payload),
          {:ok, meta} <- deserialize_queue_meta(raw) do
       {:ok, meta}
     else

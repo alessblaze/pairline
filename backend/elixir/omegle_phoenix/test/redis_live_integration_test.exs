@@ -37,8 +37,8 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
   end
 
   setup do
-    session_id = UUID.uuid4()
-    peer_session_id = UUID.uuid4()
+    session_id = Uniq.UUID.uuid4()
+    peer_session_id = Uniq.UUID.uuid4()
     suffix = System.unique_integer([:positive])
     ip = "203.0.113.#{rem(suffix, 200) + 1}"
     peer_ip = "203.0.113.#{rem(suffix + 1, 200) + 1}"
@@ -172,7 +172,7 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
 
     queue_meta_key = OmeglePhoenix.RedisKeys.queue_meta_key(session_id, route)
     assert {:ok, queue_meta_payload} = OmeglePhoenix.Redis.command(["GET", queue_meta_key])
-    assert {:ok, queue_meta} = Jason.decode(queue_meta_payload)
+    assert {:ok, queue_meta} = JSON.decode(queue_meta_payload)
     assert queue_meta["status"] == "disconnecting"
     assert queue_meta["mode"] == "video"
     assert queue_meta["interest_buckets"] != []
@@ -202,7 +202,7 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
     assert updated.webrtc_started == true
 
     assert {:ok, queue_meta_payload} = OmeglePhoenix.Redis.command(["GET", queue_meta_key])
-    assert {:ok, queue_meta} = Jason.decode(queue_meta_payload)
+    assert {:ok, queue_meta} = JSON.decode(queue_meta_payload)
     assert queue_meta["mode"] == "video"
     assert queue_meta["interest_buckets"] != []
   end
@@ -511,7 +511,7 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
          ip: ip,
          peer_ip: peer_ip
        } do
-    third_session_id = UUID.uuid4()
+    third_session_id = Uniq.UUID.uuid4()
     third_ip = next_test_ip()
     preferences = %{"mode" => "text", "interests" => "retry,second"}
     hook_ref = make_ref()
@@ -578,7 +578,7 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
          ip: ip,
          peer_ip: peer_ip
        } do
-    third_session_id = UUID.uuid4()
+    third_session_id = Uniq.UUID.uuid4()
     third_ip = next_test_ip()
     preferences = %{"mode" => "text", "interests" => "retry,first"}
     hook_ref = make_ref()
@@ -1007,7 +1007,9 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
   defp rpc_call!(node, module, function, args) do
     case :rpc.call(node, module, function, args) do
       {:badrpc, reason} ->
-        flunk("RPC to #{inspect(node)} failed for #{inspect(module)}.#{function}: #{inspect(reason)}")
+        flunk(
+          "RPC to #{inspect(node)} failed for #{inspect(module)}.#{function}: #{inspect(reason)}"
+        )
 
       result ->
         result

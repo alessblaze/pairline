@@ -240,7 +240,7 @@ else
       on_exit(fn -> Agent.stop(calls) end)
 
       payload =
-        Jason.encode!(%{
+        JSON.encode!(%{
           "action" => "emergency_ban_ip",
           "ip" => ip,
           "reason" => "test ban"
@@ -313,7 +313,7 @@ else
       on_exit(fn -> Agent.stop(calls) end)
 
       payload =
-        Jason.encode!(%{
+        JSON.encode!(%{
           "action" => "emergency_unban_ip",
           "ip" => ip
         })

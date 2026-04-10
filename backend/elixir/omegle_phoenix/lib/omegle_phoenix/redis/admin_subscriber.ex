@@ -146,7 +146,7 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
         Logger.error("Invalid admin stream entry on #{stream}: #{inspect({entry_id, data})}")
 
       message ->
-        case Jason.decode(message) do
+        case JSON.decode(message) do
           {:ok, %{"action" => action} = decoded} ->
             handle_admin_action(action, decoded)
 

@@ -975,7 +975,7 @@ defmodule OmeglePhoenixWeb.RoomChannel do
   end
 
   defp create_and_queue_session(socket, client_ip, preferences, connected_type) do
-    session_id = UUID.uuid4()
+    session_id = Uniq.UUID.uuid4()
 
     case OmeglePhoenix.SessionManager.create_session(session_id, client_ip, preferences) do
       {:ok, session} ->

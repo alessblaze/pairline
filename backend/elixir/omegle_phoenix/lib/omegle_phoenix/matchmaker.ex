@@ -1529,7 +1529,7 @@ defmodule OmeglePhoenix.Matchmaker do
   defp emit_match_event(queue_keys, event, session_id) do
     Tracer.with_span "matchmaker.emit_event", %{kind: :internal} do
       Tracing.annotate_internal("matchmaker.emit_event")
-      payload = Jason.encode!(Enum.uniq(queue_keys))
+      payload = JSON.encode!(Enum.uniq(queue_keys))
 
       Tracer.set_attributes(%{
         "match.event" => event,
@@ -1725,7 +1725,7 @@ defmodule OmeglePhoenix.Matchmaker do
         []
 
       raw ->
-        case Jason.decode(raw) do
+        case JSON.decode(raw) do
           {:ok, keys} when is_list(keys) ->
             keys |> Enum.filter(&is_binary/1) |> Enum.uniq()
 
