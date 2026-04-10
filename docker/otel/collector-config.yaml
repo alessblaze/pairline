@@ -17,6 +17,7 @@ connectors:
       - name: span_kind
       - name: span_name
       - name: http_route
+      - name: db.operation
     histogram:
       explicit:
         buckets: [2ms, 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2s, 5s, 10s]
