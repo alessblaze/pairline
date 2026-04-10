@@ -58,15 +58,15 @@ type Server struct {
 }
 
 func NewServer() *Server {
-	return newServer(true, true, "omegle-go-service")
+	return newServer(true, true, "pairline-go-service")
 }
 
 func NewPublicServer() *Server {
-	return newServer(true, false, "omegle-go-public")
+	return newServer(true, false, "pairline-go-public")
 }
 
 func NewAdminServer() *Server {
-	return newServer(false, true, "omegle-go-admin")
+	return newServer(false, true, "pairline-go-admin")
 }
 
 func newServer(enablePublic, enableAdmin bool, serviceName string) *Server {
@@ -339,7 +339,6 @@ func TracingMiddleware(serviceName string) gin.HandlerFunc {
 				semconv.HTTPRequestMethodKey.String(c.Request.Method),
 				semconv.URLPath(finalRoute),
 				attribute.String("service.name", serviceName),
-				attribute.String("span.kind", "server"),
 				attribute.String("pairline.span.layer", "server"),
 				attribute.String("pairline.operation.name", spanName),
 				attribute.String("http.route", finalRoute),
@@ -377,6 +376,10 @@ func TracingMiddleware(serviceName string) gin.HandlerFunc {
 func routeLabel(c *gin.Context) string {
 	if route := c.FullPath(); route != "" {
 		return route
+	}
+
+	if c.Request.Method == http.MethodOptions {
+		return "preflight"
 	}
 
 	return "unmatched"

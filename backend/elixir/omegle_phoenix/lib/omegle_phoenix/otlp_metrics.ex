@@ -102,7 +102,7 @@ defmodule OmeglePhoenix.OTLPMetrics do
 
   defp resource_attributes do
     [
-      string_attribute("service.name", "omegle-phoenix"),
+      string_attribute("service.name", "pairline-phoenix"),
       string_attribute("service.instance.id", Atom.to_string(Node.self()))
     ]
     |> maybe_append("deployment.environment", System.get_env("OTEL_ENVIRONMENT"))

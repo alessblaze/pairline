@@ -28,12 +28,12 @@ defmodule OmeglePhoenixWeb.HealthController do
 
       Tracer.set_attributes(%{
         "http.route" => "/api/health",
-        "service.name" => "omegle-phoenix",
+        "service.name" => "pairline-phoenix",
         "health.details_enabled" => details_allowed
       })
 
       response = %{
-        service: "omegle-phoenix",
+        service: "pairline-phoenix",
         status: "ok",
         timestamp: System.system_time(:millisecond)
       }

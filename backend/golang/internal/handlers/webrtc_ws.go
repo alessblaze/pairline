@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -707,7 +708,12 @@ type SignalingMessage struct {
 func WebRTCWebSocketHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		span := startHandlerSpan(c, "webrtc.signal.connect")
-		defer span.End()
+		handshakeSpanEnded := false
+		defer func() {
+			if !handshakeSpanEnded {
+				span.End()
+			}
+		}()
 
 		sessionID := c.Query("session_id")
 		sessionToken := c.Query("session_token")
@@ -772,9 +778,16 @@ func WebRTCWebSocketHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 		sessionRoute, routeErr := appredis.ResolveSessionRoute(sessionRouteCtx, redisClient.GetClient(), sessionID)
 		sessionRouteCancel()
 		if routeErr != nil {
+			span.RecordError(routeErr)
+			span.SetStatus(codes.Error, "session route resolution failed")
 			log.Printf("WebRTC WS missing session route for %s: %v", sessionID, routeErr)
 			return
 		}
+		span.SetAttributes(attribute.String("webrtc.connection_state", "ready"))
+		span.End()
+		handshakeSpanEnded = true
+		connectedAt := time.Now()
+		disconnectReason := "client_closed"
 
 		ownershipJitter := time.Duration(time.Now().UnixNano() % int64(5*time.Second)) // 0-5s
 		go client.writePump(func() func(time.Time) {
@@ -791,6 +804,7 @@ func WebRTCWebSocketHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 				if err != nil {
 					log.Printf("WebRTC WS ownership refresh failed for %s: %v", sessionID, err)
 					if errors.Is(err, errOwnershipLost) {
+						disconnectReason = "ownership_lost"
 						client.close()
 					}
 				}
@@ -810,12 +824,18 @@ func WebRTCWebSocketHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 			_, messageData, err := conn.ReadMessage()
 			if err != nil {
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+					disconnectReason = "unexpected_close"
 					log.Printf("WebRTC WS connection closed unexpectedly for session: %s", sessionID)
+				} else if closeErr, ok := err.(*websocket.CloseError); ok {
+					disconnectReason = websocketCloseReason(closeErr.Code)
+				} else {
+					disconnectReason = "read_error"
 				}
 				break
 			}
 
 			if !limiter.allow(time.Now()) {
+				disconnectReason = "rate_limited"
 				log.Printf("WebRTC WS dropping spammy signaling client for session: %s", sessionID)
 				break
 			}
@@ -871,6 +891,8 @@ func WebRTCWebSocketHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 				log.Printf("Failed to route WS signal to %s: %v", msg.ToSessionID, err)
 			}
 		}
+
+		observability.RecordWebRTCConnectionClosed(c.Request.Context(), time.Since(connectedAt), disconnectReason)
 	}
 }
 
@@ -926,4 +948,21 @@ func validateSignalingMessage(msg SignalingMessage) error {
 	}
 
 	return nil
+}
+
+func websocketCloseReason(code int) string {
+	switch code {
+	case websocket.CloseNormalClosure:
+		return "normal_closure"
+	case websocket.CloseGoingAway:
+		return "going_away"
+	case websocket.CloseAbnormalClosure:
+		return "abnormal_closure"
+	case websocket.ClosePolicyViolation:
+		return "policy_violation"
+	case websocket.CloseMessageTooBig:
+		return "message_too_big"
+	default:
+		return "close_code_" + strconv.Itoa(code)
+	}
 }

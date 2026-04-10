@@ -391,7 +391,7 @@ services:
       TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
       SKIP_DOTENV: "1"
       MIX_ENV: dev
-      OTEL_SERVICE_NAME: omegle-phoenix
+      OTEL_SERVICE_NAME: pairline-phoenix
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       OTEL_EXPORTER_OTLP_INSECURE: "true"
       OTEL_ENVIRONMENT: docker
@@ -441,7 +441,7 @@ services:
       TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
       SKIP_DOTENV: "1"
       MIX_ENV: dev
-      OTEL_SERVICE_NAME: omegle-phoenix
+      OTEL_SERVICE_NAME: pairline-phoenix
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       OTEL_EXPORTER_OTLP_INSECURE: "true"
       OTEL_ENVIRONMENT: docker
@@ -491,7 +491,7 @@ services:
       TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
       SKIP_DOTENV: "1"
       MIX_ENV: dev
-      OTEL_SERVICE_NAME: omegle-phoenix
+      OTEL_SERVICE_NAME: pairline-phoenix
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       OTEL_EXPORTER_OTLP_INSECURE: "true"
       OTEL_ENVIRONMENT: docker

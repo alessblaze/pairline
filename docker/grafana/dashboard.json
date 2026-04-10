@@ -247,7 +247,7 @@
       },
       "targets": [
         {
-          "expr": "topk(10, histogram_quantile(0.95, sum by (le, span_name) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"omegle-phoenix\",span_kind=\"SPAN_KIND_SERVER\"}[5m]))))",
+          "expr": "topk(10, histogram_quantile(0.95, sum by (le, span_name) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=~\"(pairline|omegle)-phoenix\",span_kind=\"SPAN_KIND_SERVER\"}[5m]))))",
           "legendFormat": "{{span_name}}",
           "refId": "A"
         }
@@ -286,7 +286,7 @@
       },
       "targets": [
         {
-          "expr": "topk(10, histogram_quantile(0.95, sum by (le, span_name, service_name) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=~\"omegle-go.*\",span_kind=\"SPAN_KIND_SERVER\"}[5m]))))",
+          "expr": "topk(10, histogram_quantile(0.95, sum by (le, span_name, service_name) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=~\"(pairline|omegle)-go.*\",span_kind=\"SPAN_KIND_SERVER\"}[5m]))))",
           "legendFormat": "{{service_name}} {{span_name}}",
           "refId": "A"
         }
@@ -417,17 +417,100 @@
       },
       "fieldConfig": {
         "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 34
+      },
+      "id": 11,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(pairline_webrtc_connection_duration_ms_milliseconds_bucket[5m])))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(pairline_webrtc_connection_duration_ms_milliseconds_bucket[5m])))",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ],
+      "title": "WebRTC Connection Duration",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
           "unit": "ops"
         },
         "overrides": []
       },
       "gridPos": {
         "h": 8,
-        "w": 9,
-        "x": 6,
+        "w": 6,
+        "x": 12,
         "y": 34
       },
-      "id": 11,
+      "id": 12,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (webrtc_disconnect_reason) (rate(pairline_webrtc_disconnects_total[5m])) or sum by (reason) (rate(pairline_webrtc_disconnects_total[5m]))",
+          "legendFormat": "{{webrtc_disconnect_reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "WebRTC Disconnect Reasons",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 34
+      },
+      "id": 22,
       "options": {
         "legend": {
           "displayMode": "list",
@@ -462,11 +545,11 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 9,
-        "x": 15,
-        "y": 34
+        "w": 24,
+        "x": 0,
+        "y": 66
       },
-      "id": 12,
+      "id": 23,
       "options": {
         "legend": {
           "displayMode": "list",

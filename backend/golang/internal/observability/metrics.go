@@ -21,33 +21,35 @@ import (
 var (
 	meter = noop.NewMeterProvider().Meter("pairline/go")
 
-	httpRequestsTotal       metric.Int64Counter
-	httpRequestDuration     metric.Float64Histogram
-	httpInflightRequests    metric.Int64UpDownCounter
-	businessEventsTotal     metric.Int64Counter
-	webRTCActiveConnections metric.Int64UpDownCounter
-	turnRequestsTotal       metric.Int64Counter
-	turnRequestDuration     metric.Float64Histogram
-	banSyncDuration         metric.Float64Histogram
-	banSyncKeysTotal        metric.Int64Counter
-	runtimeHeapAlloc        metric.Int64ObservableGauge
-	runtimeHeapInuse        metric.Int64ObservableGauge
-	runtimeHeapSys          metric.Int64ObservableGauge
-	runtimeStackInuse       metric.Int64ObservableGauge
-	runtimeStackSys         metric.Int64ObservableGauge
-	runtimeSys              metric.Int64ObservableGauge
-	runtimeTotalAlloc       metric.Int64ObservableGauge
-	runtimeNumGC            metric.Int64ObservableGauge
-	runtimeGoroutines       metric.Int64ObservableGauge
-	runtimeCPUUsage         metric.Float64ObservableGauge
-	runtimeCPUUserSeconds   metric.Float64ObservableGauge
-	runtimeCPUSystemSeconds metric.Float64ObservableGauge
-	runtimeCPUTotalSeconds  metric.Float64ObservableGauge
+	httpRequestsTotal        metric.Int64Counter
+	httpRequestDuration      metric.Float64Histogram
+	httpInflightRequests     metric.Int64UpDownCounter
+	businessEventsTotal      metric.Int64Counter
+	webRTCActiveConnections  metric.Int64UpDownCounter
+	webRTCConnectionDuration metric.Float64Histogram
+	webRTCDisconnectsTotal   metric.Int64Counter
+	turnRequestsTotal        metric.Int64Counter
+	turnRequestDuration      metric.Float64Histogram
+	banSyncDuration          metric.Float64Histogram
+	banSyncKeysTotal         metric.Int64Counter
+	runtimeHeapAlloc         metric.Int64ObservableGauge
+	runtimeHeapInuse         metric.Int64ObservableGauge
+	runtimeHeapSys           metric.Int64ObservableGauge
+	runtimeStackInuse        metric.Int64ObservableGauge
+	runtimeStackSys          metric.Int64ObservableGauge
+	runtimeSys               metric.Int64ObservableGauge
+	runtimeTotalAlloc        metric.Int64ObservableGauge
+	runtimeNumGC             metric.Int64ObservableGauge
+	runtimeGoroutines        metric.Int64ObservableGauge
+	runtimeCPUUsage          metric.Float64ObservableGauge
+	runtimeCPUUserSeconds    metric.Float64ObservableGauge
+	runtimeCPUSystemSeconds  metric.Float64ObservableGauge
+	runtimeCPUTotalSeconds   metric.Float64ObservableGauge
 
-	runtimeCPUSampleMu       sync.Mutex
-	runtimeCPULastWall       time.Time
-	runtimeCPULastTotalSecs  float64
-	runtimeCPULastUsagePct   float64
+	runtimeCPUSampleMu      sync.Mutex
+	runtimeCPULastWall      time.Time
+	runtimeCPULastTotalSecs float64
+	runtimeCPULastUsagePct  float64
 )
 
 func InitMetrics(ctx context.Context, serviceName string) (func(context.Context) error, error) {
@@ -107,6 +109,16 @@ func initInstruments() error {
 	}
 
 	webRTCActiveConnections, err = meter.Int64UpDownCounter("pairline.webrtc.connections_active")
+	if err != nil {
+		return err
+	}
+
+	webRTCConnectionDuration, err = meter.Float64Histogram("pairline.webrtc.connection.duration_ms", metric.WithUnit("ms"))
+	if err != nil {
+		return err
+	}
+
+	webRTCDisconnectsTotal, err = meter.Int64Counter("pairline.webrtc.disconnects_total")
 	if err != nil {
 		return err
 	}
@@ -252,6 +264,12 @@ func RecordBusinessEvent(ctx context.Context, event string, attrs ...attribute.K
 
 func AddWebRTCConnection(ctx context.Context, delta int64) {
 	webRTCActiveConnections.Add(ctx, delta)
+}
+
+func RecordWebRTCConnectionClosed(ctx context.Context, duration time.Duration, reason string) {
+	attrs := metric.WithAttributes(attribute.String("webrtc.disconnect.reason", reason))
+	webRTCDisconnectsTotal.Add(ctx, 1, attrs)
+	webRTCConnectionDuration.Record(ctx, durationMilliseconds(duration), attrs)
 }
 
 func RecordTURNRequest(ctx context.Context, duration time.Duration, outcome string, cacheHit bool) {

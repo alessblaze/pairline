@@ -26,7 +26,6 @@ defmodule OmeglePhoenix.Tracing do
     Tracer.set_attributes(
       Map.merge(
         %{
-          "span.kind" => layer,
           "pairline.span.layer" => layer,
           "pairline.operation.name" => operation
         },
