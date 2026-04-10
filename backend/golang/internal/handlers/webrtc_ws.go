@@ -786,6 +786,7 @@ func WebRTCWebSocketHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 		span.SetAttributes(attribute.String("webrtc.connection_state", "ready"))
 		span.End()
 		handshakeSpanEnded = true
+		c.Set("http.server.span.end_time", time.Now())
 		connectedAt := time.Now()
 		disconnectReason := "client_closed"
 

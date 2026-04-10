@@ -335,6 +335,14 @@ func TracingMiddleware(serviceName string) gin.HandlerFunc {
 				statusCode = http.StatusOK
 			}
 
+			endTime := time.Now()
+			if rawEnd, ok := c.Get("http.server.span.end_time"); ok {
+				if parsedEnd, ok := rawEnd.(time.Time); ok {
+					endTime = parsedEnd
+				}
+			}
+			duration := endTime.Sub(startedAt)
+
 			span.SetAttributes(
 				semconv.HTTPRequestMethodKey.String(c.Request.Method),
 				semconv.URLPath(finalRoute),
@@ -349,7 +357,7 @@ func TracingMiddleware(serviceName string) gin.HandlerFunc {
 				c.Request.Method,
 				finalRoute,
 				statusCode,
-				time.Since(startedAt),
+				duration,
 			)
 
 			if requestID, ok := c.Get("request_id"); ok {
@@ -366,7 +374,7 @@ func TracingMiddleware(serviceName string) gin.HandlerFunc {
 				span.SetStatus(codes.Error, http.StatusText(statusCode))
 			}
 
-			span.End()
+			span.End(trace.WithTimestamp(endTime))
 		}()
 
 		c.Next()
