@@ -15,8 +15,9 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ChatMessage } from '../types';
+import { useNetworkHealth } from '../hooks/useNetworkHealth';
 
 interface ReportDialogProps {
   peerId: string;
@@ -27,12 +28,19 @@ interface ReportDialogProps {
 }
 
 export function ReportDialog({ peerId, messages, reporterSessionId, reporterToken, onClose }: ReportDialogProps) {
+  const { setApiStatus } = useNetworkHealth();
   const [reason, setReason] = useState('');
   const [description, setDescription] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
   const chatMessages = messages.filter(m => m.sender !== 'system');
+
+  useEffect(() => {
+    return () => {
+      setApiStatus('ok');
+    };
+  }, [setApiStatus]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,12 +77,17 @@ export function ReportDialog({ peerId, messages, reporterSessionId, reporterToke
       });
 
       if (response.ok) {
+        setApiStatus('ok');
         setSubmitted(true);
       } else {
         alert('Failed to submit report');
       }
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Failed to submit report:', error);
+      if (error instanceof TypeError) {
+        setApiStatus('degraded');
+      }
+
       if (error instanceof DOMException && error.name === 'AbortError') {
         alert('Report request timed out. Please try again.');
       } else {

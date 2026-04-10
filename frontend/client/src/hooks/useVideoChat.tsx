@@ -17,6 +17,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { WebSocketClient } from '../services/websocket';
+import { useNetworkHealth } from './useNetworkHealth';
 import type { Message } from '../types';
 
 const isCallerSession = (sessionId: string, peerId: string) => sessionId > peerId;
@@ -45,6 +46,7 @@ const parseIceCandidate = (candidate?: string) => {
 };
 
 export function useVideoChat(wsUrl: string) {
+  const { setChannelStatus, removeChannel, setApiStatus } = useNetworkHealth();
   const [wsClient] = useState(() => new WebSocketClient(wsUrl, 'room:video'));
   const [connected, setConnected] = useState(false);
   const [peerId, setPeerId] = useState<string | null>(null);
@@ -76,7 +78,9 @@ export function useVideoChat(wsUrl: string) {
   const negotiationStartedRef = useRef(false);
   const pendingWebrtcStartRef = useRef<string | null>(null);
   const goWsConnectTimeoutRef = useRef<number | null>(null);
+  const goWsReconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const suppressedGoWsEventsRef = useRef<WeakSet<WebSocket>>(new WeakSet());
+  const mountedRef = useRef(true);
   const transceiversRef = useRef<{ audio: RTCRtpTransceiver | null; video: RTCRtpTransceiver | null }>({
     audio: null,
     video: null,
@@ -91,6 +95,46 @@ export function useVideoChat(wsUrl: string) {
   const turnServersRef = useRef<RTCIceServer[]>(defaultStunServers);
   const turnFetchedRef = useRef(false);
   const turnFetchPromiseRef = useRef<Promise<RTCIceServer[] | null> | null>(null);
+
+  const apiRetryCountRef = useRef(0);
+  const apiSuccessTimeoutRef = useRef<number | null>(null);
+  const serverRejectionCountRef = useRef(0);
+  const goWsReconnectExhaustedRef = useRef(false);
+
+  const reportApiError = (reason: string) => {
+    if (apiSuccessTimeoutRef.current !== null) {
+      window.clearTimeout(apiSuccessTimeoutRef.current);
+      apiSuccessTimeoutRef.current = null;
+    }
+
+    apiRetryCountRef.current += 1;
+    console.warn(`[NetworkHealth] API Error: ${reason}. (Strike ${apiRetryCountRef.current}/5)`);
+    if (apiRetryCountRef.current === 1) {
+      setApiStatus('degraded');
+    } else if (apiRetryCountRef.current >= 5) {
+      console.error('[NetworkHealth] API offline state triggered due to continuous failures.');
+      setApiStatus('offline');
+    }
+  };
+
+  const reportApiSuccess = (isStillHealthy?: () => boolean) => {
+    if (apiSuccessTimeoutRef.current !== null) {
+      window.clearTimeout(apiSuccessTimeoutRef.current);
+    }
+
+    apiSuccessTimeoutRef.current = window.setTimeout(() => {
+      if (isStillHealthy && !isStillHealthy()) {
+        return;
+      }
+
+      if (apiRetryCountRef.current > 0 || serverRejectionCountRef.current > 0) {
+        console.info('[NetworkHealth] API connection recovered successfully.');
+        apiRetryCountRef.current = 0;
+        serverRejectionCountRef.current = 0;
+        setApiStatus('ok');
+      }
+    }, 3000);
+  };
 
   const logWebRTC = (label: string, details?: unknown) => {
     if (!webrtcDebugEnabled) return;
@@ -115,6 +159,25 @@ export function useVideoChat(wsUrl: string) {
     }]);
     setReconnectMessageVisible(true);
   };
+
+  const showVideoSignalingUnavailable = (text: string) => {
+    pendingWebrtcStartRef.current = null;
+    setIsVideoConnecting(false);
+    setMessages(msgs => {
+      if (msgs.some(msg => msg.sender === 'system' && msg.text === text)) {
+        return msgs;
+      }
+
+      return [...msgs, {
+        id: crypto.randomUUID(),
+        text,
+        sender: 'system',
+        timestamp: Date.now()
+      }];
+    });
+  };
+
+  const canOpenGoWebSocket = () => !goWsReconnectExhaustedRef.current;
 
   const clearGoWsConnectTimeout = () => {
     if (goWsConnectTimeoutRef.current !== null) {
@@ -250,6 +313,7 @@ export function useVideoChat(wsUrl: string) {
 
   useEffect(() => {
     let mounted = true;
+    mountedRef.current = true;
 
     const setup = async () => {
       try {
@@ -263,8 +327,17 @@ export function useVideoChat(wsUrl: string) {
           if (mounted) handleMessage(message);
         });
 
+        wsClient.onReconnecting(() => {
+          if (mounted) setChannelStatus('phoenix:video', 'degraded');
+        });
+
+        wsClient.onMaxRetries(() => {
+          if (mounted) setChannelStatus('phoenix:video', 'offline');
+        });
+
         wsClient.onOpen(() => {
           if (mounted) {
+            setChannelStatus('phoenix:video', 'ok');
             setConnected(true);
             setReconnectMessageVisible(false);
             setStatus(prev => prev === 'disconnected' ? 'idle' : prev);
@@ -306,6 +379,9 @@ export function useVideoChat(wsUrl: string) {
 
     return () => {
       mounted = false;
+      mountedRef.current = false;
+      removeChannel('phoenix:video');
+      setApiStatus('ok');
       cleanup();
       wsClient.disconnect();
     };
@@ -589,9 +665,9 @@ export function useVideoChat(wsUrl: string) {
           tracks: stream.getTracks().map(track => ({ kind: track.kind, id: track.id, readyState: track.readyState }))
         }))
       });
-        if (remoteVideoRef.current) {
-          const videoElement = remoteVideoRef.current;
-          let streamToAssign: MediaStream;
+      if (remoteVideoRef.current) {
+        const videoElement = remoteVideoRef.current;
+        let streamToAssign: MediaStream;
 
         if (event.streams && event.streams[0]) {
           streamToAssign = event.streams[0];
@@ -645,6 +721,11 @@ export function useVideoChat(wsUrl: string) {
             session_token: activeSessionToken,
           }),
         });
+        if (!res.ok) {
+          reportApiError(`TURN fetch failed with HTTP ${res.status}`);
+          return null;
+        }
+        reportApiSuccess(() => !goWsReconnectExhaustedRef.current || webrtcSocketOpenRef.current);
         const data = await res.json();
 
         if (data.iceServers && Array.isArray(data.iceServers)) {
@@ -654,8 +735,11 @@ export function useVideoChat(wsUrl: string) {
           return data.iceServers as RTCIceServer[];
         }
         return null;
-      } catch (err) {
+      } catch (err: unknown) {
         console.error('Failed to fetch TURN credentials:', err);
+        if (err instanceof TypeError) {
+          reportApiError('TURN fetch network TypeError');
+        }
         return null;
       } finally {
         turnFetchPromiseRef.current = null;
@@ -716,6 +800,7 @@ export function useVideoChat(wsUrl: string) {
       case 'searching':
       case 'connected':
         if (message.session_id && message.session_id !== sessionIdRef.current) {
+          goWsReconnectExhaustedRef.current = false;
           setSessionId(message.session_id);
           sessionIdRef.current = message.session_id;
 
@@ -731,6 +816,13 @@ export function useVideoChat(wsUrl: string) {
           const wsProtocol = goApiUrl.startsWith('https') ? 'wss:' : 'ws:';
           const host = goApiUrl.replace(/^https?:\/\//, '');
 
+          if (!canOpenGoWebSocket()) {
+            logWebRTC('Skipping Go WebRTC WS open because retries are exhausted', {
+              sessionId: message.session_id
+            });
+            break;
+          }
+
           const ws = new WebSocket(
             `${wsProtocol}//${host}/api/v1/webrtc/ws?session_id=${encodeURIComponent(message.session_id)}&session_token=${encodeURIComponent(message.session_token || '')}`
           );
@@ -740,12 +832,7 @@ export function useVideoChat(wsUrl: string) {
           goWsConnectTimeoutRef.current = window.setTimeout(() => {
             if (webrtcWsRef.current === ws && !webrtcSocketOpenRef.current) {
               console.error('Go WebRTC WS connection timed out after 8s');
-              setMessages(msgs => [...msgs, {
-                id: crypto.randomUUID(),
-                text: 'Video signaling connection timed out. Try skipping to a new partner.',
-                sender: 'system',
-                timestamp: Date.now()
-              }]);
+              showVideoSignalingUnavailable('Video signaling connection timed out. Text chat is still active. Refresh the page before searching again.');
             }
           }, 8000);
 
@@ -763,6 +850,7 @@ export function useVideoChat(wsUrl: string) {
             logWebRTC('Go WebRTC WS opened', { sessionId: message.session_id });
             webrtcSocketOpenRef.current = true;
             clearGoWsConnectTimeout();
+            reportApiSuccess(() => webrtcWsRef.current === ws && ws.readyState === WebSocket.OPEN);
             // Flush any pending WS signaling packets (offer/answer/ice) upon tcp connect
             while (webrtcWsQueueRef.current.length > 0) {
               const queuedMessage = webrtcWsQueueRef.current.shift();
@@ -786,6 +874,92 @@ export function useVideoChat(wsUrl: string) {
               webrtcSocketOpenRef.current = false;
               signalingReadySentRef.current = false;
               clearGoWsConnectTimeout();
+
+              // Server-initiated rejections (e.g. 1008 "already connected") are not
+              // network failures — the server explicitly refused a duplicate session.
+              // Retrying against these just creates a reconnect storm. Only truly
+              // unexpected closes (network drop, service crash) warrant error escalation.
+              const isServerRejection = event.code === 1008;
+
+              if (!isServerRejection) {
+                reportApiError('Go WebRTC WebSocket closed unexpectedly');
+
+                if (apiRetryCountRef.current < 5) {
+                  // Capture values in closure to avoid reading stale refs
+                  const reconnectSessionId = message.session_id;
+                  const reconnectToken = sessionTokenRef.current || undefined;
+                  const reconnectDelay = 2000 * apiRetryCountRef.current;
+
+                  // Cancel any previous reconnect timer before scheduling a new one
+                  if (goWsReconnectTimeoutRef.current !== null) {
+                    clearTimeout(goWsReconnectTimeoutRef.current);
+                  }
+
+                  goWsReconnectTimeoutRef.current = setTimeout(() => {
+                    goWsReconnectTimeoutRef.current = null;
+                    if (!mountedRef.current) return;
+                    if (sessionIdRef.current !== reconnectSessionId) return;
+                    if (!canOpenGoWebSocket()) return;
+
+                    console.warn(`[NetworkHealth] Attempting Go WebRTC WS reconnect (Retry ${apiRetryCountRef.current})...`);
+                    closeGoWebSocket('reconnect_attempt');
+                    // Temporarily clear sessionIdRef so handleMessage 'connected' guard passes
+                    sessionIdRef.current = null;
+                    handleMessage({
+                      type: 'connected',
+                      session_id: reconnectSessionId,
+                      session_token: reconnectToken
+                    });
+                  }, reconnectDelay);
+                }
+              } else {
+                // Server thinks we're already connected (stale Redis state).
+                // Retry with longer backoff to give the server time to clean up.
+                serverRejectionCountRef.current += 1;
+
+                if (serverRejectionCountRef.current <= 3) {
+                  const reconnectSessionId = message.session_id;
+                  const reconnectToken = sessionTokenRef.current || undefined;
+                  const rejectionDelay = 3000 * serverRejectionCountRef.current; // 3s, 6s, 9s
+
+                  logWebRTC('Go WS rejected (already connected), scheduling retry', {
+                    attempt: serverRejectionCountRef.current,
+                    delay: rejectionDelay,
+                    sessionId: message.session_id
+                  });
+
+                  if (goWsReconnectTimeoutRef.current !== null) {
+                    clearTimeout(goWsReconnectTimeoutRef.current);
+                  }
+
+                  goWsReconnectTimeoutRef.current = setTimeout(() => {
+                    goWsReconnectTimeoutRef.current = null;
+                    if (!mountedRef.current) return;
+                    if (sessionIdRef.current !== reconnectSessionId) return;
+                    if (!canOpenGoWebSocket()) return;
+
+                    closeGoWebSocket('1008_retry');
+                    sessionIdRef.current = null;
+                    handleMessage({
+                      type: 'connected',
+                      session_id: reconnectSessionId,
+                      session_token: reconnectToken
+                    });
+                  }, rejectionDelay);
+                } else {
+                  goWsReconnectExhaustedRef.current = true;
+                  if (goWsReconnectTimeoutRef.current !== null) {
+                    clearTimeout(goWsReconnectTimeoutRef.current);
+                    goWsReconnectTimeoutRef.current = null;
+                  }
+                  logWebRTC('Go WS rejected by server too many times, giving up', {
+                    sessionId: message.session_id,
+                    attempts: serverRejectionCountRef.current
+                  });
+                  setApiStatus('offline');
+                  showVideoSignalingUnavailable('Video signaling is unavailable right now. Text chat is still active. Try refreshing the page.');
+                }
+              }
             }
 
             if (suppressed || !activeSocket) {
@@ -900,9 +1074,26 @@ export function useVideoChat(wsUrl: string) {
           }]);
         }
 
-        // Only send webrtc_ready if the Go WS is ALREADY open (e.g. same session re-matched).
+        // If the Go WS is already open, signal ready immediately.
+        // If the Go WS is dead (e.g. server rejected with 1008, or network drop),
+        // re-establish it so video signaling can work for this match.
         if (webrtcSocketOpenRef.current) {
           maybeSendWebRTCReady(peerIdMatch || null);
+        } else if (!webrtcWsRef.current && sessionIdRef.current && canOpenGoWebSocket()) {
+          logWebRTC('Go WS is dead on match, re-establishing for signaling', {
+            sessionId: sessionIdRef.current
+          });
+          const currentSessionId = sessionIdRef.current;
+          const currentToken = sessionTokenRef.current || undefined;
+          // Temporarily clear so the 'connected' handler guard passes
+          sessionIdRef.current = null;
+          handleMessage({
+            type: 'connected',
+            session_id: currentSessionId,
+            session_token: currentToken
+          });
+        } else if (!canOpenGoWebSocket()) {
+          showVideoSignalingUnavailable('Video signaling is unavailable right now. Text chat is still active. Try refreshing the page.');
         }
         break;
 
@@ -1140,6 +1331,7 @@ export function useVideoChat(wsUrl: string) {
       signalingReadySentRef.current = false;
       negotiationStartedRef.current = false;
       turnFetchPromiseRef.current = null;
+      goWsReconnectExhaustedRef.current = false;
       setMessages([]);
       setReconnectMessageVisible(false);
       setReportPeerId(null);
@@ -1212,6 +1404,7 @@ export function useVideoChat(wsUrl: string) {
       negotiationStartedRef.current = false;
       turnFetchedRef.current = false;
       iceRestartPendingRef.current = false;
+      goWsReconnectExhaustedRef.current = false;
     }
   };
 
@@ -1262,6 +1455,14 @@ export function useVideoChat(wsUrl: string) {
     if (peerTypingTimeoutRef.current) {
       clearTimeout(peerTypingTimeoutRef.current);
       peerTypingTimeoutRef.current = null;
+    }
+    if (apiSuccessTimeoutRef.current !== null) {
+      window.clearTimeout(apiSuccessTimeoutRef.current);
+      apiSuccessTimeoutRef.current = null;
+    }
+    if (goWsReconnectTimeoutRef.current !== null) {
+      clearTimeout(goWsReconnectTimeoutRef.current);
+      goWsReconnectTimeoutRef.current = null;
     }
     clearGoWsConnectTimeout();
     if (mockVideoTimerRef.current !== null) {

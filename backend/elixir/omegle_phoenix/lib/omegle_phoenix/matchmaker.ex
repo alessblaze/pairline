@@ -1620,18 +1620,36 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   defp consume_stream_entries(state) do
-    Tracer.with_span "matchmaker.consume_stream", %{kind: :internal} do
-      Tracing.annotate_internal("matchmaker.consume_stream")
+    # Phase 1: Process any pending (unACKed) entries from prior cycles.
+    pending_result =
+      Tracer.with_span "matchmaker.consume_pending", %{kind: :internal} do
+        Tracing.annotate_internal("matchmaker.consume_pending")
+        consume_pending_entries(state)
+      end
 
-      Tracer.set_attributes(%{
-        "match.stream" => state.stream,
-        "match.consumer" => state.consumer
-      })
+    with {:ok, pending_queue_keys} <- pending_result do
+      # Phase 2: Blocking read for NEW entries. This is an idle long-poll
+      # (XREADGROUP BLOCK) and is intentionally outside any span so it
+      # doesn't inflate latency metrics.
+      with {:ok, entries} <- read_stream(state, ">") do
+        # Phase 3: Process the fetched entries — this is the real work.
+        if entries == [] do
+          {:ok, pending_queue_keys}
+        else
+          Tracer.with_span "matchmaker.consume_stream", %{kind: :internal} do
+            Tracing.annotate_internal("matchmaker.consume_stream")
 
-      with {:ok, pending_queue_keys} <- consume_pending_entries(state),
-           {:ok, entries} <- read_stream(state, ">"),
-           {:ok, processed_queue_keys} <- process_stream_entries(state, entries) do
-        {:ok, Enum.uniq(pending_queue_keys ++ processed_queue_keys)}
+            Tracer.set_attributes(%{
+              "match.stream" => state.stream,
+              "match.consumer" => state.consumer,
+              "match.entry_count" => length(entries)
+            })
+
+            with {:ok, processed_queue_keys} <- process_stream_entries(state, entries) do
+              {:ok, Enum.uniq(pending_queue_keys ++ processed_queue_keys)}
+            end
+          end
+        end
       end
     end
   end

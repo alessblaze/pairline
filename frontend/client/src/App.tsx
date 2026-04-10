@@ -21,6 +21,8 @@ import { VideoChat } from './components/VideoChat';
 import { TextChat } from './components/TextChat';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { VideoDisabled } from './components/VideoDisabled';
+import { ServiceUnavailable } from './components/ServiceUnavailable';
+import { NetworkHealthProvider } from './hooks/useNetworkHealth';
 
 function App() {
   const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8080/ws';
@@ -28,31 +30,34 @@ function App() {
 
   return (
     <div className="min-h-screen w-full overflow-x-hidden overflow-y-auto bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-white">
-      <Routes>
-        <Route path="/" element={<LandingPage />} />
-        <Route 
-          path="/text" 
-          element={
-            <ErrorBoundary>
-              <TextChat wsUrl={wsUrl} />
-            </ErrorBoundary>
-          } 
-        />
-        <Route 
-          path="/video" 
-          element={
-            enableVideoChat ? (
+      <NetworkHealthProvider>
+        <Routes>
+          <Route path="/" element={<LandingPage />} />
+          <Route 
+            path="/text" 
+            element={
               <ErrorBoundary>
-                <VideoChat wsUrl={wsUrl} />
+                <TextChat wsUrl={wsUrl} />
               </ErrorBoundary>
-            ) : (
-              <Navigate to="/video-disabled" replace />
-            )
-          } 
-        />
-        <Route path="/video-disabled" element={<VideoDisabled />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+            } 
+          />
+          <Route 
+            path="/video" 
+            element={
+              enableVideoChat ? (
+                <ErrorBoundary>
+                  <VideoChat wsUrl={wsUrl} />
+                </ErrorBoundary>
+              ) : (
+                <Navigate to="/video-disabled" replace />
+              )
+            } 
+          />
+          <Route path="/video-disabled" element={<VideoDisabled />} />
+          <Route path="/unavailable" element={<ServiceUnavailable />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </NetworkHealthProvider>
     </div>
   );
 }

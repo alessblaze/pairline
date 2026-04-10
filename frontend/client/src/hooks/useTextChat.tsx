@@ -17,9 +17,11 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { WebSocketClient } from '../services/websocket';
+import { useNetworkHealth } from './useNetworkHealth';
 import type { Message } from '../types';
 
 export function useTextChat(wsUrl: string) {
+  const { setChannelStatus, removeChannel } = useNetworkHealth();
   const [wsClient] = useState(() => new WebSocketClient(wsUrl, 'room:text'));
   const [connected, setConnected] = useState(false);
   const [peerId, setPeerId] = useState<string | null>(null);
@@ -227,8 +229,17 @@ export function useTextChat(wsUrl: string) {
           if (mounted) handleMessage(message);
         });
 
+        wsClient.onReconnecting(() => {
+          if (mounted) setChannelStatus('phoenix:text', 'degraded');
+        });
+
+        wsClient.onMaxRetries(() => {
+          if (mounted) setChannelStatus('phoenix:text', 'offline');
+        });
+
         wsClient.onOpen(() => {
           if (mounted) {
+            setChannelStatus('phoenix:text', 'ok');
             setConnected(true);
             setReconnectMessageVisible(false);
             setStatus(prev => prev === 'disconnected' ? 'idle' : prev);
@@ -266,6 +277,7 @@ export function useTextChat(wsUrl: string) {
 
     return () => {
       mounted = false;
+      removeChannel('phoenix:text');
       cleanup();
       wsClient.disconnect();
     };

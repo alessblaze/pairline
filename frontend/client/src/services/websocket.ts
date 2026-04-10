@@ -28,6 +28,8 @@ export class WebSocketClient {
   private messageHandlers: ((msg: Message) => void)[] = [];
   private closeHandlers: (() => void)[] = [];
   private openHandlers: (() => void)[] = [];
+  private maxRetriesHandlers: (() => void)[] = [];
+  private reconnectingHandlers: (() => void)[] = [];
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 10;
   private reconnectDelay = 1000;
@@ -176,6 +178,7 @@ export class WebSocketClient {
 
   private handleReconnect() {
     if (this.reconnectAttempts < this.maxReconnectAttempts && this.shouldReconnect && !this.isConnecting) {
+      this.reconnectingHandlers.forEach(handler => handler());
       const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts), 30000);
       console.warn(`Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts + 1}/${this.maxReconnectAttempts})`);
 
@@ -188,6 +191,7 @@ export class WebSocketClient {
     } else if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       console.error('Max reconnection attempts reached');
       this.shouldReconnect = false;
+      this.maxRetriesHandlers.forEach(handler => handler());
     }
   }
 
@@ -233,6 +237,14 @@ export class WebSocketClient {
     this.openHandlers.push(handler);
   }
 
+  onMaxRetries(handler: () => void) {
+    this.maxRetriesHandlers.push(handler);
+  }
+
+  onReconnecting(handler: () => void) {
+    this.reconnectingHandlers.push(handler);
+  }
+
   disconnect() {
     this.shouldReconnect = false;
     this.isConnecting = false;
@@ -253,6 +265,8 @@ export class WebSocketClient {
     this.messageHandlers = [];
     this.closeHandlers = [];
     this.openHandlers = [];
+    this.maxRetriesHandlers = [];
+    this.reconnectingHandlers = [];
   }
 
   isConnected(): boolean {
