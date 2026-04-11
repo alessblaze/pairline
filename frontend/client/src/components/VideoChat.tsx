@@ -22,9 +22,29 @@ import { ReportDialog } from './ReportDialog';
 import { ThemeToggle } from './ThemeToggle';
 import { EntryModal } from './EntryModal';
 import DOMPurify from 'dompurify';
+import type { ChatMessage } from '../types';
 
-interface VideoChatProps {
-  wsUrl: string;
+// ---------------------------------------------------------------------------
+// Shared type for the hook return value, used by both the component and stories.
+// ---------------------------------------------------------------------------
+export interface VideoChatState {
+  connected: boolean;
+  status: 'idle' | 'searching' | 'connected' | 'disconnected';
+  messages: ChatMessage[];
+  peerTyping: boolean;
+  startSearch: (interests?: string, turnstileToken?: string) => void;
+  stopSearch: () => void;
+  skip: () => void;
+  disconnect: () => void;
+  sendMessage: (text: string) => void;
+  sendTyping: (isTyping: boolean) => void;
+  reportPeerId: string | null;
+  sessionId: string | null;
+  sessionToken: string | null;
+  isVideoConnecting: boolean;
+  cameraError: string | null;
+  localVideoRef: React.RefObject<HTMLVideoElement | null>;
+  remoteVideoRef: React.RefObject<HTMLVideoElement | null>;
 }
 
 const LOCAL_PREVIEW_EDGE_MARGIN = 12;
@@ -133,17 +153,22 @@ const VideoChatInput = memo(function VideoChatInput({
 });
 
 // ---------------------------------------------------------------------------
-export function VideoChat({ wsUrl }: VideoChatProps) {
+// VideoChatView — the presentational component.
+// Exported so Storybook stories can render it directly with mock state,
+// without triggering the real WebSocket/WebRTC hooks.
+// ---------------------------------------------------------------------------
+export function VideoChatView({ state }: { state: VideoChatState }) {
   const navigate = useNavigate();
   const location = useLocation();
   const turnstileToken = location.state?.turnstileToken as string | undefined;
+
   const {
     connected, reportPeerId, sessionId, sessionToken, status, messages, peerTyping,
     isVideoConnecting,
     localVideoRef, remoteVideoRef,
     startSearch, stopSearch, skip, disconnect,
     sendMessage, sendTyping: rawSendTyping, cameraError
-  } = useVideoChat(wsUrl);
+  } = state;
 
   const [showVideoConnecting, setShowVideoConnecting] = useState(false);
   const showVideoConnectingSinceRef = useRef<number | null>(null);
@@ -639,4 +664,12 @@ export function VideoChat({ wsUrl }: VideoChatProps) {
       )}
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// VideoChat — the connected wrapper that plugs in the real WebSocket hook.
+// ---------------------------------------------------------------------------
+export function VideoChat({ wsUrl }: { wsUrl: string }) {
+  const state = useVideoChat(wsUrl);
+  return <VideoChatView state={state} />;
 }

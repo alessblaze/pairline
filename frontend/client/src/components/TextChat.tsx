@@ -22,6 +22,25 @@ import { ThemeToggle } from './ThemeToggle';
 import { ReportDialog } from './ReportDialog';
 import { EntryModal } from './EntryModal';
 import DOMPurify from 'dompurify';
+import type { ChatMessage } from '../types';
+
+// ---------------------------------------------------------------------------
+// Shared type for the hook return value, used by both the component and stories.
+// ---------------------------------------------------------------------------
+export interface TextChatState {
+  connected: boolean;
+  status: 'idle' | 'searching' | 'connected' | 'disconnected';
+  messages: ChatMessage[];
+  peerTyping: boolean;
+  startSearch: (interests?: string, turnstileToken?: string) => void;
+  stopSearch: () => void;
+  disconnect: () => void;
+  sendMessage: (text: string) => void;
+  sendTyping: (isTyping: boolean) => void;
+  reportPeerId: string | null;
+  sessionId: string | null;
+  sessionToken: string | null;
+}
 
 // ---------------------------------------------------------------------------
 // ChatInput — isolated so keystrokes ONLY re-render this small component,
@@ -135,11 +154,16 @@ const ChatInput = memo(function ChatInput({
 });
 
 // ---------------------------------------------------------------------------
-export function TextChat({ wsUrl }: { wsUrl: string }) {
+// TextChatView — the presentational component.
+// Exported so Storybook stories can render it directly with mock state,
+// without triggering the real WebSocket hook.
+// ---------------------------------------------------------------------------
+export function TextChatView({ state }: { state: TextChatState }) {
   const navigate = useNavigate();
   const location = useLocation();
   const turnstileToken = location.state?.turnstileToken as string | undefined;
-  const { connected, status, messages, startSearch, stopSearch, disconnect, sendMessage, reportPeerId, sessionId, sessionToken, peerTyping, sendTyping: rawSendTyping } = useTextChat(wsUrl);
+
+  const { connected, status, messages, startSearch, stopSearch, disconnect, sendMessage, reportPeerId, sessionId, sessionToken, peerTyping, sendTyping: rawSendTyping } = state;
 
   // Stabilise sendTyping identity so the memoised ChatInput doesn't re-render on every parent state change
   const sendTyping = useCallback((isTyping: boolean) => rawSendTyping(isTyping), [rawSendTyping]);
@@ -466,4 +490,12 @@ export function TextChat({ wsUrl }: { wsUrl: string }) {
       )}
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// TextChat — the connected wrapper that plugs in the real WebSocket hook.
+// ---------------------------------------------------------------------------
+export function TextChat({ wsUrl }: { wsUrl: string }) {
+  const state = useTextChat(wsUrl);
+  return <TextChatView state={state} />;
 }

@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 // Pairline - Open Source Video Chat and Matchmaking
 // Copyright (C) 2026 Albert Blasczykowski
 // Aless Microsystems
@@ -43,6 +44,11 @@ export default defineConfig(({ mode }) => {
           },
         },
       },
+    },
+    test: {
+      globals: true,
+      environment: 'jsdom',
+      setupFiles: ['./src/setupTests.ts'],
     },
   }
 })
