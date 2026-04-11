@@ -5,6 +5,10 @@ import { VideoChatView, type VideoChatState } from './VideoChat';
 
 import { NetworkHealthProvider } from '../hooks/useNetworkHealth';
 import { fn } from 'storybook/test';
+// @ts-ignore
+import participant1Video from '../stories/assets/participant1.mp4';
+// @ts-ignore
+import participant2Video from '../stories/assets/participant2.mp4';
 
 const meta = {
   title: 'Pages/VideoChat',
@@ -18,6 +22,36 @@ const meta = {
       </MemoryRouter>
     ),
   ],
+  render: (args) => {
+    const localRef = React.useRef<HTMLVideoElement>(null);
+    const remoteRef = React.useRef<HTMLVideoElement>(null);
+
+    React.useEffect(() => {
+      const state = args.state;
+      
+      if (!state.cameraError && localRef.current && !localRef.current.src.endsWith('participant1.mp4')) {
+        localRef.current.src = participant1Video;
+        localRef.current.loop = true;
+        localRef.current.muted = true;
+        localRef.current.play().catch(() => {});
+      }
+
+      if (state.status === 'connected' && !state.isVideoConnecting && remoteRef.current && !remoteRef.current.src.endsWith('participant2.mp4')) {
+        remoteRef.current.src = participant2Video;
+        remoteRef.current.loop = true;
+        remoteRef.current.muted = true;
+        remoteRef.current.play().catch(() => {});
+      }
+    }, [args.state.status, args.state.isVideoConnecting, args.state.cameraError]);
+
+    const modifiedState = {
+      ...args.state,
+      localVideoRef: localRef,
+      remoteVideoRef: remoteRef,
+    };
+
+    return <VideoChatView state={modifiedState} />;
+  },
   parameters: {
     layout: 'fullscreen',
   },
