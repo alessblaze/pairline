@@ -1,6 +1,6 @@
 # Frontend
 
-React 19 + Vite client for anonymous text/video chat, reporting, and admin moderation.
+React 19 + Vite client for anonymous text/video chat and reporting.
 
 ## Local development
 
@@ -34,7 +34,7 @@ npm run lint
 
 ## Main areas
 
-- `src/components/`: chat UI, report dialog, admin panel
+- `src/components/`: chat UI and report dialog
 - `src/hooks/`: chat and theme hooks
 - `src/services/websocket.ts`: Phoenix websocket client
 - `src/types/`: shared frontend types
