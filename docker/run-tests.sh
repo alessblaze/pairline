@@ -29,6 +29,7 @@ SHARED_SECRET="${SHARED_SECRET:-test-shared}"
 RUN_UNIT="${RUN_UNIT:-1}"
 RUN_LIVE="${RUN_LIVE:-1}"
 RUN_STRESS="${RUN_STRESS:-1}"
+RUN_GO_TESTS="${RUN_GO_TESTS:-1}"
 TEST_TRACE="${TEST_TRACE:-1}"
 
 STRESS_SESSION_COUNT="${STRESS_SESSION_COUNT:-1000}"
@@ -160,11 +161,20 @@ if stage_enabled "$RUN_STRESS"; then
   run_stage "stress" "Redis Stress Harness" "mix run scripts/redis_live_stress.exs"
 fi
 
+if stage_enabled "$RUN_GO_TESTS"; then
+  print_header "Golang Tests"
+  if (cd backend/golang && go test -v -cover ./...); then
+    RESULTS["golang"]="PASS"
+  else
+    RESULTS["golang"]="FAIL"
+  fi
+fi
+
 print_header "Summary"
 
 overall=0
 
-for key in unit live stress; do
+for key in unit live stress golang; do
   if [[ -n "${RESULTS[$key]:-}" ]]; then
     printf '%-12s %s\n' "$key" "${RESULTS[$key]}"
     if [[ "${RESULTS[$key]}" != "PASS" ]]; then
