@@ -34,6 +34,12 @@ export function LandingPage() {
   const [promoVideoKey, setPromoVideoKey] = useState(0);
   const [promoVideoReady, setPromoVideoReady] = useState(false);
 
+  // Track image loading so we can hold a skeleton until the critical images paint.
+  // Only gate on the hero + features images; the albert/footer image is below the fold.
+  const [heroImgLoaded, setHeroImgLoaded] = useState(false);
+  const [featuresImgLoaded, setFeaturesImgLoaded] = useState(false);
+  const pageReady = heroImgLoaded && featuresImgLoaded;
+
   const openModal = (route: '/text' | '/video') => {
     if (route === '/video' && !enableVideoChat) {
       navigate('/video-disabled');
@@ -157,6 +163,16 @@ export function LandingPage() {
         }
       `}</style>
 
+      {/* ── Loading Skeleton ─────────────────────────────────────────── */}
+      {!pageReady && (
+        <div className="fixed inset-0 z-[200] flex flex-col items-center justify-center bg-gradient-to-br from-slate-100 via-pink-50 to-indigo-50 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 transition-colors">
+          <div className="flex flex-col items-center gap-6 animate-pulse">
+            <div className="w-16 h-16 rounded-full border-4 border-pink-300 border-t-transparent dark:border-pink-500 dark:border-t-transparent animate-spin" />
+            <p className="text-sm font-semibold text-slate-400 dark:text-slate-500 tracking-widest uppercase">Loading Pairline…</p>
+          </div>
+        </div>
+      )}
+
       {/* Floating Controls */}
       <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 p-2 rounded-full bg-white/80 dark:bg-slate-800/80 backdrop-blur-md border border-gray-200 dark:border-slate-700 shadow-xl">
         <a
@@ -202,6 +218,7 @@ export function LandingPage() {
             src={promoImg}
             alt="Pairline"
             className="w-full h-auto object-contain"
+            onLoad={() => setHeroImgLoaded(true)}
           />
 
           {/* CTA Buttons absolutely positioned over the 'clear' bottom part of the image */}
@@ -238,6 +255,7 @@ export function LandingPage() {
             src={promoFeaturesImg}
             alt="Pairline Features"
             className="w-full h-auto block"
+            onLoad={() => setFeaturesImgLoaded(true)}
           />
         </div>
       </section>
@@ -272,3 +290,4 @@ export function LandingPage() {
     </div>
   );
 }
+
