@@ -17,7 +17,6 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ThemeToggle } from './ThemeToggle';
 import { EntryModal } from './EntryModal';
 import promoVideo from '../assets/promo.webm';
 import promoPoster from '../assets/promo-poster.webp';
@@ -39,6 +38,24 @@ export function LandingPage() {
   const [heroImgLoaded, setHeroImgLoaded] = useState(false);
   const [featuresImgLoaded, setFeaturesImgLoaded] = useState(false);
   const pageReady = heroImgLoaded && featuresImgLoaded;
+
+  const [showGithubIcon, setShowGithubIcon] = useState(true);
+  const footerRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        // Hide the Github icon when the footer section is at least 50% visible (middle/bottom)
+        setShowGithubIcon(!entry.isIntersecting);
+      },
+      { threshold: 0.5 }
+    );
+
+    if (footerRef.current) {
+      observer.observe(footerRef.current);
+    }
+    return () => observer.disconnect();
+  }, [heroImgLoaded, featuresImgLoaded]);
 
   const openModal = (route: '/text' | '/video') => {
     if (route === '/video' && !enableVideoChat) {
@@ -174,19 +191,18 @@ export function LandingPage() {
       )}
 
       {/* Floating Controls */}
-      <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 p-2 rounded-full bg-white/80 dark:bg-slate-800/80 backdrop-blur-md border border-gray-200 dark:border-slate-700 shadow-xl">
+      <div className={`fixed bottom-6 right-6 z-50 flex items-center p-2 rounded-full bg-white/80 dark:bg-slate-800/80 backdrop-blur-md border border-gray-200 dark:border-slate-700 shadow-xl transition-all duration-300 ease-in-out ${showGithubIcon ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10 pointer-events-none'}`}>
         <a
           href="https://github.com/alessblaze/pairline"
           target="_blank"
           rel="noopener noreferrer"
-          className="hidden sm:flex items-center justify-center w-10 h-10 rounded-full text-indigo-500 dark:text-indigo-400 hover:bg-black/5 dark:hover:bg-white/10 transition-all font-bold"
+          className="flex items-center justify-center w-10 h-10 rounded-full text-indigo-500 dark:text-indigo-400 hover:bg-black/5 dark:hover:bg-white/10 transition-all font-bold"
           title="GitHub"
         >
           <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
             <path fillRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0 0 22 12.017C22 6.484 17.522 2 12 2Z" clipRule="evenodd" />
           </svg>
         </a>
-        <ThemeToggle />
       </div>
 
       {/* Top Video Header */}
@@ -261,7 +277,7 @@ export function LandingPage() {
       </section>
 
       {/* Albert Profile Section */}
-      <section className="relative z-10 w-full bg-slate-50 dark:bg-slate-950">
+      <section ref={footerRef} className="relative z-10 w-full bg-slate-50 dark:bg-slate-950">
         <div className="w-full relative flex flex-col items-center justify-center">
           <img
             src={albertImg}
