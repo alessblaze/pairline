@@ -1,5 +1,5 @@
-import { render, screen } from '@testing-library/react';
-import { describe, it, expect, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { ThemeProvider } from '../../context/ThemeContext';
 import { AdminPanelStoryHarness } from '../AdminPanelStoryHarness';
@@ -18,6 +18,7 @@ describe('AdminPanelRuntime state coverage', () => {
   beforeEach(() => {
     localStorage.clear();
     sessionStorage.clear();
+    sessionStorage.setItem('admin_csrf', 'csrf-token');
     Object.defineProperty(window, 'matchMedia', {
       writable: true,
       value: (query: string) => ({
@@ -31,6 +32,8 @@ describe('AdminPanelRuntime state coverage', () => {
         dispatchEvent: () => false,
       }),
     });
+    vi.stubGlobal('fetch', vi.fn());
+    vi.spyOn(window, 'alert').mockImplementation(() => {});
   });
 
   it('renders the loading screen when auth is not ready', () => {
@@ -131,5 +134,153 @@ describe('AdminPanelRuntime state coverage', () => {
     expect(screen.getByRole('heading', { name: /infra health/i })).toBeInTheDocument();
     expect(screen.getByText(/redis_cluster_details/i)).toBeInTheDocument();
     expect(screen.getAllByText(/admin accounts/i).length).toBeGreaterThan(0);
+  });
+
+  it('submits report approval actions to the admin API', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ reports: [], metrics: { pending: 0, approved: 1, rejected: 0 } }),
+      headers: new Headers(),
+    } as Response);
+
+    renderAdmin({
+      authReady: true,
+      isAuthenticated: true,
+      currentAdminUsername: 'albert',
+      role: 'admin',
+      currentTab: 'reports',
+      reports: [{
+        id: 'report-1',
+        reporter_session_id: 'reporter',
+        reported_session_id: 'reported',
+        reporter_ip: '1.1.1.1',
+        reported_ip: '2.2.2.2',
+        reason: 'abuse',
+        description: 'bad actor',
+        chat_log: [],
+        status: 'pending',
+        created_at: new Date().toISOString(),
+      }],
+      serverReportMetrics: { pending: 1, approved: 0, rejected: 0 },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /^approve$/i }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalled();
+    });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain('/api/v1/admin/reports/report-1');
+    expect(init?.method).toBe('PUT');
+    expect(JSON.parse(String(init?.body))).toEqual({ status: 'approved' });
+  });
+
+  it('submits account creation requests', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        headers: new Headers(),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ accounts: [], total: 0 }),
+        headers: new Headers(),
+      } as Response);
+
+    renderAdmin({
+      authReady: true,
+      isAuthenticated: true,
+      currentAdminUsername: 'albert',
+      role: 'root',
+      currentTab: 'accounts',
+      accounts: [],
+    });
+
+    fireEvent.change(screen.getByPlaceholderText('Username'), { target: { value: 'new_mod' } });
+    fireEvent.change(screen.getByPlaceholderText('Password'), { target: { value: 'super-secret' } });
+    fireEvent.click(screen.getByRole('button', { name: /add member/i }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalled();
+    });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain('/api/v1/admin/accounts');
+    expect(init?.method).toBe('POST');
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      username: 'new_mod',
+      password: 'super-secret',
+      role: 'moderator',
+    });
+  });
+
+  it('submits temporary ban modal data with expiry', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        headers: new Headers(),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ bans: [], metrics: { active: 1, inactive: 0, total: 1 } }),
+        headers: new Headers(),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ reports: [], metrics: { pending: 0, approved: 1, rejected: 0 } }),
+        headers: new Headers(),
+      } as Response);
+
+    renderAdmin({
+      authReady: true,
+      isAuthenticated: true,
+      currentAdminUsername: 'albert',
+      role: 'admin',
+      currentTab: 'bans',
+      banModal: {
+        open: true,
+        sessionId: 'reported-session',
+        ip: '10.0.0.5',
+        sourceReportId: 'report-1',
+        target: 'ip',
+        reason: 'Escalated abuse',
+        mode: 'temporary',
+        durationValue: '3',
+        durationUnit: 'days',
+      },
+      bans: [],
+      reports: [],
+      serverBanMetrics: { active: 0, inactive: 0, total: 0 },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /confirm_enforcement/i }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalled();
+    });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain('/api/v1/admin/ban');
+    expect(init?.method).toBe('POST');
+
+    const body = JSON.parse(String(init?.body));
+    expect(body).toMatchObject({
+      ip: '10.0.0.5',
+      reason: 'Escalated abuse',
+      report_id: 'report-1',
+    });
+    expect(body.expiry_date).toBeTruthy();
   });
 });

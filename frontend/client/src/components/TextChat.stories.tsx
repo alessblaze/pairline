@@ -116,6 +116,13 @@ export const ConnectedWithInterests: Story = {
 };
 
 export const PartialDisconnect: Story = {
+  decorators: [
+    (Story) => (
+      <NetworkHealthProvider initialChannelStatuses={{ 'phoenix:text': 'degraded' }}>
+        <Story />
+      </NetworkHealthProvider>
+    ),
+  ],
   args: {
     state: {
       ...defaultMockState,

@@ -15,9 +15,21 @@ interface NetworkHealthContextType {
 
 const NetworkHealthContext = createContext<NetworkHealthContextType | undefined>(undefined);
 
-export function NetworkHealthProvider({ children }: { children: ReactNode }) {
-  const [channelStatuses, setChannelStatuses] = useState<Record<string, ServiceStatus>>({});
-  const [apiStatus, setApiStatus] = useState<ServiceStatus>('ok');
+interface NetworkHealthProviderProps {
+  children: ReactNode;
+  /** Seed channel statuses for Storybook — omit in production. */
+  initialChannelStatuses?: Record<string, ServiceStatus>;
+  /** Seed API status for Storybook — omit in production. */
+  initialApiStatus?: ServiceStatus;
+}
+
+export function NetworkHealthProvider({
+  children,
+  initialChannelStatuses,
+  initialApiStatus,
+}: NetworkHealthProviderProps) {
+  const [channelStatuses, setChannelStatuses] = useState<Record<string, ServiceStatus>>(initialChannelStatuses ?? {});
+  const [apiStatus, setApiStatus] = useState<ServiceStatus>(initialApiStatus ?? 'ok');
   const navigate = useNavigate();
 
   // Derive aggregate Phoenix status from individual channel statuses.
