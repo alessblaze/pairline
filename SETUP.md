@@ -1,5 +1,7 @@
 # Setup
 
+> **Note:** New to the project? Read the [Developer Onboarding Guide](./ONBOARDING.md) first for a high-level architectural overview and daily development workflows before running these commands!
+
 This project runs as four app services plus Redis and Postgres:
 
 - `frontend/client`: React + Vite chat app on `http://localhost:5173`
