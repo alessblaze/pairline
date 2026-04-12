@@ -38,6 +38,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/anish/omegle/backend/golang/internal/middleware"
 	"github.com/anish/omegle/backend/golang/internal/observability"
@@ -716,10 +717,13 @@ func CreateBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 func GetBansHandlerGin(c *gin.Context) {
 	status := c.Query("status")
 	limitStr := c.Query("limit")
-	ipQuery := strings.ToLower(strings.TrimSpace(c.Query("ip")))
+	searchQuery := strings.ToLower(strings.TrimSpace(c.Query("q")))
+	if searchQuery == "" {
+		searchQuery = strings.ToLower(strings.TrimSpace(c.Query("ip")))
+	}
 
-	if len(ipQuery) > 64 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ip query too long"})
+	if len(searchQuery) > 128 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "search query too long"})
 		return
 	}
 
@@ -750,8 +754,15 @@ func GetBansHandlerGin(c *gin.Context) {
 		query = query.Where("is_active = ?", false)
 	}
 
-	if ipQuery != "" {
-		query = query.Where("LOWER(ip_address) LIKE ?", "%"+ipQuery+"%")
+	if searchQuery != "" {
+		likeQuery := "%" + searchQuery + "%"
+		query = query.Where(
+			"LOWER(ip_address) LIKE ? OR LOWER(session_id) LIKE ? OR LOWER(reason) LIKE ? OR LOWER(banned_by_username) LIKE ?",
+			likeQuery,
+			likeQuery,
+			likeQuery,
+			likeQuery,
+		)
 	}
 
 	var bans []storage.Ban
@@ -963,9 +974,46 @@ func GetBannedWordsHandlerGin(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 
+	searchQuery := strings.ToLower(strings.TrimSpace(c.Query("q")))
+	if len(searchQuery) > 128 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "search query too long"})
+		return
+	}
+
+	limit := 25
+	if limitStr := strings.TrimSpace(c.Query("limit")); limitStr != "" {
+		if limitStr == "all" {
+			limit = 1000
+		} else if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			if parsed > 1000 {
+				limit = 1000
+			} else {
+				limit = parsed
+			}
+		}
+	}
+
+	query := db.GetDB().WithContext(ctx).Model(&storage.BannedWord{})
+	if searchQuery != "" {
+		likeQuery := "%" + searchQuery + "%"
+		query = query.Where(
+			"LOWER(word) LIKE ? OR LOWER(normalized_word) LIKE ? OR LOWER(created_by_username) LIKE ?",
+			likeQuery,
+			likeQuery,
+			likeQuery,
+		)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count banned words"})
+		return
+	}
+
 	var words []storage.BannedWord
-	if err := db.GetDB().WithContext(ctx).
+	if err := query.
 		Order("normalized_word ASC").
+		Limit(limit).
 		Find(&words).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch banned words"})
 		return
@@ -973,6 +1021,7 @@ func GetBannedWordsHandlerGin(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"words": words,
+		"total": total,
 	})
 }
 
@@ -1659,7 +1708,16 @@ func stripHTML(s string) string {
 
 func normalizeBannedWord(word string) string {
 	parts := strings.Fields(strings.ToLower(word))
-	return strings.Join(parts, " ")
+	normalized := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimFunc(part, func(r rune) bool {
+			return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+		})
+		if trimmed != "" {
+			normalized = append(normalized, trimmed)
+		}
+	}
+	return strings.Join(normalized, " ")
 }
 
 func lockBanTargets(tx *gorm.DB, sessionID, ipAddress string) error {

@@ -111,6 +111,9 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
   const [manualBanIP, setManualBanIP] = useState('');
   const [manualBanReason, setManualBanReason] = useState('');
   const [bannedWordInput, setBannedWordInput] = useState('');
+  const [bannedWordSearch, setBannedWordSearch] = useState('');
+  const [bannedWordLimit, setBannedWordLimit] = useState<string>('25');
+  const [bannedWordTotal, setBannedWordTotal] = useState(__mockState?.bannedWords?.length ?? 0);
   const [accountUsername, setAccountUsername] = useState('');
   const [accountPassword, setAccountPassword] = useState('');
   const [showCreateAccountPassword, setShowCreateAccountPassword] = useState(__mockState?.showCreateAccountPassword ?? false);
@@ -141,6 +144,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
   const canManageAccounts = role === 'admin' || role === 'root';
   const canViewInfraHealth = role === 'root';
   const deferredBanSearch = useDeferredValue(banSearch);
+  const deferredBannedWordSearch = useDeferredValue(bannedWordSearch);
   const deferredAccountSearch = useDeferredValue(accountSearch);
   const accountPageSize = accountLimit === 'all' ? Math.max(accountTotal, accounts.length, 1) : Number(accountLimit);
   const accountTotalPages = Math.max(1, Math.ceil(accountTotal / accountPageSize));
@@ -328,7 +332,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
   const fetchBans = async () => {
     try {
       const params = new URLSearchParams({ status: banFilter, limit: banLimit });
-      if (deferredBanSearch.trim()) params.set('ip', deferredBanSearch.trim());
+      if (deferredBanSearch.trim()) params.set('q', deferredBanSearch.trim());
       const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/bans?${params.toString()}`);
       if (response.status === 401) return logout();
       if (response.ok) {
@@ -350,11 +354,14 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
   const fetchBannedWords = async () => {
     if (!canManageBannedWords) return;
     try {
-      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/banned-words`);
+      const params = new URLSearchParams({ limit: bannedWordLimit });
+      if (deferredBannedWordSearch.trim()) params.set('q', deferredBannedWordSearch.trim());
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/banned-words?${params.toString()}`);
       if (response.status === 401) return logout();
       if (response.ok) {
         const data = await response.json();
         setBannedWords(data.words || []);
+        setBannedWordTotal(Number(data.total || 0));
       }
     } catch (error) {
       console.error('Failed to fetch banned words:', error);
@@ -694,7 +701,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
 
   useEffect(() => { if (authReady && isAuthenticated && !__mockState) syncReports(); }, [authReady, isAuthenticated, reportStatusFilter, reportLimit, __mockState]);
   useEffect(() => { if (authReady && isAuthenticated && !__mockState) syncBans(); }, [authReady, isAuthenticated, banFilter, banLimit, deferredBanSearch, __mockState]);
-  useEffect(() => { if (authReady && isAuthenticated && canManageBannedWords && !__mockState) syncBannedWords(); }, [authReady, isAuthenticated, canManageBannedWords, __mockState]);
+  useEffect(() => { if (authReady && isAuthenticated && canManageBannedWords && !__mockState) syncBannedWords(); }, [authReady, isAuthenticated, canManageBannedWords, bannedWordLimit, deferredBannedWordSearch, __mockState]);
   useEffect(() => { if (authReady && isAuthenticated && canManageAccounts && !__mockState) syncAccounts(); }, [authReady, isAuthenticated, canManageAccounts, accountPage, accountLimit, deferredAccountSearch, __mockState]);
   useEffect(() => { if (authReady && isAuthenticated && canViewInfraHealth && !__mockState) syncInfraHealth(); }, [authReady, isAuthenticated, canViewInfraHealth, __mockState]);
 
@@ -1348,7 +1355,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                                 value={banSearch}
                                 onChange={(e) => setBanSearch(e.target.value)}
                                 className={`${inputClass} pl-10`}
-                                placeholder="ENTER IP ADDRESS..."
+                                placeholder="SEARCH IP, SESSION, REASON, OR ADMIN..."
                               />
                             </div>
                           </div>
@@ -1373,6 +1380,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                                 <option value="10">10 ENTRIES</option>
                                 <option value="20">20 ENTRIES</option>
                                 <option value="50">50 ENTRIES</option>
+                                <option value="100">100 ENTRIES</option>
                                 <option value="all">ALL ENTRIES</option>
                               </select>
                             </div>
@@ -1767,7 +1775,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                 {currentTab === 'bannedWords' && canManageBannedWords && (
                   <div className="space-y-6">
                     <div className={`${surfaceCardClass} p-6`}>
-                      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto_auto] lg:items-end">
+                      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] lg:items-end">
                         <div>
                           <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Add Word Or Phrase</label>
                           <input
@@ -1777,6 +1785,19 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                             className={inputClass}
                             placeholder="Enter banned word or phrase..."
                           />
+                        </div>
+                        <div>
+                          <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Search Phrase Registry</label>
+                          <div className="relative">
+                            <Search className="absolute top-3.5 left-4 text-[var(--admin-text-muted)]" size={18} />
+                            <input
+                              type="text"
+                              value={bannedWordSearch}
+                              onChange={(e) => setBannedWordSearch(e.target.value)}
+                              className={`${inputClass} pl-12`}
+                              placeholder="Search phrase, normalized form, or admin..."
+                            />
+                          </div>
                         </div>
                         <button
                           type="button"
@@ -1804,10 +1825,44 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         </div>
                         <div className="flex flex-col">
                           <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-1">Registry Size</p>
+                          <p className="font-heading text-2xl font-bold text-[var(--admin-text)] tracking-tight">{bannedWordTotal}</p>
+                        </div>
+                      </div>
+                      <div className={metricCardClass('inactive')}>
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-[var(--admin-muted-surface)] text-[var(--admin-text-soft)] border border-[var(--admin-outline-soft)]">
+                          <Eye size={20} />
+                        </div>
+                        <div className="flex flex-col">
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-1">Visible Results</p>
                           <p className="font-heading text-2xl font-bold text-[var(--admin-text)] tracking-tight">{bannedWords.length}</p>
                         </div>
                       </div>
+                      <div className={metricCardClass('active')}>
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-[inset_0_0_20px_rgba(16,185,129,0.05)]">
+                          <Search size={20} />
+                        </div>
+                        <div className="flex flex-col">
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-1">Display Limit</p>
+                          <select
+                            value={bannedWordLimit}
+                            onChange={(e) => setBannedWordLimit(e.target.value)}
+                            className={`${compactSelectClass} mt-1`}
+                          >
+                            <option value="10">10 ENTRIES</option>
+                            <option value="25">25 ENTRIES</option>
+                            <option value="50">50 ENTRIES</option>
+                            <option value="100">100 ENTRIES</option>
+                            <option value="all">ALL ENTRIES</option>
+                          </select>
+                        </div>
+                      </div>
                     </div>
+
+                    {bannedWordTotal > 0 && (
+                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] text-right">
+                        {bannedWords.length} / {bannedWordTotal} shown
+                      </p>
+                    )}
 
                     <div className="space-y-4">
                       {bannedWords.length === 0 ? (

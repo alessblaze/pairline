@@ -89,10 +89,18 @@ defmodule OmeglePhoenix.MessageModeration do
     value
     |> String.downcase()
     |> String.split()
+    |> Enum.map(&normalize_token/1)
+    |> Enum.reject(&(&1 == ""))
     |> Enum.join(" ")
   end
 
   defp normalize(_value), do: ""
+
+  defp normalize_token(token) when is_binary(token) do
+    token
+    |> String.replace(~r/^[^\p{L}\p{N}]+/u, "")
+    |> String.replace(~r/[^\p{L}\p{N}]+$/u, "")
+  end
 
   defp phrase_matches?(_content_tokens, ""), do: false
 
