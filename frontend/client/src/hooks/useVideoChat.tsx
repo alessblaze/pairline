@@ -1462,6 +1462,10 @@ export function useVideoChat(wsUrl: string) {
             if (payload?.type === 'system') {
               if (payload.data?.reason_code === BANNED_PHRASE_REASON || payload.data?.message === BLOCKED_PHRASE_NOTICE) {
                 updateDeliveryStatus(messageId, 'blocked');
+                pushSystemMessage(
+                  payload.data?.message || BLOCKED_PHRASE_NOTICE,
+                  payload.data?.reason_code || BANNED_PHRASE_REASON
+                );
               }
               return;
             }
