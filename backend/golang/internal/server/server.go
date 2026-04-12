@@ -134,6 +134,7 @@ func newServer(enablePublic, enableAdmin bool, serviceName string) *Server {
 
 	if enablePublic || enableAdmin {
 		s.syncActiveBansToRedis()
+		s.syncBannedWordsToRedis()
 		s.startBanSyncLoop()
 	}
 
@@ -225,6 +226,42 @@ func (s *Server) startBanSyncLoop() {
 			s.syncActiveBansToRedis()
 		}
 	}()
+}
+
+func (s *Server) syncBannedWordsToRedis() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var words []storage.BannedWord
+	if err := s.db.GetDB().
+		Order("normalized_word ASC").
+		Find(&words).Error; err != nil {
+		log.Printf("Failed to load banned words for Redis sync: %v", err)
+		return
+	}
+
+	members := make([]interface{}, 0, len(words))
+	for _, word := range words {
+		if normalized := strings.TrimSpace(word.NormalizedWord); normalized != "" {
+			members = append(members, normalized)
+		}
+	}
+
+	pipe := s.redis.GetClient().TxPipeline()
+	pipe.Del(ctx, appredis.BannedWordsSetKey())
+	if len(members) > 0 {
+		pipe.SAdd(ctx, appredis.BannedWordsSetKey(), members...)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		log.Printf("Failed to sync banned words to Redis: %v", err)
+		return
+	}
+
+	log.Printf("Synced %d banned words to Redis from Postgres", len(members))
+
+	if err := s.redis.PublishRefreshBannedWordsAction(ctx); err != nil {
+		log.Printf("Failed to publish banned words refresh after startup sync: %v", err)
+	}
 }
 
 func banSyncIntervalSeconds() int {
@@ -520,10 +557,13 @@ func (s *Server) setupRoutes() {
 				moderation.GET("/reports", handlers.GetReportsHandlerGin)
 				moderation.PUT("/reports/:id", handlers.UpdateReportHandlerGin)
 				moderation.GET("/bans", handlers.GetBansHandlerGin)
+				moderation.GET("/banned-words", handlers.GetBannedWordsHandlerGin)
 
 				enforcement := adminAuth.Group("")
 				enforcement.Use(s.RoleAuthMiddleware([]string{"moderator", "admin", "root"}))
 				enforcement.POST("/ban", handlers.CreateBanHandlerGin(s.redis))
+				enforcement.POST("/banned-words", handlers.CreateBannedWordHandlerGin(s.redis))
+				enforcement.DELETE("/banned-words/:id", handlers.DeleteBannedWordHandlerGin(s.redis))
 
 				adminOnlyEnforcement := adminAuth.Group("")
 				adminOnlyEnforcement.Use(s.RoleAuthMiddleware([]string{"admin", "root"}))

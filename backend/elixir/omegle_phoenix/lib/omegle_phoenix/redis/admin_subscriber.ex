@@ -229,6 +229,11 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
     )
   end
 
+  defp handle_admin_action("refresh_banned_words", _data) do
+    OmeglePhoenix.MessageModeration.refresh()
+    Logger.info("Banned words cache refresh requested")
+  end
+
   defp handle_admin_action(action, data) do
     Logger.warning("Unknown admin action: #{action}, data: #{inspect(data)}")
   end

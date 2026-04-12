@@ -16,7 +16,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 export interface Message {
-  type: 'offer' | 'answer' | 'ice' | 'message' | 'match' | 'disconnect' | 'disconnected' | 'error' | 'banned' | 'timeout' | 'stopped' | 'typing' | 'pong' | 'connected' | 'searching' | 'skipped' | 'webrtc_ready' | 'webrtc_start';
+  type: 'offer' | 'answer' | 'ice' | 'message' | 'match' | 'disconnect' | 'disconnected' | 'error' | 'banned' | 'timeout' | 'stopped' | 'typing' | 'pong' | 'connected' | 'searching' | 'skipped' | 'webrtc_ready' | 'webrtc_start' | 'system';
   data?: any;
   peer_id?: string;
   session_id?: string;

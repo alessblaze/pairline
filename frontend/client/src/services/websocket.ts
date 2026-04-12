@@ -225,6 +225,44 @@ export class WebSocketClient {
     }
   }
 
+  sendWithResponse(type: string, data: any): Promise<Message | void> {
+    try {
+      if (this.isConnected() && this.channel) {
+        return new Promise((resolve, reject) => {
+          this.channel?.push(type, { data })
+            .receive('ok', (payload: Message) => {
+              if (payload?.type) {
+                this.dispatchMessage(payload);
+              }
+              resolve(payload);
+            })
+            .receive('error', (payload: Message | { reason?: string; error?: string; type?: string }) => {
+              if (payload && typeof payload === 'object' && 'type' in payload && payload.type) {
+                const typedPayload = payload as Message;
+                this.dispatchMessage(typedPayload);
+                resolve(typedPayload);
+                return;
+              }
+
+              const errorPayload: Message = {
+                type: 'error',
+                data: payload
+              };
+
+              this.dispatchMessage(errorPayload);
+              resolve(errorPayload);
+            });
+        });
+      }
+
+      console.error('WebSocket not connected');
+      throw new Error('WebSocket not connected');
+    } catch (error) {
+      console.error('Failed to send message with response:', error);
+      return Promise.reject(error);
+    }
+  }
+
   onMessage(handler: (msg: Message) => void) {
     this.messageHandlers.push(handler);
   }

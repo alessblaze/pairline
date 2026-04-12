@@ -30,6 +30,7 @@ defmodule OmeglePhoenix.Application do
       OmeglePhoenix.ClusterConnector,
       OmeglePhoenix.Metrics,
       OmeglePhoenix.OTLPMetrics,
+      OmeglePhoenix.MessageModeration,
       OmeglePhoenix.SessionManager,
       OmeglePhoenix.Router,
       OmeglePhoenix.Matchmaker,

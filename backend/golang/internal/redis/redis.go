@@ -141,6 +141,15 @@ func (r *Client) PublishDisconnectAction(ctx context.Context, sessionID string) 
 	return r.publishJSON(ctx, data)
 }
 
+func (r *Client) PublishRefreshBannedWordsAction(ctx context.Context) error {
+	data := map[string]interface{}{
+		"action":    "refresh_banned_words",
+		"timestamp": time.Now().UnixMilli(),
+	}
+
+	return r.publishJSON(ctx, data)
+}
+
 func (r *Client) publishJSON(ctx context.Context, data map[string]interface{}) error {
 	payload, err := json.Marshal(data)
 	if err != nil {

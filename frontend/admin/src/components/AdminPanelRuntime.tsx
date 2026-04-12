@@ -64,7 +64,7 @@ import {
   Sun,
   X
 } from 'lucide-react';
-import type { AdminAccount, AdminRole, Ban, CreateBanRequest, InfraHealthResponse, LoginResponse, Report } from '../types';
+import type { AdminAccount, AdminRole, Ban, BannedWord, CreateBanRequest, InfraHealthResponse, LoginResponse, Report } from '../types';
 
 interface AdminPanelRuntimeProps extends AdminPanelProps {
   __mockState?: AdminPanelMockState;
@@ -90,11 +90,12 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(__mockState?.isUserMenuOpen ?? false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(__mockState?.isMobileMenuOpen ?? false);
   const [bans, setBans] = useState<Ban[]>(__mockState?.bans ?? []);
-  const [currentTab, setCurrentTab] = useState<'reports' | 'bans' | 'accounts' | 'infra'>(__mockState?.currentTab ?? 'reports');
+  const [bannedWords, setBannedWords] = useState<BannedWord[]>(__mockState?.bannedWords ?? []);
+  const [currentTab, setCurrentTab] = useState<'reports' | 'bans' | 'bannedWords' | 'accounts' | 'infra'>(__mockState?.currentTab ?? 'reports');
   const mainContentRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
-    if (mainContentRef.current) {
+    if (mainContentRef.current && typeof mainContentRef.current.scrollTo === 'function') {
       mainContentRef.current.scrollTo(0, 0);
     }
   }, [currentTab]);
@@ -109,6 +110,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
   const [manualBanSessionId, setManualBanSessionId] = useState('');
   const [manualBanIP, setManualBanIP] = useState('');
   const [manualBanReason, setManualBanReason] = useState('');
+  const [bannedWordInput, setBannedWordInput] = useState('');
   const [accountUsername, setAccountUsername] = useState('');
   const [accountPassword, setAccountPassword] = useState('');
   const [showCreateAccountPassword, setShowCreateAccountPassword] = useState(__mockState?.showCreateAccountPassword ?? false);
@@ -135,6 +137,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
 
   const canCreateBans = role === 'moderator' || role === 'admin' || role === 'root';
   const canManageBans = role === 'admin' || role === 'root';
+  const canManageBannedWords = role === 'moderator' || role === 'admin' || role === 'root';
   const canManageAccounts = role === 'admin' || role === 'root';
   const canViewInfraHealth = role === 'root';
   const deferredBanSearch = useDeferredValue(banSearch);
@@ -344,6 +347,20 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
     }
   };
 
+  const fetchBannedWords = async () => {
+    if (!canManageBannedWords) return;
+    try {
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/banned-words`);
+      if (response.status === 401) return logout();
+      if (response.ok) {
+        const data = await response.json();
+        setBannedWords(data.words || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch banned words:', error);
+    }
+  };
+
   const fetchAccounts = async () => {
     if (!canManageAccounts) return;
     try {
@@ -452,6 +469,52 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
       alert('Failed to create ban');
     }
     return false;
+  };
+
+  const createBannedWord = async () => {
+    if (!canManageBannedWords) return;
+    const word = bannedWordInput.trim();
+    if (!word) {
+      alert('Please enter a banned word or phrase');
+      return;
+    }
+
+    try {
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/banned-words`, {
+        method: 'POST',
+        body: JSON.stringify({ word }),
+      });
+      if (response.status === 401) return logout();
+      if (response.ok) {
+        setBannedWordInput('');
+        fetchBannedWords();
+        return;
+      }
+      const data = await response.json().catch(() => ({}));
+      alert(data.error || 'Failed to create banned word');
+    } catch (error) {
+      console.error('Failed to create banned word:', error);
+      alert('Failed to create banned word');
+    }
+  };
+
+  const deleteBannedWord = async (id: string) => {
+    if (!canManageBannedWords) return;
+    try {
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/banned-words/${id}`, {
+        method: 'DELETE',
+      });
+      if (response.status === 401) return logout();
+      if (response.ok) {
+        fetchBannedWords();
+        return;
+      }
+      const data = await response.json().catch(() => ({}));
+      alert(data.error || 'Failed to delete banned word');
+    } catch (error) {
+      console.error('Failed to delete banned word:', error);
+      alert('Failed to delete banned word');
+    }
   };
 
   const openBanModal = ({
@@ -608,6 +671,10 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
     void fetchBans();
   });
 
+  const syncBannedWords = useEffectEvent(() => {
+    void fetchBannedWords();
+  });
+
   const syncAccounts = useEffectEvent(() => {
     void fetchAccounts();
   });
@@ -627,6 +694,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
 
   useEffect(() => { if (authReady && isAuthenticated && !__mockState) syncReports(); }, [authReady, isAuthenticated, reportStatusFilter, reportLimit, __mockState]);
   useEffect(() => { if (authReady && isAuthenticated && !__mockState) syncBans(); }, [authReady, isAuthenticated, banFilter, banLimit, deferredBanSearch, __mockState]);
+  useEffect(() => { if (authReady && isAuthenticated && canManageBannedWords && !__mockState) syncBannedWords(); }, [authReady, isAuthenticated, canManageBannedWords, __mockState]);
   useEffect(() => { if (authReady && isAuthenticated && canManageAccounts && !__mockState) syncAccounts(); }, [authReady, isAuthenticated, canManageAccounts, accountPage, accountLimit, deferredAccountSearch, __mockState]);
   useEffect(() => { if (authReady && isAuthenticated && canViewInfraHealth && !__mockState) syncInfraHealth(); }, [authReady, isAuthenticated, canViewInfraHealth, __mockState]);
 
@@ -734,6 +802,18 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                   <BanIcon size={18} />
                   Ban Registry
                 </button>
+                {canManageBannedWords && (
+                  <button
+                    onClick={() => {
+                      setCurrentTab('bannedWords');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={tabButtonClass(currentTab === 'bannedWords')}
+                  >
+                    <MessageSquare size={18} />
+                    Banned Words
+                  </button>
+                )}
                 {canViewInfraHealth && (
                   <button
                     onClick={() => {
@@ -819,6 +899,12 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                 <BanIcon size={18} />
                 Ban Registry
               </button>
+              {canManageBannedWords && (
+                <button onClick={() => setCurrentTab('bannedWords')} className={tabButtonClass(currentTab === 'bannedWords')}>
+                  <MessageSquare size={18} />
+                  Banned Words
+                </button>
+              )}
               {canViewInfraHealth && (
                 <button onClick={() => setCurrentTab('infra')} className={tabButtonClass(currentTab === 'infra')}>
                   <Server size={18} />
@@ -902,6 +988,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                     ? 'Reports Queue'
                     : currentTab === 'bans'
                       ? 'Ban Registry'
+                      : currentTab === 'bannedWords'
+                        ? 'Banned Words'
                       : currentTab === 'infra'
                         ? 'Infra Health'
                         : 'Admin Accounts'}
@@ -911,6 +999,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                     ? 'Review and act on user reports in real-time.'
                     : currentTab === 'bans'
                       ? 'Manage active and historical user bans.'
+                      : currentTab === 'bannedWords'
+                        ? 'Block delivery of messages containing restricted words or phrases.'
                       : currentTab === 'infra'
                         ? 'Inspect cluster topology, service health, data stores, and observability lanes.'
                         : 'Manage moderation team access.'}
@@ -1670,6 +1760,87 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           </div>
                         </div>
                       </div>
+                    </div>
+                  </div>
+                )}
+
+                {currentTab === 'bannedWords' && canManageBannedWords && (
+                  <div className="space-y-6">
+                    <div className={`${surfaceCardClass} p-6`}>
+                      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto_auto] lg:items-end">
+                        <div>
+                          <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Add Word Or Phrase</label>
+                          <input
+                            type="text"
+                            value={bannedWordInput}
+                            onChange={(e) => setBannedWordInput(e.target.value)}
+                            className={inputClass}
+                            placeholder="Enter banned word or phrase..."
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void createBannedWord()}
+                          className={`${actionButtonClass} bg-danger-rose text-[var(--admin-text)] hover:bg-rose-600`}
+                        >
+                          <Plus size={16} />
+                          Add Word
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void fetchBannedWords()}
+                          className={`${actionButtonClass} bg-[var(--admin-text)] text-[var(--admin-bg)] hover:opacity-90`}
+                        >
+                          <RefreshCw size={16} />
+                          Refresh
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                      <div className={metricCardClass('total')}>
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[inset_0_0_20px_rgba(34,211,238,0.05)]">
+                          <MessageSquare size={20} />
+                        </div>
+                        <div className="flex flex-col">
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-1">Registry Size</p>
+                          <p className="font-heading text-2xl font-bold text-[var(--admin-text)] tracking-tight">{bannedWords.length}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      {bannedWords.length === 0 ? (
+                        <div className="surface-card rounded-none flex flex-col items-center justify-center px-8 py-16 text-center">
+                          <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-none border border-[var(--admin-outline-strong)] bg-[var(--admin-muted-surface)]">
+                            <MessageSquare size={28} className="text-[var(--admin-text-muted)]" />
+                          </div>
+                          <h4 className="font-heading text-lg font-semibold text-[var(--admin-text-soft)] mb-2 tracking-wide">NO BANNED WORDS</h4>
+                          <p className="font-heading text-[11px] text-[var(--admin-text-muted)] uppercase tracking-[0.14em] font-bold">MESSAGE_FILTER_CLEAR</p>
+                        </div>
+                      ) : (
+                        bannedWords.map((word) => (
+                          <div key={word.id} className="surface-card rounded-none p-5">
+                            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                              <div className="min-w-0">
+                                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Blocked Token</p>
+                                <p className="mt-2 break-words font-mono text-base text-[var(--admin-text)]">{word.word}</p>
+                                <p className="mt-3 text-xs text-[var(--admin-text-muted)]">
+                                  Normalized as <span className="font-mono text-[var(--admin-text-soft)]">{word.normalized_word}</span> · Added by {word.created_by_username || 'unknown'} · {formatDate(word.created_at)}
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => void deleteBannedWord(word.id)}
+                                className="inline-flex h-10 items-center justify-center gap-2 rounded-none border border-rose-500/20 bg-rose-500/10 px-4 text-[11px] font-bold uppercase tracking-[0.14em] text-rose-400 transition-all hover:bg-rose-500/20"
+                              >
+                                <Trash2 size={14} />
+                                Remove
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      )}
                     </div>
                   </div>
                 )}

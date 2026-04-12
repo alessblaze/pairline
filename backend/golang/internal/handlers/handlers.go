@@ -958,6 +958,152 @@ func DeleteBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 	}
 }
 
+func GetBannedWordsHandlerGin(c *gin.Context) {
+	db := storage.NewDatabase()
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	var words []storage.BannedWord
+	if err := db.GetDB().WithContext(ctx).
+		Order("normalized_word ASC").
+		Find(&words).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch banned words"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"words": words,
+	})
+}
+
+func CreateBannedWordHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req struct {
+			Word string `json:"word" binding:"required,max=128"`
+		}
+
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request properties"})
+			return
+		}
+
+		word := strings.TrimSpace(stripHTML(req.Word))
+		normalizedWord := normalizeBannedWord(word)
+		if normalizedWord == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Banned word cannot be empty"})
+			return
+		}
+
+		username, ok := getContextString(c, "username")
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			return
+		}
+
+		db := storage.NewDatabase()
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
+
+		entry := storage.BannedWord{
+			Word:              word,
+			NormalizedWord:    normalizedWord,
+			CreatedByUsername: username,
+		}
+
+		err := db.GetDB().WithContext(ctx).Create(&entry).Error
+		if err != nil {
+			if isDuplicateKeyError(err) {
+				var existing storage.BannedWord
+				if lookupErr := db.GetDB().WithContext(ctx).
+					Where("normalized_word = ?", normalizedWord).
+					First(&existing).Error; lookupErr == nil {
+					if redisErr := redisClient.GetClient().SAdd(ctx, appredis.BannedWordsSetKey(), normalizedWord).Err(); redisErr != nil {
+						log.Printf("Failed to self-heal banned word in Redis: %v", redisErr)
+					}
+					if publishErr := redisClient.PublishRefreshBannedWordsAction(ctx); publishErr != nil {
+						log.Printf("Failed to publish banned words refresh action: %v", publishErr)
+					}
+
+					c.JSON(http.StatusOK, gin.H{
+						"status": "exists",
+						"word":   existing,
+					})
+					return
+				}
+			}
+
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create banned word"})
+			return
+		}
+
+		if err := redisClient.GetClient().SAdd(ctx, appredis.BannedWordsSetKey(), normalizedWord).Err(); err != nil {
+			log.Printf("Failed to sync banned word to Redis: %v", err)
+			if rollbackErr := db.GetDB().WithContext(ctx).Delete(&storage.BannedWord{}, "id = ?", entry.ID).Error; rollbackErr != nil {
+				log.Printf("Failed to rollback banned word after Redis error: %v", rollbackErr)
+			}
+			c.JSON(http.StatusBadGateway, gin.H{"error": "Word saved, but Redis propagation failed"})
+			return
+		}
+
+		if err := redisClient.PublishRefreshBannedWordsAction(ctx); err != nil {
+			log.Printf("Failed to publish banned words refresh action: %v", err)
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status": "created",
+			"word":   entry,
+		})
+	}
+}
+
+func DeleteBannedWordHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		wordID := strings.TrimSpace(c.Param("id"))
+		if !uuidRe.MatchString(wordID) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid banned word identifier format"})
+			return
+		}
+
+		db := storage.NewDatabase()
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
+
+		var entry storage.BannedWord
+		if err := db.GetDB().WithContext(ctx).Where("id = ?", wordID).First(&entry).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Banned word not found"})
+				return
+			}
+
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete banned word"})
+			return
+		}
+
+		if err := redisClient.GetClient().SRem(ctx, appredis.BannedWordsSetKey(), entry.NormalizedWord).Err(); err != nil {
+			log.Printf("Failed to remove banned word from Redis: %v", err)
+			c.JSON(http.StatusBadGateway, gin.H{"error": "Word deleted, but Redis propagation failed"})
+			return
+		}
+
+		if err := db.GetDB().WithContext(ctx).Delete(&storage.BannedWord{}, "id = ?", wordID).Error; err != nil {
+			if rollbackErr := redisClient.GetClient().SAdd(ctx, appredis.BannedWordsSetKey(), entry.NormalizedWord).Err(); rollbackErr != nil {
+				log.Printf("Failed to restore banned word in Redis after DB delete error: %v", rollbackErr)
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete banned word"})
+			return
+		}
+
+		if err := redisClient.PublishRefreshBannedWordsAction(ctx); err != nil {
+			log.Printf("Failed to publish banned words refresh action: %v", err)
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status": "deleted",
+			"id":     wordID,
+		})
+	}
+}
+
 func ListAdminAccountsHandlerGin(c *gin.Context) {
 	limit := 25
 	if limitStr := strings.TrimSpace(c.Query("limit")); limitStr != "" {
@@ -1512,6 +1658,11 @@ func stripHTML(s string) string {
 		}
 	}
 	return strings.TrimSpace(clean.String())
+}
+
+func normalizeBannedWord(word string) string {
+	parts := strings.Fields(strings.ToLower(word))
+	return strings.Join(parts, " ")
 }
 
 func lockBanTargets(tx *gorm.DB, sessionID, ipAddress string) error {

@@ -59,6 +59,10 @@ func BanIPKey(ipAddress string) string {
 	return "ban:ip:" + ipAddress
 }
 
+func BannedWordsSetKey() string {
+	return "moderation:banned_words"
+}
+
 func ResolveSessionRoute(ctx context.Context, client goredis.UniversalClient, sessionID string) (SessionRoute, error) {
 	locator, err := client.Get(ctx, SessionLocatorKey(sessionID)).Result()
 	if err != nil {

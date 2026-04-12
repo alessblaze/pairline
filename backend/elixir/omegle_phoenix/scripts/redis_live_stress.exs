@@ -65,6 +65,44 @@ defmodule RedisLiveStressHelpers do
     end
   end
 
+  def collect_async_errors(results) do
+    Enum.flat_map(results, fn
+      {:ok, :ok} -> []
+      {:ok, {:error, error}} -> [error]
+      {:exit, reason} -> [{:task_exit, reason}]
+      other -> [{:unexpected_task_result, other}]
+    end)
+  end
+
+  def active_session_ids! do
+    case OmeglePhoenix.Redis.command(["SMEMBERS", OmeglePhoenix.RedisKeys.active_sessions_key()]) do
+      {:ok, session_ids} when is_list(session_ids) -> session_ids
+      {:error, reason} -> raise("Failed to list active sessions: #{inspect(reason)}")
+      other -> raise("Unexpected active sessions response: #{inspect(other)}")
+    end
+  end
+
+  def cleanup_session(session_id) do
+    case OmeglePhoenix.SessionManager.delete_session(session_id) do
+      :ok ->
+        cleanup_orphan(session_id)
+
+      {:error, :not_found} ->
+        cleanup_orphan(session_id)
+
+      {:error, reason} ->
+        {:error, {:delete_session, session_id, reason}}
+    end
+  end
+
+  defp cleanup_orphan(session_id) do
+    case OmeglePhoenix.SessionManager.cleanup_orphaned_session(session_id) do
+      :ok -> :ok
+      {:error, :not_found} -> :ok
+      {:error, reason} -> {:error, {:cleanup_orphaned_session, session_id, reason}}
+    end
+  end
+
   defp matched_pairs(sessions) do
     snapshots =
       Enum.reduce(sessions, %{}, fn %{id: id}, acc ->
@@ -149,7 +187,7 @@ cleanup_sessions = fn ->
   |> Task.async_stream(
     fn %{id: id, ip: ip} ->
       _ = OmeglePhoenix.Matchmaker.leave_queue(id)
-      _ = OmeglePhoenix.SessionManager.delete_session(id)
+      _ = RedisLiveStressHelpers.cleanup_session(id)
       _ = OmeglePhoenix.Redis.command(["DEL", "ban:ip:#{ip}"])
       :ok
     end,
@@ -181,7 +219,7 @@ try do
     end)
 
   create_errors =
-    for {:ok, {:error, error}} <- create_results, do: error
+    RedisLiveStressHelpers.collect_async_errors(create_results)
 
   if create_errors != [], do: raise("Create session failures: #{inspect(create_errors)}")
 
@@ -204,7 +242,7 @@ try do
     end)
 
   join_errors =
-    for {:ok, {:error, error}} <- join_results, do: error
+    RedisLiveStressHelpers.collect_async_errors(join_results)
 
   if join_errors != [], do: raise("Join queue failures: #{inspect(join_errors)}")
 
@@ -239,7 +277,7 @@ try do
     end)
 
   disconnect_errors =
-    for {:ok, {:error, error}} <- disconnect_results, do: error
+    RedisLiveStressHelpers.collect_async_errors(disconnect_results)
 
   if disconnect_errors != [], do: raise("Disconnect failures: #{inspect(disconnect_errors)}")
 
@@ -264,7 +302,7 @@ try do
     end)
 
   leave_errors =
-    for {:ok, {:error, error}} <- leave_results, do: error
+    RedisLiveStressHelpers.collect_async_errors(leave_results)
 
   if leave_errors != [], do: raise("Leave queue failures: #{inspect(leave_errors)}")
 
@@ -286,10 +324,9 @@ try do
         fn %{id: id} ->
           _ = OmeglePhoenix.Matchmaker.leave_queue(id)
 
-          case OmeglePhoenix.SessionManager.delete_session(id) do
+          case RedisLiveStressHelpers.cleanup_session(id) do
             :ok -> :ok
-            {:error, :not_found} -> :ok
-            other -> {:error, {:delete_session, id, other}}
+            other -> {:error, {:cleanup_session, id, other}}
           end
         end,
         max_concurrency: concurrency,
@@ -301,7 +338,7 @@ try do
     end)
 
   cleanup_errors =
-    for {:ok, {:error, error}} <- cleanup_results, do: error
+    RedisLiveStressHelpers.collect_async_errors(cleanup_results)
 
   if cleanup_errors != [], do: raise("Cleanup failures: #{inspect(cleanup_errors)}")
 
@@ -321,7 +358,34 @@ try do
     end)
 
   if final_active != 0 do
-    raise("Stress cleanup incomplete, active_sessions=#{inspect(final_active)}")
+    leftover_ids = RedisLiveStressHelpers.active_session_ids!()
+
+    Enum.each(leftover_ids, fn session_id ->
+      _ = RedisLiveStressHelpers.cleanup_session(session_id)
+    end)
+
+    retried_final_active =
+      Enum.reduce_while(1..20, final_active, fn _, _acc ->
+        case OmeglePhoenix.SessionManager.count_active_sessions() do
+          {:ok, 0} ->
+            {:halt, 0}
+
+          {:ok, count} ->
+            Process.sleep(100)
+            {:cont, count}
+
+          {:error, reason} ->
+            raise("Failed to count active sessions during retry cleanup poll: #{inspect(reason)}")
+        end
+      end)
+
+    if retried_final_active != 0 do
+      final_leftover_ids = RedisLiveStressHelpers.active_session_ids!()
+
+      raise(
+        "Stress cleanup incomplete, active_sessions=#{inspect(retried_final_active)}, leftover_session_ids=#{inspect(final_leftover_ids)}"
+      )
+    end
   end
 
   IO.puts("Stress run completed")

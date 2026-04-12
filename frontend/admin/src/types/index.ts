@@ -66,6 +66,14 @@ export interface Ban {
   unbanned_by_username: string | null;
 }
 
+export interface BannedWord {
+  id: string;
+  word: string;
+  normalized_word: string;
+  created_by_username: string;
+  created_at: string;
+}
+
 export interface AdminAccount {
   id: string;
   username: string;

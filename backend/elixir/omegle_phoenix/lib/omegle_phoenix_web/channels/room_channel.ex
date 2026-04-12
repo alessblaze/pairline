@@ -221,30 +221,46 @@ defmodule OmeglePhoenixWeb.RoomChannel do
             )
 
             if is_binary(content) and byte_size(content) <= 2_000 do
-              if is_binary(match_generation) and is_map(partner_route) do
-                OmeglePhoenix.Router.send_message(
-                  partner_id,
-                  %{
-                    type: "message",
-                    from: session_id,
-                    match_generation: match_generation,
-                    data: %{content: content}
-                  },
-                  route_hint: partner_route,
-                  owner_hint: partner_owner_node
-                )
+              case OmeglePhoenix.MessageModeration.blocked_word(content) do
+                {:ok, nil} ->
+                  if is_binary(match_generation) and is_map(partner_route) do
+                    OmeglePhoenix.Router.send_message(
+                      partner_id,
+                      %{
+                        type: "message",
+                        from: session_id,
+                        match_generation: match_generation,
+                        data: %{content: content}
+                      },
+                      route_hint: partner_route,
+                      owner_hint: partner_owner_node
+                    )
 
-                :telemetry.execute([:omegle_phoenix, :room, :message_sent], %{count: 1}, %{
-                  session_id: session_id
-                })
+                    :telemetry.execute([:omegle_phoenix, :room, :message_sent], %{count: 1}, %{
+                      session_id: session_id
+                    })
 
-                {:noreply, socket}
-              else
-                Logger.debug(
-                  "Swallowed in-flight message from #{session_id}: match state unavailable"
-                )
+                    {:reply, {:ok, %{status: "sent"}}, socket}
+                  else
+                    Logger.debug(
+                      "Swallowed in-flight message from #{session_id}: match state unavailable"
+                    )
 
-                {:reply, {:ok, %{status: "ignored"}}, clear_match_assigns(socket)}
+                    {:reply, {:ok, %{status: "ignored"}}, clear_match_assigns(socket)}
+                  end
+
+                {:ok, _blocked_word} ->
+                  {:reply,
+                   {:ok,
+                    %{
+                      type: "system",
+                      data: %{
+                        message: "This message was not sent due to containing a banned phrase."
+                      }
+                    }}, socket}
+
+                {:error, _reason} ->
+                  {:reply, {:error, %{reason: "Unable to verify message policy right now"}}, socket}
               end
             else
               {:reply, {:error, %{reason: "Invalid message content"}}, socket}

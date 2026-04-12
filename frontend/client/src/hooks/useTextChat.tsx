@@ -122,6 +122,17 @@ export function useTextChat(wsUrl: string) {
         }
         break;
 
+      case 'system':
+        if (message.data?.message) {
+          setMessages(prev => [...prev, {
+            id: crypto.randomUUID(),
+            text: message.data.message,
+            sender: 'system',
+            timestamp: Date.now()
+          }]);
+        }
+        break;
+
       case 'disconnected':
         if (import.meta.env.VITE_WEBSOCKET_DEBUG === 'true') {
           console.log('Peer disconnected');
@@ -355,13 +366,22 @@ export function useTextChat(wsUrl: string) {
   const sendMessage = (text: string) => {
     try {
       if (text.trim() && status === 'connected') {
-        wsClient.send('message', { content: text });
-        setMessages(prev => [...prev, {
-          id: crypto.randomUUID(),
-          text,
-          sender: 'me',
-          timestamp: Date.now()
-        }]);
+        void wsClient.sendWithResponse('message', { content: text })
+          .then((payload) => {
+            if (payload?.type === 'system' || payload?.type === 'error') {
+              return;
+            }
+
+            setMessages(prev => [...prev, {
+              id: crypto.randomUUID(),
+              text,
+              sender: 'me',
+              timestamp: Date.now()
+            }]);
+          })
+          .catch((error) => {
+            console.error('Failed to send message:', error);
+          });
       }
     } catch (error) {
       console.error('Failed to send message:', error);

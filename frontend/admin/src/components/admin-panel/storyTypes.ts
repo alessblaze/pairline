@@ -2,6 +2,7 @@ import type {
   AdminAccount,
   AdminRole,
   Ban,
+  BannedWord,
   InfraHealthResponse,
   Report,
 } from '../../types';
@@ -26,9 +27,10 @@ export interface AdminPanelMockState {
   role?: AdminRole | null;
   reports?: Report[];
   bans?: Ban[];
+  bannedWords?: BannedWord[];
   accounts?: AdminAccount[];
   infraHealth?: InfraHealthResponse | null;
-  currentTab?: 'reports' | 'bans' | 'accounts' | 'infra';
+  currentTab?: 'reports' | 'bans' | 'bannedWords' | 'accounts' | 'infra';
   reportStatusFilter?: 'pending' | 'decided' | 'all';
   banFilter?: 'all' | 'active' | 'inactive';
   serverReportMetrics?: { pending: number; approved: number; rejected: number };

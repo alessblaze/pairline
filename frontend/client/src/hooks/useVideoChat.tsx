@@ -1147,6 +1147,17 @@ export function useVideoChat(wsUrl: string) {
         }
         break;
 
+      case 'system':
+        if (message.data?.message) {
+          setMessages(prev => [...prev, {
+            id: crypto.randomUUID(),
+            text: message.data.message,
+            sender: 'system',
+            timestamp: Date.now()
+          }]);
+        }
+        break;
+
       case 'typing':
         if (message.data?.typing !== undefined) {
           setPeerTyping(message.data.typing);
@@ -1426,13 +1437,22 @@ export function useVideoChat(wsUrl: string) {
   const sendMessage = (text: string) => {
     try {
       if (text.trim() && status === 'connected') {
-        wsClient.send('message', { content: text });
-        setMessages(prev => [...prev, {
-          id: crypto.randomUUID(),
-          text,
-          sender: 'me',
-          timestamp: Date.now()
-        }]);
+        void wsClient.sendWithResponse('message', { content: text })
+          .then((payload) => {
+            if (payload?.type === 'system' || payload?.type === 'error') {
+              return;
+            }
+
+            setMessages(prev => [...prev, {
+              id: crypto.randomUUID(),
+              text,
+              sender: 'me',
+              timestamp: Date.now()
+            }]);
+          })
+          .catch((error) => {
+            console.error('Failed to send message:', error);
+          });
       }
     } catch (error) {
       console.error('Failed to send message:', error);

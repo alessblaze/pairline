@@ -279,10 +279,17 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
   const [showReport, setShowReport] = useState(false);
   const [localPreviewPosition, setLocalPreviewPosition] = useState<{ x: number; y: number } | null>(null);
   const [isDraggingLocalPreview, setIsDraggingLocalPreview] = useState(false);
+  const blockedPhraseNotice = 'This message was not sent due to containing a banned phrase.';
   // typingTimeoutRef moved to VideoChatInput
   const videoPanelRef = useRef<HTMLDivElement>(null);
   const localPreviewRef = useRef<HTMLDivElement>(null);
   const dragOffsetRef = useRef<{ x: number; y: number } | null>(null);
+
+  const systemMessageClass = (text: string) => (
+    text === blockedPhraseNotice
+      ? 'bg-red-100 text-red-700 shadow-[0_0_18px_rgba(239,68,68,0.28)] ring-1 ring-red-300/80 dark:bg-red-950/70 dark:text-red-200 dark:ring-red-500/40 dark:shadow-[0_0_22px_rgba(248,113,113,0.28)]'
+      : 'bg-gray-100 dark:bg-gray-800 text-gray-500'
+  );
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'instant' });
@@ -549,7 +556,7 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
           <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 flex flex-col" id="messages">
             {messages.map((msg) => (
               <div key={msg.id} className={`flex ${msg.sender === 'system' ? 'justify-center' : msg.sender === 'me' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[85%] px-4 py-2 rounded-2xl text-sm ${msg.sender === 'system' ? 'bg-gray-100 dark:bg-gray-800 text-gray-500' : msg.sender === 'me' ? 'bg-indigo-600 text-white' : 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white'}`}>
+                <div className={`max-w-[85%] px-4 py-2 rounded-2xl text-sm transition-all ${msg.sender === 'system' ? systemMessageClass(msg.text) : msg.sender === 'me' ? 'bg-indigo-600 text-white' : 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white'}`}>
                   <p className="whitespace-pre-wrap break-words">{DOMPurify.sanitize(msg.text)}</p>
                 </div>
               </div>
