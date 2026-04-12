@@ -71,7 +71,7 @@ export function ReportDialog({ peerId, messages, reporterSessionId, reporterToke
           reporter_token: reporterToken,
           reported_session_id: peerId,
           reason,
-          description,
+          description: description.trim(),
           chat_log: chatMessages,
         }),
       });
