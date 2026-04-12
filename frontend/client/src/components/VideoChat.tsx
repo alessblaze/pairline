@@ -49,6 +49,19 @@ export interface VideoChatState {
 }
 
 const LOCAL_PREVIEW_EDGE_MARGIN = 12;
+const STACKED_VIDEO_RATIOS = [
+  { key: '1:1', value: 1 },
+  { key: '4:3', value: 4 / 3 },
+  { key: '16:9', value: 16 / 9 },
+] as const;
+const PIP_SIZES = [
+  { key: 'S', widthClass: 'w-[24%] min-w-[72px] max-w-[128px]' },
+  { key: 'M', widthClass: 'w-[28%] min-w-[80px] max-w-[150px]' },
+  { key: 'L', widthClass: 'w-[34%] min-w-[96px] max-w-[190px]' },
+] as const;
+
+type StackedVideoRatio = (typeof STACKED_VIDEO_RATIOS)[number]['key'];
+type PipSize = (typeof PIP_SIZES)[number]['key'];
 
 // ---------------------------------------------------------------------------
 // VideoChatInput — isolated so keystrokes ONLY re-render this small component.
@@ -172,11 +185,39 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
   const [videoLayout, setVideoLayout] = useState<'pip' | 'stacked'>(() => {
     return (localStorage.getItem('pairline-video-layout') as 'pip' | 'stacked') || 'pip';
   });
+  const [stackedVideoRatio, setStackedVideoRatio] = useState<StackedVideoRatio>(() => {
+    const savedRatio = localStorage.getItem('pairline-stacked-video-ratio') as StackedVideoRatio | null;
+    return STACKED_VIDEO_RATIOS.some(ratio => ratio.key === savedRatio) ? (savedRatio as StackedVideoRatio) : '4:3';
+  });
+  const [pipSize, setPipSize] = useState<PipSize>(() => {
+    const savedSize = localStorage.getItem('pairline-pip-size') as PipSize | null;
+    return PIP_SIZES.some(size => size.key === savedSize) ? (savedSize as PipSize) : 'M';
+  });
+  const contentLayoutRef = useRef<HTMLDivElement>(null);
+  const [stackedVideoPanelWidth, setStackedVideoPanelWidth] = useState<number | null>(null);
 
   const toggleVideoLayout = () => {
     setVideoLayout(prev => {
       const next = prev === 'pip' ? 'stacked' : 'pip';
       localStorage.setItem('pairline-video-layout', next);
+      return next;
+    });
+  };
+
+  const cycleStackedVideoRatio = () => {
+    setStackedVideoRatio(prev => {
+      const currentIndex = STACKED_VIDEO_RATIOS.findIndex(ratio => ratio.key === prev);
+      const next = STACKED_VIDEO_RATIOS[(currentIndex + 1) % STACKED_VIDEO_RATIOS.length].key;
+      localStorage.setItem('pairline-stacked-video-ratio', next);
+      return next;
+    });
+  };
+
+  const cyclePipSize = () => {
+    setPipSize(prev => {
+      const currentIndex = PIP_SIZES.findIndex(size => size.key === prev);
+      const next = PIP_SIZES[(currentIndex + 1) % PIP_SIZES.length].key;
+      localStorage.setItem('pairline-pip-size', next);
       return next;
     });
   };
@@ -220,6 +261,39 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
 
   const [remoteVideoHasRendered, setRemoteVideoHasRendered] = useState(false);
   const remoteVideoRenderedRef = useRef(false);
+
+  useEffect(() => {
+    const layout = contentLayoutRef.current;
+    if (!layout) return;
+
+    const updateStackedPanelWidth = () => {
+      if (typeof window === 'undefined' || window.innerWidth < 768 || videoLayout !== 'stacked') {
+        setStackedVideoPanelWidth(null);
+        return;
+      }
+
+      const layoutRect = layout.getBoundingClientRect();
+      const ratioValue = STACKED_VIDEO_RATIOS.find(ratio => ratio.key === stackedVideoRatio)?.value ?? 4 / 3;
+      const minimumChatWidth = 320;
+      const maxWidth = Math.max(layoutRect.width - minimumChatWidth, layoutRect.width * 0.38);
+      const idealWidth = (layoutRect.height / 2) * ratioValue;
+      const clampedWidth = Math.max(280, Math.min(idealWidth, maxWidth));
+      setStackedVideoPanelWidth(clampedWidth);
+    };
+
+    updateStackedPanelWidth();
+
+    const resizeObserver = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(updateStackedPanelWidth)
+      : null;
+    resizeObserver?.observe(layout);
+    window.addEventListener('resize', updateStackedPanelWidth);
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', updateStackedPanelWidth);
+    };
+  }, [stackedVideoRatio, videoLayout]);
 
   useEffect(() => {
     if (status !== 'connected') {
@@ -327,6 +401,39 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
   const videoPanelRef = useRef<HTMLDivElement>(null);
   const localPreviewRef = useRef<HTMLDivElement | null>(null);
   const dragOffsetRef = useRef<{ x: number; y: number; startX: number; startY: number } | null>(null);
+
+  const clampLocalPreviewPosition = useCallback(() => {
+    if (!videoPanelRef.current || !localPreviewRef.current) return;
+
+    const panelRect = videoPanelRef.current.getBoundingClientRect();
+    const previewRect = localPreviewRef.current.getBoundingClientRect();
+    const maxX = Math.max(LOCAL_PREVIEW_EDGE_MARGIN, panelRect.width - previewRect.width - LOCAL_PREVIEW_EDGE_MARGIN);
+    const maxY = Math.max(LOCAL_PREVIEW_EDGE_MARGIN, panelRect.height - previewRect.height - LOCAL_PREVIEW_EDGE_MARGIN);
+
+    setLocalPreviewPosition(prev => {
+      const currentX = prev?.x ?? panelRect.width - previewRect.width - LOCAL_PREVIEW_EDGE_MARGIN;
+      const currentY = prev?.y ?? panelRect.height - previewRect.height - LOCAL_PREVIEW_EDGE_MARGIN;
+      const snapToRight = currentX + previewRect.width / 2 >= panelRect.width / 2;
+      const snapToBottom = currentY + previewRect.height / 2 >= panelRect.height / 2;
+      const nextX = Math.min(Math.max(currentX, LOCAL_PREVIEW_EDGE_MARGIN), maxX);
+      const nextY = Math.min(Math.max(currentY, LOCAL_PREVIEW_EDGE_MARGIN), maxY);
+
+      return {
+        x: snapToRight ? maxX : nextX,
+        y: snapToBottom ? maxY : nextY,
+      };
+    });
+  }, []);
+
+  useEffect(() => {
+    if (videoLayout !== 'pip') return;
+
+    const frame = window.requestAnimationFrame(() => {
+      clampLocalPreviewPosition();
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [pipSize, pipSwapped, videoLayout, clampLocalPreviewPosition]);
 
   const systemMessageClass = (message: ChatMessage) => (
     message.systemReason === BANNED_PHRASE_REASON
@@ -558,6 +665,7 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
           </span>
           <button
             onClick={toggleVideoLayout}
+            aria-label="Toggle video layout"
             className="hidden md:flex p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-gray-600 dark:text-gray-300"
             title="Toggle Video Layout"
           >
@@ -573,12 +681,36 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
               </svg>
             )}
           </button>
+          {videoLayout === 'pip' && (
+            <button
+              onClick={cyclePipSize}
+              aria-label="Toggle PiP size"
+              className="flex items-center justify-center min-w-11 px-2 py-1.5 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700 transition-colors text-xs font-semibold tracking-wide"
+              title="Toggle PiP Size"
+            >
+              {pipSize}
+            </button>
+          )}
+          {videoLayout === 'stacked' && (
+            <button
+              onClick={cycleStackedVideoRatio}
+              aria-label="Toggle stacked video ratio"
+              className="hidden md:flex items-center justify-center min-w-14 px-2.5 py-1.5 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700 transition-colors text-xs font-semibold tracking-wide"
+              title="Toggle Stacked Video Ratio"
+            >
+              {stackedVideoRatio}
+            </button>
+          )}
           <ThemeToggle />
         </div>
       </header>
 
-      <div className="flex-1 flex flex-col md:flex-row min-h-0">
-        <div className="relative flex-1 flex flex-col min-h-0 md:w-[55%] bg-black overflow-hidden border-b md:border-b-0 md:border-r border-gray-200 dark:border-gray-700" ref={videoPanelRef}>
+      <div className="flex-1 flex flex-col md:flex-row min-h-0" ref={contentLayoutRef}>
+        <div
+          className={`relative flex-1 flex flex-col min-h-0 bg-black overflow-hidden border-b md:border-b-0 md:border-r border-gray-200 dark:border-gray-700 ${videoLayout === 'stacked' ? 'md:flex-none' : 'md:w-[55%]'}`}
+          style={videoLayout === 'stacked' && stackedVideoPanelWidth ? { width: `${stackedVideoPanelWidth}px` } : undefined}
+          ref={videoPanelRef}
+        >
           {(() => {
             const isLocalPip = !(pipSwapped && videoLayout === 'pip');
             const isRemoteMainVideo = videoLayout === 'stacked' || isLocalPip;
@@ -588,8 +720,9 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
               : 'pointer-events-none absolute inset-0 z-10';
             const mainVideoTransitionClasses = isPipSwapTransitionDisabled ? '' : 'transition-[width,height] duration-300';
             const pipVideoTransitionClasses = isDraggingLocalPreview || isPipSwapTransitionDisabled ? '' : 'transition-[left,top,width,height,transform] duration-300';
+            const pipSizeClasses = PIP_SIZES.find(size => size.key === pipSize)?.widthClass ?? PIP_SIZES[1].widthClass;
             const mainVideoClasses = `absolute inset-0 z-0 isolate bg-black ${videoLayout === 'stacked' ? 'md:relative md:flex-1 md:min-h-0 md:z-10' : ''} ${mainVideoTransitionClasses} overflow-hidden`;
-            const pipVideoClasses = `absolute z-20 isolate w-[28%] min-w-[80px] max-w-[150px] aspect-video bg-gray-900 rounded-lg overflow-hidden shadow-2xl border-2 border-white/20 touch-none cursor-grab active:cursor-grabbing ${pipVideoTransitionClasses} ${localPreviewPosition ? '' : 'bottom-3 right-3'} ${videoLayout === 'stacked' ? 'md:static md:w-full md:max-w-none md:flex-1 md:aspect-auto md:border-none md:rounded-none md:border-t md:border-gray-200 dark:md:border-gray-700 md:shadow-none md:touch-auto md:cursor-auto md:z-10' : ''}`;
+            const pipVideoClasses = `absolute z-20 isolate ${pipSizeClasses} aspect-video bg-gray-900 rounded-lg overflow-hidden shadow-2xl border-2 border-white/20 touch-none cursor-grab active:cursor-grabbing ${pipVideoTransitionClasses} ${localPreviewPosition ? '' : 'bottom-3 right-3'} ${videoLayout === 'stacked' ? 'md:static md:w-full md:max-w-none md:flex-1 md:aspect-auto md:border-none md:rounded-none md:border-t md:border-gray-200 dark:md:border-gray-700 md:shadow-none md:touch-auto md:cursor-auto md:z-10' : ''}`;
             const pipStyle = videoLayout === 'pip' || (typeof window !== 'undefined' && window.innerWidth < 768) ? (localPreviewPosition ? { left: localPreviewPosition.x, top: localPreviewPosition.y } : undefined) : undefined;
             const watermark = (
               <span

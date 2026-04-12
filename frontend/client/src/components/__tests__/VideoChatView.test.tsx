@@ -55,6 +55,7 @@ describe('VideoChatView interactions', () => {
   beforeEach(() => {
     entryModalCalls.length = 0;
     Element.prototype.scrollIntoView = vi.fn();
+    localStorage.clear();
   });
 
   it('requires entry confirmation before searching when no turnstile token is present', () => {
@@ -113,5 +114,29 @@ describe('VideoChatView interactions', () => {
 
     expect(screen.getByTestId('remote-video-container').className).toContain('z-20');
     expect(screen.getByTestId('local-video-container').className).toContain('z-0');
+  });
+
+  it('cycles stacked video ratio controls', () => {
+    const state = createVideoState({ status: 'connected' });
+    renderVideoChat(state);
+
+    fireEvent.click(screen.getByRole('button', { name: /toggle video layout/i }));
+
+    const ratioButton = screen.getByRole('button', { name: /toggle stacked video ratio/i });
+    expect(ratioButton).toHaveTextContent('4:3');
+
+    fireEvent.click(ratioButton);
+    expect(ratioButton).toHaveTextContent('16:9');
+  });
+
+  it('cycles pip size controls', () => {
+    const state = createVideoState({ status: 'connected' });
+    renderVideoChat(state);
+
+    const pipSizeButton = screen.getByRole('button', { name: /toggle pip size/i });
+    expect(pipSizeButton).toHaveTextContent('M');
+
+    fireEvent.click(pipSizeButton);
+    expect(pipSizeButton).toHaveTextContent('L');
   });
 });
