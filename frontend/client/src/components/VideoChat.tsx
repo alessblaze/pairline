@@ -55,9 +55,9 @@ const STACKED_VIDEO_RATIOS = [
   { key: '16:9', value: 16 / 9 },
 ] as const;
 const PIP_SIZES = [
-  { key: 'S', widthClass: 'w-[24%] min-w-[72px] max-w-[128px]' },
-  { key: 'M', widthClass: 'w-[28%] min-w-[80px] max-w-[150px]' },
-  { key: 'L', widthClass: 'w-[34%] min-w-[96px] max-w-[190px]' },
+  { key: 'S', widthClass: 'w-[24%] min-w-[72px] max-w-[128px]', pct: 0.24, min: 72, max: 128 },
+  { key: 'M', widthClass: 'w-[28%] min-w-[80px] max-w-[150px]', pct: 0.28, min: 80, max: 150 },
+  { key: 'L', widthClass: 'w-[34%] min-w-[96px] max-w-[190px]', pct: 0.34, min: 96, max: 190 },
 ] as const;
 
 type StackedVideoRatio = (typeof STACKED_VIDEO_RATIOS)[number]['key'];
@@ -400,39 +400,38 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
   const videoPanelRef = useRef<HTMLDivElement>(null);
   const localPreviewRef = useRef<HTMLDivElement | null>(null);
   const dragOffsetRef = useRef<{ x: number; y: number; startX: number; startY: number } | null>(null);
-
-  const clampLocalPreviewPosition = useCallback(() => {
-    if (!videoPanelRef.current || !localPreviewRef.current) return;
-
-    const panelRect = videoPanelRef.current.getBoundingClientRect();
-    const previewRect = localPreviewRef.current.getBoundingClientRect();
-    const maxX = Math.max(LOCAL_PREVIEW_EDGE_MARGIN, panelRect.width - previewRect.width - LOCAL_PREVIEW_EDGE_MARGIN);
-    const maxY = Math.max(LOCAL_PREVIEW_EDGE_MARGIN, panelRect.height - previewRect.height - LOCAL_PREVIEW_EDGE_MARGIN);
-
-    setLocalPreviewPosition(prev => {
-      const currentX = prev?.x ?? panelRect.width - previewRect.width - LOCAL_PREVIEW_EDGE_MARGIN;
-      const currentY = prev?.y ?? panelRect.height - previewRect.height - LOCAL_PREVIEW_EDGE_MARGIN;
-      const snapToRight = currentX + previewRect.width / 2 >= panelRect.width / 2;
-      const snapToBottom = currentY + previewRect.height / 2 >= panelRect.height / 2;
-      const nextX = Math.min(Math.max(currentX, LOCAL_PREVIEW_EDGE_MARGIN), maxX);
-      const nextY = Math.min(Math.max(currentY, LOCAL_PREVIEW_EDGE_MARGIN), maxY);
-
-      return {
-        x: snapToRight ? maxX : nextX,
-        y: snapToBottom ? maxY : nextY,
-      };
-    });
-  }, []);
-
+  // Reposition PiP to nearest corner on panel resize, pip size change, or swap.
+  // Computes the PiP's final dimensions mathematically instead of reading from
+  // the DOM — avoids stale values from getBoundingClientRect() during CSS
+  // transitions on width/height which caused the PiP to get stuck on mobile.
   useEffect(() => {
     if (effectiveVideoLayout !== 'pip') return;
+    if (!panelDimensions || panelDimensions.width === 0 || panelDimensions.height === 0) return;
 
-    const frame = window.requestAnimationFrame(() => {
-      clampLocalPreviewPosition();
+    const pipConfig = PIP_SIZES.find(size => size.key === pipSize) ?? PIP_SIZES[1];
+    const pipWidth = Math.min(Math.max(panelDimensions.width * pipConfig.pct, pipConfig.min), pipConfig.max);
+    const pipHeight = pipWidth * 9 / 16; // aspect-video
+    const maxX = Math.max(LOCAL_PREVIEW_EDGE_MARGIN, panelDimensions.width - pipWidth - LOCAL_PREVIEW_EDGE_MARGIN);
+    const maxY = Math.max(LOCAL_PREVIEW_EDGE_MARGIN, panelDimensions.height - pipHeight - LOCAL_PREVIEW_EDGE_MARGIN);
+
+    setLocalPreviewPosition(prev => {
+      const currentX = prev?.x ?? maxX;
+      const currentY = prev?.y ?? maxY;
+
+      // After every drag-end the PiP snaps to a corner, so its position is
+      // always either LOCAL_PREVIEW_EDGE_MARGIN (min edge) or the old maxX/maxY.
+      // Detect anchor by proximity to the min edge — this is stable across any
+      // panel resize, unlike center-of-panel checks that break on rotation.
+      const EDGE_TOLERANCE = LOCAL_PREVIEW_EDGE_MARGIN + 4;
+      const snapToRight = currentX > EDGE_TOLERANCE;
+      const snapToBottom = currentY > EDGE_TOLERANCE;
+
+      return {
+        x: snapToRight ? maxX : LOCAL_PREVIEW_EDGE_MARGIN,
+        y: snapToBottom ? maxY : LOCAL_PREVIEW_EDGE_MARGIN,
+      };
     });
-
-    return () => window.cancelAnimationFrame(frame);
-  }, [pipSize, pipSwapped, effectiveVideoLayout, clampLocalPreviewPosition]);
+  }, [pipSize, pipSwapped, effectiveVideoLayout, panelDimensions]);
 
   // Track video panel dimensions reactively for watermark overlap detection.
   // Using ResizeObserver instead of reading clientHeight during render avoids
@@ -754,7 +753,7 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
             const pipStyle = effectiveVideoLayout === 'pip' ? (localPreviewPosition ? { left: localPreviewPosition.x, top: localPreviewPosition.y } : undefined) : undefined;
             const watermark = (
               <span
-                className="text-4xl sm:text-5xl tracking-wide text-white mix-blend-difference"
+                className="text-4xl sm:text-5xl font-medium tracking-wide text-white mix-blend-difference"
                 style={{ fontFamily: "'Cedarville Cursive', cursive" }}
                 aria-hidden="true"
               >
