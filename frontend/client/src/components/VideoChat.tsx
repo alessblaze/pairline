@@ -395,6 +395,7 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
   const [showReport, setShowReport] = useState(false);
   const [localPreviewPosition, setLocalPreviewPosition] = useState<{ x: number; y: number } | null>(null);
   const [isDraggingLocalPreview, setIsDraggingLocalPreview] = useState(false);
+  const [panelDimensions, setPanelDimensions] = useState<{ width: number; height: number } | null>(null);
   // typingTimeoutRef moved to VideoChatInput
   const videoPanelRef = useRef<HTMLDivElement>(null);
   const localPreviewRef = useRef<HTMLDivElement | null>(null);
@@ -432,6 +433,22 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
 
     return () => window.cancelAnimationFrame(frame);
   }, [pipSize, pipSwapped, effectiveVideoLayout, clampLocalPreviewPosition]);
+
+  // Track video panel dimensions reactively for watermark overlap detection.
+  // Using ResizeObserver instead of reading clientHeight during render avoids
+  // stale values and ensures the watermark reacts to viewport resizes.
+  useEffect(() => {
+    const panel = videoPanelRef.current;
+    if (!panel) return;
+
+    const update = () => setPanelDimensions({ width: panel.clientWidth, height: panel.clientHeight });
+    update();
+
+    const resizeObserver = new ResizeObserver(update);
+    resizeObserver.observe(panel);
+
+    return () => resizeObserver.disconnect();
+  }, []);
 
   const systemMessageClass = (message: ChatMessage) => (
     message.systemReason === BANNED_PHRASE_REASON
@@ -713,6 +730,25 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
             const mainVideoTransitionClasses = isPipSwapTransitionDisabled ? '' : 'transition-[width,height] duration-300';
             const pipVideoTransitionClasses = isDraggingLocalPreview || isPipSwapTransitionDisabled ? '' : 'transition-[left,top,width,height,transform] duration-300';
             const pipSizeClasses = PIP_SIZES.find(size => size.key === pipSize)?.widthClass ?? PIP_SIZES[1].widthClass;
+            // Watermark overlap: proportional thresholds that adapt to any panel size.
+            const isPipOverlappingWatermark = effectiveVideoLayout === 'pip'
+              && localPreviewPosition != null
+              && panelDimensions != null
+              && panelDimensions.height > 0
+              && localPreviewPosition.x < panelDimensions.width * 0.35
+              && localPreviewPosition.y > panelDimensions.height * 0.65;
+            // Position via inline `top`+`left` so CSS transitions animate smoothly
+            // (switching between `top`/`bottom` classes can't transition from `auto`).
+            // No `z-index` on the wrapper — it promotes the element to its own compositor
+            // layer, which breaks `mix-blend-difference` on the text against the video.
+            const WATERMARK_INSET = 12;
+            const WATERMARK_EST_HEIGHT = 52;
+            const watermarkPositionClasses = 'pointer-events-none absolute transition-[top,left] duration-500 ease-out';
+            const watermarkStyle: React.CSSProperties = isPipOverlappingWatermark
+              ? { top: 20, left: 16 }
+              : panelDimensions
+                ? { top: panelDimensions.height - WATERMARK_EST_HEIGHT - WATERMARK_INSET, left: WATERMARK_INSET }
+                : { bottom: WATERMARK_INSET, left: WATERMARK_INSET };
             const mainVideoClasses = `absolute inset-0 z-0 isolate bg-black ${effectiveVideoLayout === 'stacked' ? 'md:relative md:flex-1 md:min-h-0 md:z-10' : ''} ${mainVideoTransitionClasses} overflow-hidden`;
             const pipVideoClasses = `absolute z-20 isolate ${pipSizeClasses} aspect-video bg-gray-900 rounded-lg overflow-hidden shadow-2xl border-2 border-white/20 touch-none cursor-grab active:cursor-grabbing ${pipVideoTransitionClasses} ${localPreviewPosition ? '' : 'bottom-3 right-3'} ${effectiveVideoLayout === 'stacked' ? 'md:static md:w-full md:max-w-none md:flex-1 md:aspect-auto md:border-none md:rounded-none md:border-t md:border-gray-200 dark:md:border-gray-700 md:shadow-none md:touch-auto md:cursor-auto md:z-10' : ''}`;
             const pipStyle = effectiveVideoLayout === 'pip' ? (localPreviewPosition ? { left: localPreviewPosition.x, top: localPreviewPosition.y } : undefined) : undefined;
@@ -787,7 +823,7 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
                     className="w-full h-full object-cover"
                   />
                   {shouldShowWatermark && isRemoteMainVideo && (
-                    <div className="pointer-events-none absolute bottom-3 left-3">
+                    <div className={watermarkPositionClasses} style={watermarkStyle}>
                       {watermark}
                     </div>
                   )}
@@ -803,7 +839,7 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
                 >
                   <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover shadow-[inherit]" />
                   {shouldShowWatermark && !isRemoteMainVideo && (
-                    <div className="pointer-events-none absolute bottom-3 left-3">
+                    <div className={watermarkPositionClasses} style={watermarkStyle}>
                       {watermark}
                     </div>
                   )}
