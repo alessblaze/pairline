@@ -641,7 +641,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
   }
 
   return (
-    <div className="admin-console flex h-screen flex-col overflow-hidden bg-[var(--admin-bg)] text-[var(--admin-text)] transition-colors duration-300">
+    <div className="admin-console fixed inset-0 flex h-[100dvh] w-full flex-col overflow-hidden bg-[var(--admin-bg)] text-[var(--admin-text)] transition-colors duration-300">
       {/* Background Gradients */}
       <div className="fixed inset-0 z-0">
         <div className="absolute top-0 left-0 h-[500px] w-[500px] rounded-full bg-cyan-500/5 blur-[100px]" />
