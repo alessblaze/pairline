@@ -205,6 +205,11 @@ export function TextChatView({ state }: { state: TextChatState }) {
       ? 'bg-red-100 text-red-700 shadow-[0_0_18px_rgba(239,68,68,0.28)] ring-1 ring-red-300/80 dark:bg-red-950/70 dark:text-red-200 dark:ring-red-500/40 dark:shadow-[0_0_22px_rgba(248,113,113,0.28)]'
       : 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400'
   );
+  const myMessageClass = (deliveryStatus?: 'sent' | 'blocked') => (
+    deliveryStatus === 'blocked'
+      ? 'bg-red-100 text-red-700 ring-1 ring-red-300/80 shadow-[0_0_18px_rgba(239,68,68,0.22)] dark:bg-red-950/70 dark:text-red-100 dark:ring-red-500/40 dark:shadow-[0_0_22px_rgba(248,113,113,0.24)]'
+      : 'bg-indigo-600 text-white'
+  );
 
   // handleSend is now inside ChatInput; parent just needs a callback wrapper
   const handleSend = useCallback((text: string) => {
@@ -373,7 +378,7 @@ export function TextChatView({ state }: { state: TextChatState }) {
               ) : (
                 <div
                   className={`max-w-[85%] sm:max-w-[80%] px-3 py-2 sm:px-4 sm:py-2 rounded-2xl ${msg.sender === 'me'
-                    ? 'bg-indigo-600 text-white'
+                    ? myMessageClass(msg.deliveryStatus)
                     : 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white'
                     }`}
                 >

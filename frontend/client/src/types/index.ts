@@ -28,4 +28,5 @@ export interface ChatMessage {
   text: string;
   sender: 'me' | 'peer' | 'system';
   timestamp: number;
+  deliveryStatus?: 'sent' | 'blocked';
 }

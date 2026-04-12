@@ -18,7 +18,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { WebSocketClient } from '../services/websocket';
 import { useNetworkHealth } from './useNetworkHealth';
-import type { Message } from '../types';
+import type { ChatMessage, Message } from '../types';
+
+const blockedPhraseNotice = 'This message was not sent due to containing a banned phrase.';
 
 export function useTextChat(wsUrl: string) {
   const { setChannelStatus, removeChannel } = useNetworkHealth();
@@ -29,7 +31,7 @@ export function useTextChat(wsUrl: string) {
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [reportPeerId, setReportPeerId] = useState<string | null>(null);
   const [status, setStatus] = useState<'idle' | 'searching' | 'connected' | 'disconnected'>('idle');
-  const [messages, setMessages] = useState<Array<{ id: string; text: string; sender: 'me' | 'peer' | 'system'; timestamp: number }>>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [, setShowReconnectMessage] = useState(false);
   const [peerTyping, setPeerTyping] = useState(false);
   const peerTypingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -368,7 +370,20 @@ export function useTextChat(wsUrl: string) {
       if (text.trim() && status === 'connected') {
         void wsClient.sendWithResponse('message', { content: text })
           .then((payload) => {
-            if (payload?.type === 'system' || payload?.type === 'error') {
+            if (payload?.type === 'system') {
+              if (payload.data?.message === blockedPhraseNotice) {
+                setMessages(prev => [...prev, {
+                  id: crypto.randomUUID(),
+                  text,
+                  sender: 'me',
+                  timestamp: Date.now(),
+                  deliveryStatus: 'blocked'
+                }]);
+              }
+              return;
+            }
+
+            if (payload?.type === 'error') {
               return;
             }
 
@@ -376,7 +391,8 @@ export function useTextChat(wsUrl: string) {
               id: crypto.randomUUID(),
               text,
               sender: 'me',
-              timestamp: Date.now()
+              timestamp: Date.now(),
+              deliveryStatus: 'sent'
             }]);
           })
           .catch((error) => {
