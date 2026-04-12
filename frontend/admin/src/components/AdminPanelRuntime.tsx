@@ -995,7 +995,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           <button
                             type="button"
                             onClick={fetchReports}
-                            className={`${actionButtonClass} bg-[var(--admin-text)] text-[var(--admin-bg)] hover:bg-cyan-100`}
+                            className={`${actionButtonClass} bg-[var(--admin-text)] text-[var(--admin-bg)] hover:opacity-90`}
                           >
                             <RefreshCw size={16} />
                             Refresh Reports
@@ -1713,7 +1713,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                               setAccountPage(1);
                               fetchAccounts();
                             }}
-                            className={`${actionButtonClass} bg-[var(--admin-text)] text-[var(--admin-bg)] hover:bg-cyan-100 whitespace-nowrap`}
+                            className={`${actionButtonClass} bg-[var(--admin-text)] text-[var(--admin-bg)] hover:opacity-90 whitespace-nowrap`}
                           >
                             <RefreshCw size={16} />
                             Refresh Accounts
