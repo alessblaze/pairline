@@ -47,7 +47,7 @@ export function LoginScreen({
                 <input
                   type="text"
                   value={username}
-                  onChange={(event) => onUsernameChange(event.target.value)}
+                  onChange={(event) => onUsernameChange(event.target.value.trim())}
                   className={`${inputClass} pl-12`}
                   placeholder="Enter username"
                   required
@@ -79,7 +79,7 @@ export function LoginScreen({
 
             <button
               type="submit"
-              className="group relative w-full overflow-hidden rounded-none bg-white py-3.5 text-sm font-bold text-slate-950 transition-all hover:scale-[1.02] active:scale-[0.98]"
+              className="group relative w-full overflow-hidden rounded-none bg-[var(--admin-text)] py-3.5 text-sm font-bold text-[var(--admin-bg)] transition-all hover:scale-[1.02] active:scale-[0.98]"
             >
               <div className="absolute inset-0 bg-gradient-to-r from-cyan-400/0 via-cyan-400/20 to-cyan-400/0 opacity-0 transition-opacity group-hover:opacity-100" />
               Sign In to Console

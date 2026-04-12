@@ -5,7 +5,7 @@
   --font-sans: "Rajdhani", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --font-heading: "Rajdhani", sans-serif;
-  
+
   --color-navy-black: #050816;
   --color-electric-cyan: #22d3ee;
   --color-danger-rose: #f43f5e;
@@ -14,8 +14,17 @@
   --animate-pulse-glow: pulse-glow 2s ease-in-out infinite;
 
   @keyframes pulse-glow {
-    0%, 100% { opacity: 0.8; filter: drop-shadow(0 0 4px currentColor); }
-    50% { opacity: 1; filter: drop-shadow(0 0 12px currentColor); }
+
+    0%,
+    100% {
+      opacity: 0.8;
+      filter: drop-shadow(0 0 4px currentColor);
+    }
+
+    50% {
+      opacity: 1;
+      filter: drop-shadow(0 0 12px currentColor);
+    }
   }
 }
 
@@ -124,11 +133,11 @@ html.light {
     border: 1px solid var(--admin-detail-border);
   }
 
-  .detail-panel > :not([hidden]) ~ :not([hidden]) {
+  .detail-panel> :not([hidden])~ :not([hidden]) {
     border-top-color: var(--admin-detail-border);
   }
 
-  .detail-panel.divide-y > :not([hidden]) ~ :not([hidden]) {
+  .detail-panel.divide-y> :not([hidden])~ :not([hidden]) {
     border-top-color: var(--admin-detail-border) !important;
   }
 
@@ -138,23 +147,34 @@ html.light {
     height: 6px;
     border-color: rgba(255, 255, 255, 0.08);
   }
-  .hud-bracket-tl { @apply top-0 left-0 border-t border-l; }
-  .hud-bracket-tr { @apply top-0 right-0 border-t border-r; }
-  .hud-bracket-bl { @apply bottom-0 left-0 border-b border-l; }
-  .hud-bracket-br { @apply bottom-0 right-0 border-b border-r; }
+
+  .hud-bracket-tl {
+    @apply top-0 left-0 border-t border-l;
+  }
+
+  .hud-bracket-tr {
+    @apply top-0 right-0 border-t border-r;
+  }
+
+  .hud-bracket-bl {
+    @apply bottom-0 left-0 border-b border-l;
+  }
+
+  .hud-bracket-br {
+    @apply bottom-0 right-0 border-b border-r;
+  }
 
   .scanlines {
-    background: repeating-linear-gradient(
-      transparent 0,
-      transparent 1px,
-      rgba(255, 255, 255, 0.012) 2px
-    );
+    background: repeating-linear-gradient(transparent 0,
+        transparent 1px,
+        rgba(255, 255, 255, 0.012) 2px);
     background-size: 100% 2px;
   }
 
   .section-prefix {
     @apply relative pl-4;
   }
+
   .section-prefix::before {
     content: '';
     @apply absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-[14px] bg-danger-rose;
@@ -218,6 +238,6 @@ html.light .admin-console [class*="bg-white/10"] {
   background-color: var(--admin-muted-surface-hover) !important;
 }
 
-html.light .admin-console [class*="divide-white/[0.04]"] > :not([hidden]) ~ :not([hidden]) {
+html.light .admin-console [class*="divide-white/[0.04]"]> :not([hidden])~ :not([hidden]) {
   border-color: var(--admin-detail-border) !important;
 }
