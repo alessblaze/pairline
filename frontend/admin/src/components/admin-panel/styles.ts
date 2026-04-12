@@ -42,7 +42,7 @@ export const compactSelectClass =
 export const segmentedToggleButtonClass = (active: boolean) =>
   `flex h-10 flex-1 items-center justify-center rounded-none px-4 text-[10px] font-bold uppercase tracking-[0.14em] transition-all duration-200 ${
     active
-      ? 'bg-white text-navy-black shadow-[0_0_14px_rgba(255,255,255,0.1)]'
+      ? 'bg-[var(--admin-text)] text-[var(--admin-bg)] shadow-[0_0_14px_rgba(255,255,255,0.1)]'
       : 'text-[var(--admin-text-soft)] hover:bg-[var(--admin-muted-surface)] hover:text-[var(--admin-text)]'
   }`;
 

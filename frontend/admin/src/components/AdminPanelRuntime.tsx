@@ -662,7 +662,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
           <div className="flex h-8 w-8 items-center justify-center rounded-none bg-white text-slate-950">
             <Shield size={16} />
           </div>
-          <h2 className="text-base font-bold text-slate-300">Pairline</h2>
+          <h2 className="text-base font-bold text-[var(--admin-text)]">Pairline</h2>
         </div>
         <button
           onClick={() => setIsMobileMenuOpen(true)}
@@ -681,7 +681,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsMobileMenuOpen(false)}
-              className="fixed inset-0 z-[60] bg-slate-950/60 backdrop-blur-sm lg:hidden"
+              className="fixed inset-0 z-[60] bg-[var(--admin-bg)]/60 backdrop-blur-sm lg:hidden"
             />
             <motion.div
               initial={{ x: '-100%' }}
@@ -696,8 +696,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                     <Shield size={20} />
                   </div>
                   <div>
-                    <h2 className="text-lg font-bold text-slate-300">Pairline</h2>
-                    <p className="text-[10px] uppercase tracking-widest text-slate-700">Admin Console</p>
+                    <h2 className="text-lg font-bold text-[var(--admin-text)]">Pairline</h2>
+                    <p className="text-[10px] uppercase tracking-widest text-[var(--admin-text-muted)]">Admin Console</p>
                   </div>
                 </div>
                 <button
@@ -719,7 +719,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                   <AlertTriangle size={18} />
                   Reports Queue
                   {serverReportMetrics.pending > 0 && (
-                    <span className="ml-auto flex h-5 w-5 items-center justify-center rounded-full bg-rose-500 text-[10px] font-bold text-slate-300">
+                    <span className="ml-auto flex h-5 w-5 items-center justify-center rounded-full bg-rose-500 text-[10px] font-bold text-[var(--admin-text)]">
                       {serverReportMetrics.pending}
                     </span>
                   )}
@@ -773,8 +773,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                   <div className="flex items-center gap-3 px-2">
                     <div className="h-10 w-10 rounded-none bg-gradient-to-br from-cyan-400 to-blue-500 shadow-lg" />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-bold text-slate-300">{currentAdminUsername}</p>
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-700 leading-none mt-1">{role}</p>
+                      <p className="truncate text-sm font-bold text-[var(--admin-text)]">{currentAdminUsername}</p>
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)] leading-none mt-1">{role}</p>
                     </div>
                   </div>
                   <button
@@ -800,8 +800,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                 <Shield size={20} />
               </div>
               <div>
-                <h2 className="text-lg font-bold text-slate-300">Pairline</h2>
-                <p className="text-[10px] uppercase tracking-widest text-slate-700">Admin Console</p>
+                <h2 className="text-lg font-bold text-[var(--admin-text)]">Pairline</h2>
+                <p className="text-[10px] uppercase tracking-widest text-[var(--admin-text-muted)]">Admin Console</p>
               </div>
             </div>
 
@@ -810,7 +810,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                 <AlertTriangle size={18} />
                 Reports Queue
                 {serverReportMetrics.pending > 0 && (
-                  <span className="ml-auto flex h-5 w-5 items-center justify-center rounded-full bg-rose-500 text-[10px] font-bold text-slate-300">
+                  <span className="ml-auto flex h-5 w-5 items-center justify-center rounded-full bg-rose-500 text-[10px] font-bold text-[var(--admin-text)]">
                     {serverReportMetrics.pending}
                   </span>
                 )}
@@ -851,8 +851,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                     className="absolute bottom-full left-0 mb-4 w-full rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-surface-bg)] p-2 shadow-2xl backdrop-blur-xl"
                   >
                     <div className="mb-2 border-b border-[var(--admin-sidebar-border)] px-4 py-3">
-                      <p className="truncate text-xs font-bold text-slate-300 tracking-wide uppercase">{currentAdminUsername}</p>
-                      <p className="mt-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-700">{role}</p>
+                      <p className="truncate text-xs font-bold text-[var(--admin-text)] tracking-wide uppercase">{currentAdminUsername}</p>
+                      <p className="mt-0.5 text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">{role}</p>
                     </div>
                     <button
                       onClick={(e) => {
@@ -878,11 +878,11 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
               >
                 <div className="relative">
                   <div className="h-10 w-10 rounded-none bg-gradient-to-br from-cyan-400 to-blue-500 shadow-lg" />
-                  <div className={`absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-none border-2 border-slate-950 bg-emerald-500 transition-transform ${isUserMenuOpen ? 'scale-110' : 'scale-100'}`} />
+                  <div className={`absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-none border-2 border-[var(--admin-bg)] bg-emerald-500 transition-transform ${isUserMenuOpen ? 'scale-110' : 'scale-100'}`} />
                 </div>
                 <div className="min-w-0 flex-1 text-left">
-                  <p className="truncate text-sm font-bold text-slate-300">{currentAdminUsername}</p>
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-700 leading-none mt-1">{role}</p>
+                  <p className="truncate text-sm font-bold text-[var(--admin-text)]">{currentAdminUsername}</p>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)] leading-none mt-1">{role}</p>
                 </div>
                 <div className={`text-[var(--admin-icon-muted)] transition-transform duration-300 ${isUserMenuOpen ? 'rotate-180' : ''}`}>
                   <RefreshCw size={14} className={isUserMenuOpen ? 'animate-spin-slow' : ''} />
@@ -898,7 +898,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
             {/* Header */}
             <header className="mb-10 flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h1 className="text-3xl font-bold text-slate-300">
+                <h1 className="text-3xl font-bold text-[var(--admin-text)]">
                   {currentTab === 'reports'
                     ? 'Reports Queue'
                     : currentTab === 'bans'
@@ -907,7 +907,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         ? 'Infra Health'
                         : 'Admin Accounts'}
                 </h1>
-                <p className="mt-1 text-slate-400">
+                <p className="mt-1 text-[var(--admin-text-soft)]">
                   {currentTab === 'reports'
                     ? 'Review and act on user reports in real-time.'
                     : currentTab === 'bans'
@@ -941,8 +941,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           <div className="hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
-                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-slate-700 mb-0.5">Pending Reports</p>
-                          <p className="font-heading text-2xl font-bold text-slate-300">{serverReportMetrics.pending}</p>
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-[var(--admin-text-muted)] mb-0.5">Pending Reports</p>
+                          <p className="font-heading text-2xl font-bold text-[var(--admin-text)]">{serverReportMetrics.pending}</p>
                         </div>
                       </div>
                       <div className={metricCardClass('approved')}>
@@ -952,8 +952,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           <div className="hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
-                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-slate-700 mb-0.5">Approved Actions</p>
-                          <p className="font-heading text-2xl font-bold text-slate-300">{serverReportMetrics.approved}</p>
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-[var(--admin-text-muted)] mb-0.5">Approved Actions</p>
+                          <p className="font-heading text-2xl font-bold text-[var(--admin-text)]">{serverReportMetrics.approved}</p>
                         </div>
                       </div>
                       <div className={metricCardClass('inactive')}>
@@ -963,15 +963,15 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           <div className="hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
-                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-slate-700 mb-0.5">Rejected Actions</p>
-                          <p className="font-heading text-2xl font-bold text-slate-300">{serverReportMetrics.rejected}</p>
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-[var(--admin-text-muted)] mb-0.5">Rejected Actions</p>
+                          <p className="font-heading text-2xl font-bold text-[var(--admin-text)]">{serverReportMetrics.rejected}</p>
                         </div>
                       </div>
                     </div>
                     <div className={`${surfaceCardClass} p-5`}>
                       <div className="grid gap-4 lg:grid-cols-[auto_auto_1fr] lg:items-end">
                         <div>
-                          <p className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-700">Status Filter</p>
+                          <p className="mb-2 text-xs font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Status Filter</p>
                           <div className="flex flex-wrap gap-2">
                             <button type="button" onClick={() => setReportStatusFilter('pending')} className={filterButtonClass(reportStatusFilter === 'pending')}>Pending</button>
                             <button type="button" onClick={() => setReportStatusFilter('decided')} className={filterButtonClass(reportStatusFilter === 'decided')}>Decided</button>
@@ -979,7 +979,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           </div>
                         </div>
                         <div>
-                          <label className="mb-2 block text-xs font-bold uppercase tracking-widest text-slate-700">Show Limit</label>
+                          <label className="mb-2 block text-xs font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Show Limit</label>
                           <select
                             value={reportLimit}
                             onChange={(e) => setReportLimit(e.target.value)}
@@ -1037,18 +1037,18 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                     </div>
 
                     {reports.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center rounded-none border border-dashed border-white/10 py-20">
-                        <div className="mb-4 rounded-full bg-white/5 p-4 text-slate-700">
+                      <div className="flex flex-col items-center justify-center rounded-none border border-dashed border-[var(--admin-outline-strong)] py-20">
+                        <div className="mb-4 rounded-full bg-[var(--admin-muted-surface)] p-4 text-[var(--admin-text-muted)]">
                           <CheckCircle2 size={40} />
                         </div>
-                        <p className="text-lg font-medium text-slate-300">{reportStatusFilter === 'pending' ? 'Queue Clear' : 'No Reports Found'}</p>
-                        <p className="text-sm text-slate-700">
+                        <p className="text-lg font-medium text-[var(--admin-text)]">{reportStatusFilter === 'pending' ? 'Queue Clear' : 'No Reports Found'}</p>
+                        <p className="text-sm text-[var(--admin-text-muted)]">
                           {reportStatusFilter === 'pending' ? 'No pending reports at the moment.' : 'There are no reports for the selected filter.'}
                         </p>
                       </div>
                     ) : (
                       reports.map((report) => (
-                        <div key={report.id} className="surface-card rounded-none overflow-hidden p-0 transition-all duration-300 hover:border-white/20">
+                        <div key={report.id} className="surface-card rounded-none overflow-hidden p-0 transition-all duration-300 hover:border-[var(--admin-outline-strong)]">
                           <div className="hud-bracket hud-bracket-tl" />
                           <div className="hud-bracket-tr" />
                           <div className="hud-bracket-bl" />
@@ -1056,7 +1056,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
 
                           <div className="flex flex-col lg:grid lg:grid-cols-[56px_1fr_320px_200px] lg:items-stretch overflow-hidden">
                             {/* Checkbox Column */}
-                            <div className="flex items-center justify-center py-4 lg:py-0 border-b lg:border-b-0 lg:border-r border-white/5 bg-white/[0.01]">
+                            <div className="flex items-center justify-center py-4 lg:py-0 border-b lg:border-b-0 lg:border-r border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)]">
                               {report.status === 'pending' ? (
                                 <input
                                   type="checkbox"
@@ -1082,26 +1082,26 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                             <div className="flex-1 flex flex-col p-5 sm:p-6 lg:p-7 min-w-0 overflow-hidden">
                               {/* Top Bar */}
                               <div className="flex items-center gap-4 mb-2">
-                                <span className={`rounded-none px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${reportStatusClass(report.status)} text-slate-200`}>
+                                <span className={`rounded-none px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${reportStatusClass(report.status)} text-[var(--admin-text)]`}>
                                   {report.status}
                                 </span>
-                                <div className="flex items-center gap-2 font-heading text-[11px] text-slate-700 font-bold uppercase tracking-[0.14em]">
-                                  <Clock size={12} className="text-slate-700" />
+                                <div className="flex items-center gap-2 font-heading text-[11px] text-[var(--admin-text-muted)] font-bold uppercase tracking-[0.14em]">
+                                  <Clock size={12} className="text-[var(--admin-text-muted)]" />
                                   <span>{formatDate(report.created_at)}</span>
                                 </div>
                               </div>
                               
                               {/* Incident Reason (compact) */}
                               <div className="mb-4">
-                                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Incident Reason</p>
-                                <p className="text-lg font-bold text-slate-200 leading-tight">{report.reason}</p>
+                                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Incident Reason</p>
+                                <p className="text-lg font-bold text-[var(--admin-text)] leading-tight">{report.reason}</p>
                               </div>
 
                               {/* Description Area */}
                               <div className="flex-1 min-w-0">
                                 {report.description && (
                                   <div className="group relative">
-                                    <p className="text-sm text-slate-400 font-medium leading-relaxed line-clamp-4 break-words whitespace-pre-wrap overflow-hidden">
+                                    <p className="text-sm text-[var(--admin-text-soft)] font-medium leading-relaxed line-clamp-4 break-words whitespace-pre-wrap overflow-hidden">
                                       {report.description}
                                     </p>
                                     {(report.description.length > 100) && (
@@ -1120,30 +1120,30 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                             </div>
 
                             {/* Detailed Data Column */}
-                            <div className="flex flex-col gap-3 p-5 sm:p-6 lg:p-7 lg:justify-center border-t lg:border-t-0 lg:border-l border-white/5 bg-white/[0.01] min-w-0 overflow-hidden">
+                            <div className="flex flex-col gap-3 p-5 sm:p-6 lg:p-7 lg:justify-center border-t lg:border-t-0 lg:border-l border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] min-w-0 overflow-hidden">
                               <div className="detail-panel rounded-none overflow-hidden flex flex-col justify-center">
                                 <div className="flex min-h-[64px] flex-col justify-center gap-1 border-b border-[var(--admin-detail-border)] px-5 py-3">
-                                  <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Reported Identity</span>
-                                  <span className="font-mono text-sm text-slate-300 tabular-nums break-all leading-relaxed whitespace-pre-wrap">{report.reported_ip || 'N/A'}</span>
+                                  <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Reported Identity</span>
+                                  <span className="font-mono text-sm text-[var(--admin-text)] tabular-nums break-all leading-relaxed whitespace-pre-wrap">{report.reported_ip || 'N/A'}</span>
                                 </div>
                                 <div className="flex min-h-[64px] flex-col justify-center gap-1 border-b border-[var(--admin-detail-border)] px-5 py-3">
-                                  <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Session ID Reference</span>
-                                  <span className="font-mono text-sm text-slate-400 tabular-nums break-all leading-relaxed whitespace-pre-wrap">{report.reported_session_id}</span>
+                                  <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Session ID Reference</span>
+                                  <span className="font-mono text-sm text-[var(--admin-text-soft)] tabular-nums break-all leading-relaxed whitespace-pre-wrap">{report.reported_session_id}</span>
                                 </div>
                                 <div className="flex min-h-[64px] flex-col justify-center gap-1 px-5 py-3">
-                                  <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Reporter Context</span>
-                                  <span className="font-mono text-sm text-slate-400 tabular-nums break-all leading-relaxed whitespace-pre-wrap">{report.reporter_ip || 'N/A'}</span>
+                                  <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Reporter Context</span>
+                                  <span className="font-mono text-sm text-[var(--admin-text-soft)] tabular-nums break-all leading-relaxed whitespace-pre-wrap">{report.reporter_ip || 'N/A'}</span>
                                 </div>
                               </div>
                             </div>
 
                             {/* Action Column */}
-                            <div className="flex flex-col gap-3 p-5 sm:p-6 lg:p-7 lg:justify-center border-t lg:border-t-0 lg:border-l border-white/5 bg-white/[0.01]">
+                            <div className="flex flex-col gap-3 p-5 sm:p-6 lg:p-7 lg:justify-center border-t lg:border-t-0 lg:border-l border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)]">
                               {report.chat_log.length > 0 && (
                                 <button
                                   type="button"
                                   onClick={() => setExpandedReport(expandedReport === report.id ? null : report.id)}
-                                  className={`${actionButtonClass} w-full bg-white/[0.04] border border-white/10 text-slate-300 hover:bg-white/[0.08] hover:text-slate-300 transition-all`}
+                                  className={`${actionButtonClass} w-full bg-[var(--admin-muted-surface)] border border-[var(--admin-outline-strong)] text-[var(--admin-text)] hover:bg-[var(--admin-muted-surface)] hover:text-[var(--admin-text)] transition-all`}
                                 >
                                   <MessageSquare size={14} className="mr-0.5" />
                                   Transcript
@@ -1180,7 +1180,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                                     ip: report.reported_ip,
                                     reason: report.reason,
                                   })}
-                                  className={`${actionButtonClass} w-full bg-danger-rose text-slate-300 shadow-[0_0_16px_rgba(244,63,94,0.25)] hover:bg-rose-600 hover:shadow-[0_0_24px_rgba(244,63,94,0.4)] transition-all`}
+                                  className={`${actionButtonClass} w-full bg-danger-rose text-[var(--admin-text)] shadow-[0_0_16px_rgba(244,63,94,0.25)] hover:bg-rose-600 hover:shadow-[0_0_24px_rgba(244,63,94,0.4)] transition-all`}
                                 >
                                   <BanIcon size={14} className="mr-0.5" />
                                   Ban User
@@ -1209,12 +1209,12 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           <div className="hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
-                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700 mb-1">Active Bans</p>
-                          <p className="font-heading text-2xl font-bold text-slate-300 tracking-tight">{serverBanMetrics.active}</p>
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-1">Active Bans</p>
+                          <p className="font-heading text-2xl font-bold text-[var(--admin-text)] tracking-tight">{serverBanMetrics.active}</p>
                         </div>
                       </div>
                       <div className={metricCardClass('inactive')}>
-                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-slate-500/10 text-slate-400 border border-white/5">
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-[var(--admin-muted-surface)] text-[var(--admin-text-soft)] border border-[var(--admin-outline-soft)]">
                           <Clock size={20} />
                           <div className="hud-bracket hud-bracket-tl" />
                           <div className="hud-bracket-tr" />
@@ -1222,8 +1222,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           <div className="hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
-                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700 mb-1">Inactive Bans</p>
-                          <p className="font-heading text-2xl font-bold text-slate-300 tracking-tight">{serverBanMetrics.total - serverBanMetrics.active}</p>
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-1">Inactive Bans</p>
+                          <p className="font-heading text-2xl font-bold text-[var(--admin-text)] tracking-tight">{serverBanMetrics.total - serverBanMetrics.active}</p>
                         </div>
                       </div>
                       <div className={metricCardClass('total')}>
@@ -1235,8 +1235,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           <div className="hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
-                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700 mb-1">Total Bans</p>
-                          <p className="font-heading text-2xl font-bold text-slate-300 tracking-tight">{serverBanMetrics.total}</p>
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-1">Total Bans</p>
+                          <p className="font-heading text-2xl font-bold text-[var(--admin-text)] tracking-tight">{serverBanMetrics.total}</p>
                         </div>
                       </div>
                     </div>
@@ -1251,9 +1251,9 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         {/* Search & Filters Grid */}
                         <div className="grid gap-4 lg:grid-cols-[1fr_auto_auto] lg:items-end">
                           <div className="flex flex-col gap-2">
-                            <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Search Registry</label>
+                            <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Search Registry</label>
                             <div className="relative">
-                              <Search className="absolute left-3 top-3 text-slate-700" size={16} />
+                              <Search className="absolute left-3 top-3 text-[var(--admin-text-muted)]" size={16} />
                               <input
                                 type="text"
                                 value={banSearch}
@@ -1265,7 +1265,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           </div>
                           
                           <div className="flex flex-col gap-2">
-                            <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Status Filter</label>
+                            <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Status Filter</label>
                             <div className="flex items-center gap-2">
                               <button type="button" onClick={() => setBanFilter('active')} className={filterButtonClass(banFilter === 'active', 'rose')}>Active</button>
                               <button type="button" onClick={() => setBanFilter('inactive')} className={filterButtonClass(banFilter === 'inactive')}>Inactive</button>
@@ -1275,7 +1275,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
 
                           <div className="flex items-center gap-3">
                             <div className="flex-1 lg:w-[140px]">
-                              <label className="mb-2 block font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Show Limit</label>
+                              <label className="mb-2 block font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Show Limit</label>
                               <select
                                 value={banLimit}
                                 onChange={(e) => setBanLimit(e.target.value)}
@@ -1291,7 +1291,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                               <button
                                 type="button"
                                 onClick={fetchBans}
-                                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-none border border-white/[0.07] bg-white/[0.04] text-slate-400 transition-all hover:bg-white/[0.08] hover:text-slate-300"
+                                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] text-[var(--admin-text-soft)] transition-all hover:bg-[var(--admin-muted-surface)] hover:text-[var(--admin-text)]"
                                 title="Refresh Registry"
                               >
                                 <RefreshCw size={16} />
@@ -1311,13 +1311,13 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         <div className="hud-bracket-br" />
 
                         <div className="flex items-center gap-3 mb-6">
-                          <h3 className="section-prefix font-heading text-sm font-bold uppercase tracking-[0.14em] text-slate-300">Manual Enforcement</h3>
-                          <span className="ml-auto font-heading text-[10px] text-slate-700 tracking-wider font-bold uppercase tracking-[0.14em] whitespace-nowrap">// OPERATOR INPUT</span>
+                          <h3 className="section-prefix font-heading text-sm font-bold uppercase tracking-[0.14em] text-[var(--admin-text)]">Manual Enforcement</h3>
+                          <span className="ml-auto font-heading text-[10px] text-[var(--admin-text-muted)] tracking-wider font-bold uppercase tracking-[0.14em] whitespace-nowrap">// OPERATOR INPUT</span>
                         </div>
                         
                         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1.5fr_auto] lg:items-end">
                           <div className="flex flex-col gap-2">
-                            <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Session Identifier</label>
+                            <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Session Identifier</label>
                             <input
                               type="text"
                               value={manualBanSessionId}
@@ -1327,7 +1327,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                             />
                           </div>
                           <div className="flex flex-col gap-2">
-                            <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Network Address</label>
+                            <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Network Address</label>
                             <input
                               type="text"
                               value={manualBanIP}
@@ -1337,12 +1337,12 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                             />
                           </div>
                           <div className="flex flex-col gap-2">
-                            <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Reason for Restriction</label>
+                            <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Reason for Restriction</label>
                             <input
                               type="text"
                               value={manualBanReason}
                               onChange={(e) => setManualBanReason(e.target.value)}
-                              className="h-11 w-full rounded-none border border-white/[0.07] bg-white/[0.04] px-4 font-heading text-sm text-slate-300 placeholder:text-slate-700 outline-none transition-all duration-200 focus:border-electric-cyan/50 focus:ring-2 focus:ring-electric-cyan/15 focus:bg-white/[0.06] scanlines"
+                              className="h-11 w-full rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] px-4 font-heading text-sm text-[var(--admin-text)] placeholder:text-[var(--admin-text-muted)] outline-none transition-all duration-200 focus:border-electric-cyan/50 focus:ring-2 focus:ring-electric-cyan/15 focus:bg-[var(--admin-muted-surface)] scanlines"
                               placeholder="EXPLAIN INCIDENT..."
                             />
                           </div>
@@ -1366,7 +1366,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                                   clearManualInputsOnSubmit: true,
                                 });
                               }}
-                              className={`${actionButtonClass} w-full lg:w-auto bg-danger-rose text-slate-300 hover:bg-rose-600 hover:shadow-[0_0_20px_rgba(244,63,94,0.35)]`}
+                              className={`${actionButtonClass} w-full lg:w-auto bg-danger-rose text-[var(--admin-text)] hover:bg-rose-600 hover:shadow-[0_0_20px_rgba(244,63,94,0.35)]`}
                             >
                               <Plus size={16} />
                               Apply Ban
@@ -1385,11 +1385,11 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           <div className="hud-bracket-bl" />
                           <div className="hud-bracket-br" />
                           
-                          <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-none border border-white/10 bg-white/[0.04]">
-                            <BanIcon size={28} className="text-slate-700" />
+                          <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-none border border-[var(--admin-outline-strong)] bg-[var(--admin-muted-surface)]">
+                            <BanIcon size={28} className="text-[var(--admin-text-muted)]" />
                           </div>
-                          <h4 className="font-heading text-lg font-semibold text-slate-400 mb-2 font-heading tracking-wide">NO RESTRICTION RECORDS</h4>
-                          <p className="font-heading text-[11px] text-slate-700 uppercase tracking-[0.14em] font-bold">SYSTEM_REGISTRY_CLEAR // ALL FILTERS VALID</p>
+                          <h4 className="font-heading text-lg font-semibold text-[var(--admin-text-soft)] mb-2 font-heading tracking-wide">NO RESTRICTION RECORDS</h4>
+                          <p className="font-heading text-[11px] text-[var(--admin-text-muted)] uppercase tracking-[0.14em] font-bold">SYSTEM_REGISTRY_CLEAR // ALL FILTERS VALID</p>
                         </div>
                       ) : (
                         <AnimatePresence mode="popLayout">
@@ -1400,7 +1400,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                               animate={{ opacity: 1, y: 0 }}
                               exit={{ opacity: 0, y: -10 }}
                               transition={{ delay: index * 0.03, duration: 0.2 }}
-                              className="surface-card group rounded-none p-0 overflow-hidden transition-all duration-300 hover:border-white/20 hover:translate-y-[-1px] hover:shadow-[0_8px_32px_rgba(0,0,0,0.4)]"
+                              className="surface-card group rounded-none p-0 overflow-hidden transition-all duration-300 hover:border-[var(--admin-outline-strong)] hover:translate-y-[-1px] hover:shadow-[0_8px_32px_rgba(0,0,0,0.4)]"
                             >
                               <div className="hud-bracket hud-bracket-tl" />
                               <div className="hud-bracket-tr" />
@@ -1412,7 +1412,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                                 <div className={`w-full h-1 md:w-1 md:h-auto shrink-0 ${
                                   ban.is_active 
                                     ? 'bg-gradient-to-b from-rose-500 to-rose-700 shadow-[2px_0_12px_rgba(244,63,94,0.2)]' 
-                                    : 'bg-white/[0.08]'
+                                    : 'bg-[var(--admin-muted-surface)]'
                                 }`} />
                                 
                                 <div className="flex flex-1 flex-col px-4 py-4 md:px-5 md:py-4">
@@ -1421,13 +1421,13 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                                     <div className={`inline-flex items-center gap-1.5 rounded-none px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${
                                       ban.is_active 
                                         ? 'border border-rose-500/20 bg-rose-500/10 text-rose-300' 
-                                        : 'border border-white/10 bg-white/5 text-slate-700'
+                                        : 'border border-[var(--admin-outline-strong)] bg-[var(--admin-muted-surface)] text-[var(--admin-text-muted)]'
                                     }`}>
                                       <div className={`h-1.5 w-1.5 rounded-none ${ban.is_active ? 'bg-rose-400 animate-pulse' : 'bg-slate-600'}`} />
                                       {ban.is_active ? 'Active' : 'Inactive'}
                                     </div>
-                                    <div className="flex items-center gap-1.5 font-heading text-[11px] text-slate-700 font-bold uppercase tracking-[0.14em]">
-                                      <Clock size={12} className="text-slate-700" />
+                                    <div className="flex items-center gap-1.5 font-heading text-[11px] text-[var(--admin-text-muted)] font-bold uppercase tracking-[0.14em]">
+                                      <Clock size={12} className="text-[var(--admin-text-muted)]" />
                                       <span>{formatDate(ban.created_at)}</span>
                                     </div>
                                   </div>
@@ -1436,18 +1436,18 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                                   <div className="detail-panel rounded-none px-4 py-3 md:px-5">
                                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-4">
                                       <div className="flex flex-col">
-                                        <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Network Address</p>
-                                        <p className="font-mono text-sm font-medium text-slate-100 tabular-nums break-all">{ban.ip_address || 'UNAVAILABLE'}</p>
+                                        <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Network Address</p>
+                                        <p className="font-mono text-sm font-medium text-[var(--admin-text)] tabular-nums break-all">{ban.ip_address || 'UNAVAILABLE'}</p>
                                       </div>
                                       <div className="flex flex-col">
-                                        <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Incident Reason</p>
-                                        <p className="text-sm font-medium text-slate-300 leading-5 line-clamp-2" title={ban.reason}>{ban.reason}</p>
+                                        <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Incident Reason</p>
+                                        <p className="text-sm font-medium text-[var(--admin-text)] leading-5 line-clamp-2" title={ban.reason}>{ban.reason}</p>
                                       </div>
                                       <div className="flex flex-col sm:col-span-2 lg:col-span-1">
-                                        <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">Restriction Expiry</p>
+                                        <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Restriction Expiry</p>
                                         <div className="flex items-center gap-2 text-sm font-medium">
                                           {!ban.expires_at ? (
-                                            <span className="text-slate-700 font-bold uppercase tracking-wider text-[11px]">∞ PERMANENT_CELL</span>
+                                            <span className="text-[var(--admin-text-muted)] font-bold uppercase tracking-wider text-[11px]">∞ PERMANENT_CELL</span>
                                           ) : (
                                             <div className="flex items-center gap-2 text-amber-400/90">
                                               <Clock size={13} />
@@ -1461,7 +1461,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                                 </div>
 
                                 {/* Action Area */}
-                                <div className="flex items-center justify-start md:justify-center px-4 pb-4 md:pb-0 md:px-4 border-t border-white/[0.05] md:border-t-0 md:border-l md:border-white/[0.05]">
+                                <div className="flex items-center justify-start md:justify-center px-4 pb-4 md:pb-0 md:px-4 border-t border-[var(--admin-outline-soft)] md:border-t-0 md:border-l md:border-[var(--admin-outline-soft)]">
                                   {ban.is_active && canManageBans ? (
                                     <button
                                       type="button"
@@ -1494,8 +1494,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           <div className="hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
-                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-slate-700 mb-0.5">Healthy Services</p>
-                          <p className="font-heading text-2xl font-bold text-slate-300">{infraHealth?.summary.healthy_services || 0}</p>
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-[var(--admin-text-muted)] mb-0.5">Healthy Services</p>
+                          <p className="font-heading text-2xl font-bold text-[var(--admin-text)]">{infraHealth?.summary.healthy_services || 0}</p>
                         </div>
                       </div>
                       <div className={metricCardClass('inactive')}>
@@ -1505,8 +1505,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           <div className="hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
-                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-slate-700 mb-0.5">Degraded Services</p>
-                          <p className="font-heading text-2xl font-bold text-slate-300">{infraHealth?.summary.degraded_services || 0}</p>
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-[var(--admin-text-muted)] mb-0.5">Degraded Services</p>
+                          <p className="font-heading text-2xl font-bold text-[var(--admin-text)]">{infraHealth?.summary.degraded_services || 0}</p>
                         </div>
                       </div>
                       <div className={metricCardClass('total')}>
@@ -1516,8 +1516,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           <div className="hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
-                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-slate-700 mb-0.5">Phoenix Nodes</p>
-                          <p className="font-heading text-2xl font-bold text-slate-300">{infraHealth?.topology.phoenix_connected_nodes || 0}</p>
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-[var(--admin-text-muted)] mb-0.5">Phoenix Nodes</p>
+                          <p className="font-heading text-2xl font-bold text-[var(--admin-text)]">{infraHealth?.topology.phoenix_connected_nodes || 0}</p>
                         </div>
                       </div>
                       <div className={metricCardClass('total')}>
@@ -1527,8 +1527,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           <div className="hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
-                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-slate-700 mb-0.5">Redis Reachable</p>
-                          <p className="font-heading text-2xl font-bold text-slate-300">
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-[var(--admin-text-muted)] mb-0.5">Redis Reachable</p>
+                          <p className="font-heading text-2xl font-bold text-[var(--admin-text)]">
                             {infraHealth ? `${infraHealth.topology.redis_reachable_nodes}/${infraHealth.topology.redis_configured_nodes}` : '0/0'}
                           </p>
                         </div>
@@ -1539,8 +1539,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       <div className={`${surfaceCardClass} xl:col-span-2`}>
                         <div className="mb-4 flex items-center justify-between">
                           <div>
-                            <h2 className="text-sm font-bold uppercase tracking-[0.16em] text-slate-300">Service Health Matrix</h2>
-                            <p className="mt-1 text-xs text-slate-500">Live status for Phoenix and Go service endpoints.</p>
+                            <h2 className="text-sm font-bold uppercase tracking-[0.16em] text-[var(--admin-text)]">Service Health Matrix</h2>
+                            <p className="mt-1 text-xs text-[var(--admin-text-muted)]">Live status for Phoenix and Go service endpoints.</p>
                           </div>
                           <button
                             type="button"
@@ -1561,18 +1561,18 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                                   <div>
                                     <div className="flex items-center gap-3">
-                                      <p className="text-sm font-bold uppercase tracking-[0.14em] text-slate-300">{service.name}</p>
+                                      <p className="text-sm font-bold uppercase tracking-[0.14em] text-[var(--admin-text)]">{service.name}</p>
                                       <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${healthStatusClass(service.status)}`}>{service.status}</span>
                                     </div>
-                                    <p className="mt-1 text-xs text-slate-500">{service.kind} · {service.url}</p>
+                                    <p className="mt-1 text-xs text-[var(--admin-text-muted)]">{service.kind} · {service.url}</p>
                                   </div>
                                   <div className="text-left sm:text-right">
-                                    <p className="text-xs text-slate-500">Latency {formatLatency(service.latency_ms)}</p>
-                                    <p className="text-xs text-slate-500">HTTP {service.http_status || 'n/a'}</p>
+                                    <p className="text-xs text-[var(--admin-text-muted)]">Latency {formatLatency(service.latency_ms)}</p>
+                                    <p className="text-xs text-[var(--admin-text-muted)]">HTTP {service.http_status || 'n/a'}</p>
                                   </div>
                                 </div>
                                 {service.details && (
-                                  <div className="mt-3 grid gap-2 text-xs text-slate-400 sm:grid-cols-2">
+                                  <div className="mt-3 grid gap-2 text-xs text-[var(--admin-text-soft)] sm:grid-cols-2">
                                     {'node' in service.details && <p>Node: {String(service.details.node)}</p>}
                                     {'status' in service.details && <p>Reported status: {String(service.details.status)}</p>}
                                     {goMemory && <p>Heap alloc: {goMemory.primary}</p>}
@@ -1592,12 +1592,12 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
 
                       <div className="space-y-6">
                         <div className={surfaceCardClass}>
-                          <h2 className="mb-4 text-sm font-bold uppercase tracking-[0.16em] text-slate-300">Topology</h2>
-                          <div className="space-y-3 text-sm text-slate-400">
-                            <div className="flex items-center justify-between"><span>Phoenix configured</span><span className="font-bold text-slate-300">{infraHealth?.topology.phoenix_configured_nodes || 0}</span></div>
-                            <div className="flex items-center justify-between"><span>Phoenix connected</span><span className="font-bold text-slate-300">{infraHealth?.topology.phoenix_connected_nodes || 0}</span></div>
-                            <div className="flex items-center justify-between"><span>Go services</span><span className="font-bold text-slate-300">{infraHealth?.topology.go_configured_services || 0}</span></div>
-                            <div className="flex items-center justify-between"><span>Redis configured</span><span className="font-bold text-slate-300">{infraHealth?.topology.redis_configured_nodes || 0}</span></div>
+                          <h2 className="mb-4 text-sm font-bold uppercase tracking-[0.16em] text-[var(--admin-text)]">Topology</h2>
+                          <div className="space-y-3 text-sm text-[var(--admin-text-soft)]">
+                            <div className="flex items-center justify-between"><span>Phoenix configured</span><span className="font-bold text-[var(--admin-text)]">{infraHealth?.topology.phoenix_configured_nodes || 0}</span></div>
+                            <div className="flex items-center justify-between"><span>Phoenix connected</span><span className="font-bold text-[var(--admin-text)]">{infraHealth?.topology.phoenix_connected_nodes || 0}</span></div>
+                            <div className="flex items-center justify-between"><span>Go services</span><span className="font-bold text-[var(--admin-text)]">{infraHealth?.topology.go_configured_services || 0}</span></div>
+                            <div className="flex items-center justify-between"><span>Redis configured</span><span className="font-bold text-[var(--admin-text)]">{infraHealth?.topology.redis_configured_nodes || 0}</span></div>
                           </div>
                           <div className="mt-4 flex flex-wrap gap-2">
                             {(infraHealth?.topology.phoenix_node_names || []).map((nodeName) => (
@@ -1609,15 +1609,15 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         </div>
 
                         <div className={surfaceCardClass}>
-                          <h2 className="mb-4 text-sm font-bold uppercase tracking-[0.16em] text-slate-300">Data Stores</h2>
+                          <h2 className="mb-4 text-sm font-bold uppercase tracking-[0.16em] text-[var(--admin-text)]">Data Stores</h2>
                           <div className="space-y-4">
                             <div className="border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] p-4">
                               <div className="flex items-center justify-between">
-                                <p className="text-sm font-bold uppercase tracking-[0.14em] text-slate-300">Postgres</p>
+                                <p className="text-sm font-bold uppercase tracking-[0.14em] text-[var(--admin-text)]">Postgres</p>
                                 <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${healthStatusClass(infraHealth?.postgres.status)}`}>{infraHealth?.postgres.status || 'unknown'}</span>
                               </div>
-                              <p className="mt-2 text-xs text-slate-500">Latency {formatLatency(infraHealth?.postgres.latency_ms)}</p>
-                              <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-400">
+                              <p className="mt-2 text-xs text-[var(--admin-text-muted)]">Latency {formatLatency(infraHealth?.postgres.latency_ms)}</p>
+                              <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-[var(--admin-text-soft)]">
                                 <p>Open: {infraHealth?.postgres.connections.open || 0}</p>
                                 <p>In use: {infraHealth?.postgres.connections.in_use || 0}</p>
                                 <p>Idle: {infraHealth?.postgres.connections.idle || 0}</p>
@@ -1627,11 +1627,11 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
 
                             <div className="border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] p-4">
                               <div className="flex items-center justify-between">
-                                <p className="text-sm font-bold uppercase tracking-[0.14em] text-slate-300">Redis Cluster</p>
+                                <p className="text-sm font-bold uppercase tracking-[0.14em] text-[var(--admin-text)]">Redis Cluster</p>
                                 <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${healthStatusClass(infraHealth?.redis.status)}`}>{infraHealth?.redis.status || 'unknown'}</span>
                               </div>
-                              <p className="mt-2 text-xs text-slate-500">Latency {formatLatency(infraHealth?.redis.latency_ms)}</p>
-                              <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-400">
+                              <p className="mt-2 text-xs text-[var(--admin-text-muted)]">Latency {formatLatency(infraHealth?.redis.latency_ms)}</p>
+                              <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-[var(--admin-text-soft)]">
                                 <p>Cluster state: {infraHealth?.redis.cluster.state || 'unknown'}</p>
                                 <p>Known nodes: {infraHealth?.redis.cluster.known_nodes || 0}</p>
                                 <p>Slots assigned: {infraHealth?.redis.cluster.slots_assigned || 0}</p>
@@ -1645,7 +1645,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                                 <p className="mt-3 break-all text-xs text-rose-400">{infraHealth.redis.error}</p>
                               )}
                               <div className="mt-4 flex items-center justify-between gap-3">
-                                <p className="text-xs text-slate-500">{infraHealth?.redis.nodes?.length || 0} node entries available for detailed inspection.</p>
+                                <p className="text-xs text-[var(--admin-text-muted)]">{infraHealth?.redis.nodes?.length || 0} node entries available for detailed inspection.</p>
                                 <button
                                   type="button"
                                   onClick={() => setIsRedisModalOpen(true)}
@@ -1659,14 +1659,14 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         </div>
 
                         <div className={surfaceCardClass}>
-                          <h2 className="mb-4 text-sm font-bold uppercase tracking-[0.16em] text-slate-300">Observability</h2>
-                          <div className="space-y-3 text-sm text-slate-400">
-                            <div className="flex items-center justify-between"><span>Traces configured</span><span className="font-bold text-slate-300">{infraHealth?.observability.traces_configured ? 'yes' : 'no'}</span></div>
-                            <div className="flex items-center justify-between"><span>Metrics configured</span><span className="font-bold text-slate-300">{infraHealth?.observability.metrics_configured ? 'yes' : 'no'}</span></div>
+                          <h2 className="mb-4 text-sm font-bold uppercase tracking-[0.16em] text-[var(--admin-text)]">Observability</h2>
+                          <div className="space-y-3 text-sm text-[var(--admin-text-soft)]">
+                            <div className="flex items-center justify-between"><span>Traces configured</span><span className="font-bold text-[var(--admin-text)]">{infraHealth?.observability.traces_configured ? 'yes' : 'no'}</span></div>
+                            <div className="flex items-center justify-between"><span>Metrics configured</span><span className="font-bold text-[var(--admin-text)]">{infraHealth?.observability.metrics_configured ? 'yes' : 'no'}</span></div>
                             <div className="flex items-center justify-between"><span>Collector</span><span className={`font-bold ${infraHealth?.observability.collector.status === 'ok' ? 'text-emerald-400' : 'text-amber-400'}`}>{infraHealth?.observability.collector.status || 'unknown'}</span></div>
-                            <div className="flex items-center justify-between"><span>Collector latency</span><span className="font-bold text-slate-300">{formatLatency(infraHealth?.observability.collector.latency_ms)}</span></div>
-                            <p className="break-all text-xs text-slate-500">Health URL: {infraHealth?.observability.collector.url || 'No collector health URL configured'}</p>
-                            <p className="break-all text-xs text-slate-500">OTLP endpoint: {infraHealth?.observability.otlp_endpoint || 'No OTLP endpoint configured'}</p>
+                            <div className="flex items-center justify-between"><span>Collector latency</span><span className="font-bold text-[var(--admin-text)]">{formatLatency(infraHealth?.observability.collector.latency_ms)}</span></div>
+                            <p className="break-all text-xs text-[var(--admin-text-muted)]">Health URL: {infraHealth?.observability.collector.url || 'No collector health URL configured'}</p>
+                            <p className="break-all text-xs text-[var(--admin-text-muted)]">OTLP endpoint: {infraHealth?.observability.otlp_endpoint || 'No OTLP endpoint configured'}</p>
                             {infraHealth?.observability.collector.error && (
                               <p className="break-all text-xs text-rose-400">{infraHealth.observability.collector.error}</p>
                             )}
@@ -1682,9 +1682,9 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                     <div className={`${surfaceCardClass} p-6`}>
                       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto_auto] lg:items-end">
                         <div>
-                          <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-700">Search Username</label>
+                          <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Search Username</label>
                           <div className="relative">
-                            <Search className="absolute top-3.5 left-4 text-slate-700" size={18} />
+                            <Search className="absolute top-3.5 left-4 text-[var(--admin-text-muted)]" size={18} />
                             <input
                               type="text"
                               value={accountSearch}
@@ -1695,7 +1695,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           </div>
                         </div>
                         <div>
-                          <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-700">Show Limit</label>
+                          <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Show Limit</label>
                           <select
                             value={accountLimit}
                             onChange={(e) => setAccountLimit(e.target.value)}
@@ -1724,7 +1724,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
 
                     {/* Create Account */}
                     <div className={`${surfaceCardClass} p-6`}>
-                      <h3 className="mb-6 text-lg font-bold text-slate-300">Add Team Member</h3>
+                      <h3 className="mb-6 text-lg font-bold text-[var(--admin-text)]">Add Team Member</h3>
                       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                         <input
                           type="text"
@@ -1743,7 +1743,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           />
                           <button
                             onClick={() => setShowCreateAccountPassword(!showCreateAccountPassword)}
-                            className="absolute top-3.5 right-4 text-slate-700 hover:text-slate-300"
+                            className="absolute top-3.5 right-4 text-[var(--admin-text-muted)] hover:text-[var(--admin-text)]"
                           >
                             {showCreateAccountPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                           </button>
@@ -1771,25 +1771,25 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                     {/* Accounts List */}
                     <div className="space-y-4">
                       {accounts.length === 0 && (
-                        <div className="rounded-none border border-dashed border-white/10 py-20 text-center">
-                          <p className="text-slate-700">No admin accounts found.</p>
+                        <div className="rounded-none border border-dashed border-[var(--admin-outline-strong)] py-20 text-center">
+                          <p className="text-[var(--admin-text-muted)]">No admin accounts found.</p>
                         </div>
                       )}
                       {accounts.map((account) => (
                         <div key={account.id} className={`${surfaceCardClass} p-6`}>
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-4">
-                              <div className="flex h-12 w-12 items-center justify-center rounded-none bg-white/5 text-cyan-400">
+                              <div className="flex h-12 w-12 items-center justify-center rounded-none bg-[var(--admin-muted-surface)] text-cyan-400">
                                 <Users size={24} />
                               </div>
                               <div>
-                                <h4 className="font-bold text-slate-300">{account.username}</h4>
+                                <h4 className="font-bold text-[var(--admin-text)]">{account.username}</h4>
                                 <div className="mt-1 flex items-center gap-3">
                                   <span className="text-[10px] font-bold uppercase tracking-widest text-cyan-400">{account.role}</span>
                                   <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider ${account.is_active ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
                                     {account.is_active ? 'Active' : 'Inactive'}
                                   </span>
-                                  <span className="text-[10px] text-slate-700">Added {formatDate(account.created_at)}</span>
+                                  <span className="text-[10px] text-[var(--admin-text-muted)]">Added {formatDate(account.created_at)}</span>
                                 </div>
                               </div>
                             </div>
@@ -1797,7 +1797,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                               <button
                                 onClick={() => deleteAccount(account.username)}
                                 disabled={role !== 'root' && (account.role === 'admin' || account.role === 'root')}
-                                className="rounded-none p-2 text-slate-700 transition-colors hover:bg-rose-500/10 hover:text-rose-500 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-slate-700"
+                                className="rounded-none p-2 text-[var(--admin-text-muted)] transition-colors hover:bg-rose-500/10 hover:text-rose-500 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-[var(--admin-text-muted)]"
                               >
                                 <Trash2 size={20} />
                               </button>
@@ -1807,21 +1807,21 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       ))}
                       {accountLimit !== 'all' && accountTotalPages > 1 && (
                         <div className={`${surfaceCardClass} flex items-center justify-between p-4`}>
-                          <p className="text-sm text-slate-400">
+                          <p className="text-sm text-[var(--admin-text-soft)]">
                             Page {accountPage} of {accountTotalPages}
                           </p>
                           <div className="flex gap-2">
                             <button
                               onClick={() => setAccountPage((page) => Math.max(1, page - 1))}
                               disabled={accountPage <= 1}
-                              className={`${actionButtonClass} bg-white/5 text-slate-200 hover:bg-white/10`}
+                              className={`${actionButtonClass} bg-[var(--admin-muted-surface)] text-[var(--admin-text)] hover:bg-[var(--admin-muted-surface-hover)]`}
                             >
                               Previous
                             </button>
                             <button
                               onClick={() => setAccountPage((page) => Math.min(accountTotalPages, page + 1))}
                               disabled={accountPage >= accountTotalPages}
-                              className={`${actionButtonClass} bg-white/5 text-slate-200 hover:bg-white/10`}
+                              className={`${actionButtonClass} bg-[var(--admin-muted-surface)] text-[var(--admin-text)] hover:bg-[var(--admin-muted-surface-hover)]`}
                             >
                               Next
                             </button>
@@ -1846,7 +1846,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={closeBanModal}
-              className="absolute inset-0 bg-slate-950/90 backdrop-blur-sm"
+              className="absolute inset-0 bg-[var(--admin-bg)]/90 backdrop-blur-sm"
             />
             
             <motion.div
@@ -1854,7 +1854,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
               transition={{ type: 'spring', stiffness: 350, damping: 30 }}
-              className="relative flex flex-col w-full max-w-[560px] max-h-[min(85vh,760px)] rounded-none border border-white/[0.08] bg-[#050816] shadow-[0_32px_128px_rgba(0,0,0,0.8)] overflow-hidden"
+              className="relative flex flex-col w-full max-w-[560px] max-h-[min(85vh,760px)] rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-surface-bg)] shadow-[0_32px_128px_rgba(0,0,0,0.8)] overflow-hidden"
             >
               <div className="hud-bracket hud-bracket-tl opacity-20" />
               <div className="hud-bracket-tr opacity-20" />
@@ -1862,32 +1862,32 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
               <div className="hud-bracket-br opacity-20" />
 
               {/* Header */}
-              <div className="px-6 py-5 sm:px-8 sm:py-6 border-b border-white/[0.06] flex items-start gap-5">
+              <div className="px-6 py-5 sm:px-8 sm:py-6 border-b border-[var(--admin-outline-soft)] flex items-start gap-5">
                 <div className="w-12 h-12 rounded-none bg-danger-rose/10 border border-danger-rose/20 flex items-center justify-center shrink-0 shadow-[0_0_20px_rgba(244,63,94,0.15)]">
                   <BanIcon size={22} className="text-danger-rose" />
                 </div>
                 <div className="flex flex-col">
-                  <h3 className="font-heading text-lg font-bold text-slate-300 tracking-wide uppercase">CONFIRM_RESTRICTION</h3>
-                  <p className="font-heading text-sm text-slate-500 font-medium tracking-normal mt-0.5">Session-targeted enforcement also carries the linked IP when it is available.</p>
+                  <h3 className="font-heading text-lg font-bold text-[var(--admin-text)] tracking-wide uppercase">CONFIRM_RESTRICTION</h3>
+                  <p className="font-heading text-sm text-[var(--admin-text-muted)] font-medium tracking-normal mt-0.5">Session-targeted enforcement also carries the linked IP when it is available.</p>
                 </div>
               </div>
 
               {/* Body */}
               <div className="flex-1 overflow-y-auto px-6 py-6 sm:px-8 space-y-6">
                 {/* Target Details */}
-                <div className="rounded-none border border-white/8 bg-white/[0.02] px-5 py-4">
-                  <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500 mb-3">TARGET_IDENTITY_DATA</p>
+                <div className="rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] px-5 py-4">
+                  <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-3">TARGET_IDENTITY_DATA</p>
                   <div className="space-y-2 text-left">
                     {banModal.sessionId && (
                       <div className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-4">
-                        <span className="sm:w-[72px] shrink-0 font-heading text-[10px] font-bold tracking-wider text-slate-700 uppercase">SESSION</span>
-                        <span className="font-mono text-xs text-slate-300 break-all leading-relaxed">{banModal.sessionId}</span>
+                        <span className="sm:w-[72px] shrink-0 font-heading text-[10px] font-bold tracking-wider text-[var(--admin-text-muted)] uppercase">SESSION</span>
+                        <span className="font-mono text-xs text-[var(--admin-text)] break-all leading-relaxed">{banModal.sessionId}</span>
                       </div>
                     )}
                     {banModal.ip && (
                       <div className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-4">
-                        <span className="sm:w-[72px] shrink-0 font-heading text-[10px] font-bold tracking-wider text-slate-700 uppercase">NETWORK</span>
-                        <span className="font-mono text-xs text-slate-300 break-all leading-relaxed">{banModal.ip}</span>
+                        <span className="sm:w-[72px] shrink-0 font-heading text-[10px] font-bold tracking-wider text-[var(--admin-text-muted)] uppercase">NETWORK</span>
+                        <span className="font-mono text-xs text-[var(--admin-text)] break-all leading-relaxed">{banModal.ip}</span>
                       </div>
                     )}
                   </div>
@@ -1897,8 +1897,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                 <div className="flex flex-col gap-3">
                   {banModal.sessionId && banModal.ip && (
                     <div className="flex flex-col gap-3">
-                      <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">TARGET_SCOPE</p>
-                      <div className="flex gap-1.5 rounded-none bg-white/[0.04] p-1.5 border border-white/[0.06]">
+                      <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">TARGET_SCOPE</p>
+                      <div className="flex gap-1.5 rounded-none bg-[var(--admin-muted-surface)] p-1.5 border border-[var(--admin-outline-soft)]">
                         <button
                           type="button"
                           onClick={() => setBanModal({ ...banModal, target: 'session' })}
@@ -1916,8 +1916,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       </div>
                     </div>
                   )}
-                  <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">ENFORCEMENT_MODE</p>
-                  <div className="flex gap-1.5 rounded-none bg-white/[0.04] p-1.5 border border-white/[0.06]">
+                  <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">ENFORCEMENT_MODE</p>
+                  <div className="flex gap-1.5 rounded-none bg-[var(--admin-muted-surface)] p-1.5 border border-[var(--admin-outline-soft)]">
                     <button
                       type="button"
                       onClick={() => setBanModal({ ...banModal, mode: 'permanent' })}
@@ -1947,7 +1947,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                     >
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pb-2">
                         <div className="flex flex-col gap-2">
-                          <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">DURATION_VALUE</label>
+                          <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">DURATION_VALUE</label>
                           <input
                             type="number"
                             min="1"
@@ -1958,7 +1958,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           />
                         </div>
                         <div className="flex flex-col gap-2">
-                          <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">TEMPORAL_UNIT</label>
+                          <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">TEMPORAL_UNIT</label>
                           <select
                             value={banModal.durationUnit}
                             onChange={(e) => setBanModal({ ...banModal, durationUnit: e.target.value as 'hours' | 'days' })}
@@ -1975,22 +1975,22 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
 
                 {/* Incident Justification */}
                 <div className="flex flex-col gap-3">
-                  <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">INCIDENT_JUSTIFICATION</p>
+                  <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">INCIDENT_JUSTIFICATION</p>
                   <textarea
                     value={banModal.reason}
                     onChange={(e) => setBanModal({ ...banModal, reason: e.target.value })}
-                    className="w-full min-h-[120px] max-h-[200px] resize-y rounded-none border border-white/[0.08] bg-white/[0.04] px-4 py-4 font-heading text-sm text-slate-300 placeholder-slate-600 outline-none transition-all duration-200 focus:border-electric-cyan/50 focus:ring-2 focus:ring-electric-cyan/15 scanlines"
+                    className="w-full min-h-[120px] max-h-[200px] resize-y rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] px-4 py-4 font-heading text-sm text-[var(--admin-text)] placeholder-[var(--admin-text-muted)] outline-none transition-all duration-200 focus:border-electric-cyan/50 focus:ring-2 focus:ring-electric-cyan/15 scanlines"
                     placeholder="PROVIDE DETAILED LOGS OR REASONING..."
                   />
                 </div>
               </div>
 
               {/* Footer */}
-              <div className="px-6 py-5 sm:px-8 sm:py-6 border-t border-white/[0.06] bg-white/[0.02] flex flex-col sm:flex-row gap-3">
+              <div className="px-6 py-5 sm:px-8 sm:py-6 border-t border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] flex flex-col sm:flex-row gap-3">
                 <button
                   type="button"
                   onClick={closeBanModal}
-                  className="flex-1 h-11 rounded-none bg-white/[0.04] border border-white/[0.1] text-xs font-bold text-slate-300 uppercase tracking-widest hover:bg-white/[0.08] hover:text-slate-300 transition-all active:scale-[0.98]"
+                  className="flex-1 h-11 rounded-none bg-[var(--admin-muted-surface)] border border-[var(--admin-outline-soft)] text-xs font-bold text-[var(--admin-text)] uppercase tracking-widest hover:bg-[var(--admin-muted-surface)] hover:text-[var(--admin-text)] transition-all active:scale-[0.98]"
                 >
                   CANCEL_OPERATION
                 </button>
@@ -1998,7 +1998,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                   type="button"
                   onClick={handleBanModalSubmit}
                   disabled={submittingBan}
-                  className="flex-1 h-11 rounded-none bg-danger-rose text-slate-300 text-xs font-bold uppercase tracking-widest hover:bg-rose-600 shadow-[0_0_24px_rgba(244,63,94,0.25)] hover:shadow-[0_0_32px_rgba(244,63,94,0.4)] transition-all active:scale-[0.98] disabled:opacity-70 disabled:cursor-not-allowed"
+                  className="flex-1 h-11 rounded-none bg-danger-rose text-[var(--admin-text)] text-xs font-bold uppercase tracking-widest hover:bg-rose-600 shadow-[0_0_24px_rgba(244,63,94,0.25)] hover:shadow-[0_0_32px_rgba(244,63,94,0.4)] transition-all active:scale-[0.98] disabled:opacity-70 disabled:cursor-not-allowed"
                 >
                   {submittingBan ? 'PROCESSING...' : 'CONFIRM_ENFORCEMENT'}
                 </button>
@@ -2017,7 +2017,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setExpandedReport(null)}
-              className="absolute inset-0 bg-slate-950/90 backdrop-blur-md"
+              className="absolute inset-0 bg-[var(--admin-bg)]/90 backdrop-blur-md"
             />
             
             <motion.div
@@ -2039,8 +2039,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                     <MessageSquare size={18} className="text-electric-cyan" />
                   </div>
                   <div className="flex flex-col">
-                    <h3 className="font-heading text-lg font-bold text-slate-300 tracking-wide uppercase">TRANSCRIPT_VIEW</h3>
-                    <p className="font-heading text-[10px] text-slate-500 font-bold tracking-widest uppercase mt-0.5">
+                    <h3 className="font-heading text-lg font-bold text-[var(--admin-text)] tracking-wide uppercase">TRANSCRIPT_VIEW</h3>
+                    <p className="font-heading text-[10px] text-[var(--admin-text-muted)] font-bold tracking-widest uppercase mt-0.5">
                       Session: {reports.find(r => r.id === expandedReport)?.reported_session_id.substring(0, 8)}...
                     </p>
                   </div>
@@ -2101,7 +2101,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                   ))}
                   
                   {(!reports.find(r => r.id === expandedReport)?.chat_log || reports.find(r => r.id === expandedReport)?.chat_log.length === 0) && (
-                    <div className="flex flex-col items-center justify-center py-12 text-slate-700 italic">
+                    <div className="flex flex-col items-center justify-center py-12 text-[var(--admin-text-muted)] italic">
                       <MessageSquare size={48} className="opacity-10 mb-4" />
                       <p>No messages available for this session.</p>
                     </div>
@@ -2130,7 +2130,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsRedisModalOpen(false)}
-              className="absolute inset-0 bg-slate-950/90 backdrop-blur-md"
+              className="absolute inset-0 bg-[var(--admin-bg)]/90 backdrop-blur-md"
             />
 
             <motion.div
@@ -2151,8 +2151,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                     <Database size={18} />
                   </div>
                   <div className="flex flex-col">
-                    <h3 className="font-heading text-lg font-bold uppercase tracking-wide text-white">REDIS_CLUSTER_DETAILS</h3>
-                    <p className="mt-0.5 font-heading text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                    <h3 className="font-heading text-lg font-bold uppercase tracking-wide text-[var(--admin-text)]">REDIS_CLUSTER_DETAILS</h3>
+                    <p className="mt-0.5 font-heading text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">
                       Nodes: {infraHealth?.redis.nodes.length || 0} · Cluster state: {infraHealth?.redis.cluster.state || 'unknown'}
                     </p>
                   </div>
@@ -2169,16 +2169,16 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                 <div className="space-y-4">
                   {(infraHealth?.redis.nodes || []).map((node) => (
                     <div key={node.node_id || node.address} className="detail-panel rounded-none p-5 scanlines">
-                      <div className="flex flex-col gap-3 border-b border-white/[0.06] pb-4 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="flex flex-col gap-3 border-b border-[var(--admin-outline-soft)] pb-4 sm:flex-row sm:items-start sm:justify-between">
                         <div>
-                          <p className="font-mono text-sm text-slate-200">{node.address}</p>
-                          <p className="mt-1 break-all text-[11px] text-slate-500">{node.node_id}</p>
+                          <p className="font-mono text-sm text-[var(--admin-text)]">{node.address}</p>
+                          <p className="mt-1 break-all text-[11px] text-[var(--admin-text-muted)]">{node.node_id}</p>
                         </div>
                         <div className="flex flex-wrap gap-2">
                           <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${
                             node.role === 'master'
                               ? 'border border-electric-cyan/20 bg-electric-cyan/10 text-electric-cyan'
-                              : 'border border-white/10 bg-white/5 text-slate-300'
+                              : 'border border-[var(--admin-outline-strong)] bg-[var(--admin-muted-surface)] text-[var(--admin-text)]'
                           }`}>
                             {node.role}
                           </span>
@@ -2189,8 +2189,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       </div>
 
                       <div className="mt-4 grid gap-6 lg:grid-cols-2">
-                        <div className="space-y-3 text-xs text-slate-400">
-                          <h4 className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-300">Topology</h4>
+                        <div className="space-y-3 text-xs text-[var(--admin-text-soft)]">
+                          <h4 className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text)]">Topology</h4>
                           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                             <p>Link state: {node.link_state || 'unknown'}</p>
                             <p>Master ID: {node.master_id || 'self'}</p>
@@ -2198,18 +2198,18 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                             <p>Replication lag: {node.replication_lag_seconds ?? 0}s</p>
                           </div>
                           {node.flags?.length > 0 && (
-                            <p className="break-all text-[11px] text-slate-500">Flags: {node.flags.join(', ')}</p>
+                            <p className="break-all text-[11px] text-[var(--admin-text-muted)]">Flags: {node.flags.join(', ')}</p>
                           )}
                           {node.slots && node.slots.length > 0 && (
-                            <p className="break-all text-[11px] text-slate-500">Slots: {node.slots.join(' ')}</p>
+                            <p className="break-all text-[11px] text-[var(--admin-text-muted)]">Slots: {node.slots.join(' ')}</p>
                           )}
                           {node.error && (
                             <p className="break-all text-[11px] text-rose-400">{node.error}</p>
                           )}
                         </div>
 
-                        <div className="space-y-3 text-xs text-slate-400">
-                          <h4 className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-300">Memory</h4>
+                        <div className="space-y-3 text-xs text-[var(--admin-text-soft)]">
+                          <h4 className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text)]">Memory</h4>
                           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                             <p>Used: {node.memory.used_memory_human || formatBytes(node.memory.used_memory_bytes)}</p>
                             <p>RSS: {node.memory.used_memory_rss_human || formatBytes(node.memory.used_memory_rss_bytes)}</p>
@@ -2226,11 +2226,11 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       </div>
 
                       <div className="mt-5">
-                        <h4 className="mb-3 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-300">Top Command Totals Since Start</h4>
+                        <h4 className="mb-3 text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text)]">Top Command Totals Since Start</h4>
                         <div className="space-y-2">
                           {topRedisCommandStats(node).length > 0 ? topRedisCommandStats(node).map((command) => (
-                            <div key={`${node.node_id}-${command.command}`} className="flex items-center justify-between gap-3 border border-white/[0.05] bg-black/10 px-3 py-2 text-xs text-slate-400">
-                              <span className="font-mono text-slate-300">{command.command}</span>
+                            <div key={`${node.node_id}-${command.command}`} className="flex items-center justify-between gap-3 border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] px-3 py-2 text-xs text-[var(--admin-text-soft)]">
+                              <span className="font-mono text-[var(--admin-text)]">{command.command}</span>
                               <div className="flex flex-wrap items-center justify-end gap-3 text-right">
                                 <span>{command.calls.toLocaleString()} calls</span>
                                 <span>{command.usec_total.toLocaleString()} us total</span>
@@ -2238,7 +2238,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                               </div>
                             </div>
                           )) : (
-                            <p className="text-xs text-slate-500">No command stats available for this node.</p>
+                            <p className="text-xs text-[var(--admin-text-muted)]">No command stats available for this node.</p>
                           )}
                         </div>
                       </div>
@@ -2268,7 +2268,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setViewingDescription(null)}
-              className="absolute inset-0 bg-slate-950/90 backdrop-blur-md"
+              className="absolute inset-0 bg-[var(--admin-bg)]/90 backdrop-blur-md"
             />
             
             <motion.div
@@ -2290,8 +2290,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                     <Shield size={18} className="text-electric-cyan" />
                   </div>
                   <div className="flex flex-col">
-                    <h3 className="font-heading text-lg font-bold text-white tracking-wide uppercase">INCIDENT_DESCRIPTION</h3>
-                    <p className="font-heading text-[10px] text-slate-500 font-bold tracking-widest uppercase mt-0.5">
+                    <h3 className="font-heading text-lg font-bold text-[var(--admin-text)] tracking-wide uppercase">INCIDENT_DESCRIPTION</h3>
+                    <p className="font-heading text-[10px] text-[var(--admin-text-muted)] font-bold tracking-widest uppercase mt-0.5">
                       Report Ref: {reports.find(r => r.id === viewingDescription)?.id.substring(0, 8)}...
                     </p>
                   </div>
@@ -2307,7 +2307,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
               {/* Body */}
               <div className="flex-1 overflow-y-auto px-6 py-8 sm:px-8" style={{ background: 'var(--admin-transcript-bg)' }}>
                 <div className="detail-panel rounded-none p-6 scanlines">
-                  <p className="text-base text-slate-300 leading-relaxed break-words whitespace-pre-wrap font-medium">
+                  <p className="text-base text-[var(--admin-text)] leading-relaxed break-words whitespace-pre-wrap font-medium">
                     {reports.find(r => r.id === viewingDescription)?.description}
                   </p>
                 </div>
