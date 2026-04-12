@@ -37,7 +37,7 @@ export const inputClass =
   'h-11 w-full rounded-none border border-[var(--admin-input-border)] bg-[var(--admin-input-bg)] px-4 font-mono text-[16px] text-[var(--admin-input-text)] placeholder:text-[var(--admin-placeholder)] outline-none transition-all duration-200 focus:border-electric-cyan/50 focus:ring-2 focus:ring-electric-cyan/15 focus:bg-[var(--admin-input-focus-bg)] scanlines';
 
 export const compactSelectClass =
-  'h-11 w-full rounded-none border border-[var(--admin-input-border)] bg-[var(--admin-input-bg)] px-3 font-semibold uppercase tracking-wider text-sm text-[var(--admin-input-text)] outline-none transition-all duration-200 focus:border-electric-cyan/50 focus:ring-2 focus:ring-electric-cyan/15 [&>option]:bg-[var(--admin-select-option-bg)] [&>option]:text-[var(--admin-select-option-text)]';
+  'h-11 w-full rounded-none border border-[var(--admin-input-border)] bg-[var(--admin-input-bg)] px-3 font-semibold uppercase tracking-wider text-[16px] sm:text-sm text-[var(--admin-input-text)] outline-none transition-all duration-200 focus:border-electric-cyan/50 focus:ring-2 focus:ring-electric-cyan/15 [&>option]:bg-[var(--admin-select-option-bg)] [&>option]:text-[var(--admin-select-option-text)]';
 
 export const segmentedToggleButtonClass = (active: boolean) =>
   `flex h-10 flex-1 items-center justify-center rounded-none px-4 text-[10px] font-bold uppercase tracking-[0.14em] transition-all duration-200 ${

@@ -37,21 +37,21 @@ import {
   reportStatusClass,
   topRedisCommandStats,
 } from './admin-panel/utils';
-import { 
-  Shield, 
-  AlertTriangle, 
-  Ban as BanIcon, 
-  Users, 
-  LogOut, 
-  RefreshCw, 
-  CheckCircle2, 
-  XCircle, 
-  MessageSquare, 
-  Search, 
-  Plus, 
-  Trash2, 
-  Clock, 
-  Globe, 
+import {
+  Shield,
+  AlertTriangle,
+  Ban as BanIcon,
+  Users,
+  LogOut,
+  RefreshCw,
+  CheckCircle2,
+  XCircle,
+  MessageSquare,
+  Search,
+  Plus,
+  Trash2,
+  Clock,
+  Globe,
   UserPlus,
   Eye,
   EyeOff,
@@ -709,11 +709,11 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
               </div>
 
               <nav className="flex-1 space-y-2 overflow-y-auto pr-2 custom-scrollbar">
-                <button 
+                <button
                   onClick={() => {
                     setCurrentTab('reports');
                     setIsMobileMenuOpen(false);
-                  }} 
+                  }}
                   className={tabButtonClass(currentTab === 'reports')}
                 >
                   <AlertTriangle size={18} />
@@ -724,22 +724,22 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                     </span>
                   )}
                 </button>
-                <button 
+                <button
                   onClick={() => {
                     setCurrentTab('bans');
                     setIsMobileMenuOpen(false);
-                  }} 
+                  }}
                   className={tabButtonClass(currentTab === 'bans')}
                 >
                   <BanIcon size={18} />
                   Ban Registry
                 </button>
                 {canViewInfraHealth && (
-                  <button 
+                  <button
                     onClick={() => {
                       setCurrentTab('infra');
                       setIsMobileMenuOpen(false);
-                    }} 
+                    }}
                     className={tabButtonClass(currentTab === 'infra')}
                   >
                     <Server size={18} />
@@ -747,11 +747,11 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                   </button>
                 )}
                 {canManageAccounts && (
-                  <button 
+                  <button
                     onClick={() => {
                       setCurrentTab('accounts');
                       setIsMobileMenuOpen(false);
-                    }} 
+                    }}
                     className={tabButtonClass(currentTab === 'accounts')}
                   >
                     <Users size={18} />
@@ -870,11 +870,10 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
 
               <button
                 onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                className={`group flex w-full items-center gap-3 rounded-none border p-4 transition-all duration-300 ${
-                  isUserMenuOpen 
-                    ? 'border-electric-cyan/40 bg-electric-cyan/10 shadow-[0_0_15px_rgba(34,211,238,0.1)]' 
-                    : 'border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] hover:border-[var(--admin-outline-strong)] hover:bg-[var(--admin-muted-surface-hover)]'
-                }`}
+                className={`group flex w-full items-center gap-3 rounded-none border p-4 transition-all duration-300 ${isUserMenuOpen
+                  ? 'border-electric-cyan/40 bg-electric-cyan/10 shadow-[0_0_15px_rgba(34,211,238,0.1)]'
+                  : 'border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] hover:border-[var(--admin-outline-strong)] hover:bg-[var(--admin-muted-surface-hover)]'
+                  }`}
               >
                 <div className="relative">
                   <div className="h-10 w-10 rounded-none bg-gradient-to-br from-cyan-400 to-blue-500 shadow-lg" />
@@ -1090,7 +1089,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                                   <span>{formatDate(report.created_at)}</span>
                                 </div>
                               </div>
-                              
+
                               {/* Incident Reason (compact) */}
                               <div className="mb-4">
                                 <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Incident Reason</p>
@@ -1105,7 +1104,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                                       {report.description}
                                     </p>
                                     {(report.description.length > 100) && (
-                                      <button 
+                                      <button
                                         type="button"
                                         onClick={() => setViewingDescription(report.id)}
                                         className="mt-2 text-[10px] font-bold uppercase tracking-widest text-electric-cyan/70 hover:text-electric-cyan transition-colors flex items-center gap-1"
@@ -1149,7 +1148,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                                   Transcript
                                 </button>
                               )}
-                              
+
                               {report.status === 'pending' && (
                                 <div className="grid grid-cols-2 gap-3 lg:grid-cols-1">
                                   <button
@@ -1170,7 +1169,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                                   </button>
                                 </div>
                               )}
-                              
+
                               {canCreateBans && (
                                 <button
                                   type="button"
@@ -1189,7 +1188,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                             </div>
                           </div>
 
-    
+
                         </div>
                       ))
                     )}
@@ -1246,7 +1245,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       <div className="hud-bracket-tr" />
                       <div className="hud-bracket-bl" />
                       <div className="hud-bracket-br" />
-                      
+
                       <div className="flex flex-col gap-5">
                         {/* Search & Filters Grid */}
                         <div className="grid gap-4 lg:grid-cols-[1fr_auto_auto] lg:items-end">
@@ -1263,7 +1262,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                               />
                             </div>
                           </div>
-                          
+
                           <div className="flex flex-col gap-2">
                             <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Status Filter</label>
                             <div className="flex items-center gap-2">
@@ -1314,7 +1313,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           <h3 className="section-prefix font-heading text-sm font-bold uppercase tracking-[0.14em] text-[var(--admin-text)]">Manual Enforcement</h3>
                           <span className="ml-auto font-heading text-[10px] text-[var(--admin-text-muted)] tracking-wider font-bold uppercase tracking-[0.14em] whitespace-nowrap">// OPERATOR INPUT</span>
                         </div>
-                        
+
                         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1.5fr_auto] lg:items-end">
                           <div className="flex flex-col gap-2">
                             <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Session Identifier</label>
@@ -1384,7 +1383,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           <div className="hud-bracket-tr" />
                           <div className="hud-bracket-bl" />
                           <div className="hud-bracket-br" />
-                          
+
                           <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-none border border-[var(--admin-outline-strong)] bg-[var(--admin-muted-surface)]">
                             <BanIcon size={28} className="text-[var(--admin-text-muted)]" />
                           </div>
@@ -1409,20 +1408,18 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
 
                               <div className="flex flex-col md:grid md:grid-cols-[4px_1fr_120px] md:items-stretch h-full">
                                 {/* Status Stripe */}
-                                <div className={`w-full h-1 md:w-1 md:h-auto shrink-0 ${
-                                  ban.is_active 
-                                    ? 'bg-gradient-to-b from-rose-500 to-rose-700 shadow-[2px_0_12px_rgba(244,63,94,0.2)]' 
-                                    : 'bg-[var(--admin-muted-surface)]'
-                                }`} />
-                                
+                                <div className={`w-full h-1 md:w-1 md:h-auto shrink-0 ${ban.is_active
+                                  ? 'bg-gradient-to-b from-rose-500 to-rose-700 shadow-[2px_0_12px_rgba(244,63,94,0.2)]'
+                                  : 'bg-[var(--admin-muted-surface)]'
+                                  }`} />
+
                                 <div className="flex flex-1 flex-col px-4 py-4 md:px-5 md:py-4">
                                   {/* Meta Row */}
                                   <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
-                                    <div className={`inline-flex items-center gap-1.5 rounded-none px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${
-                                      ban.is_active 
-                                        ? 'border border-rose-500/20 bg-rose-500/10 text-rose-300' 
-                                        : 'border border-[var(--admin-outline-strong)] bg-[var(--admin-muted-surface)] text-[var(--admin-text-muted)]'
-                                    }`}>
+                                    <div className={`inline-flex items-center gap-1.5 rounded-none px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${ban.is_active
+                                      ? 'border border-rose-500/20 bg-rose-500/10 text-rose-300'
+                                      : 'border border-[var(--admin-outline-strong)] bg-[var(--admin-muted-surface)] text-[var(--admin-text-muted)]'
+                                      }`}>
                                       <div className={`h-1.5 w-1.5 rounded-none ${ban.is_active ? 'bg-rose-400 animate-pulse' : 'bg-[var(--admin-text-muted)]'}`} />
                                       {ban.is_active ? 'Active' : 'Inactive'}
                                     </div>
@@ -1848,7 +1845,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
               onClick={closeBanModal}
               className="absolute inset-0 bg-[var(--admin-bg)]/90 backdrop-blur-sm"
             />
-            
+
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -1979,18 +1976,18 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                   <textarea
                     value={banModal.reason}
                     onChange={(e) => setBanModal({ ...banModal, reason: e.target.value })}
-                    className="w-full min-h-[120px] max-h-[200px] resize-y rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] px-4 py-4 font-heading text-sm text-[var(--admin-text)] placeholder-[var(--admin-text-muted)] outline-none transition-all duration-200 focus:border-electric-cyan/50 focus:ring-2 focus:ring-electric-cyan/15 scanlines"
+                    className="w-full min-h-[160px] sm:min-h-[120px] max-h-[200px] resize-y rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] px-4 py-4 font-heading text-[16px] sm:text-sm text-[var(--admin-text)] placeholder-[var(--admin-text-muted)] outline-none transition-all duration-200 focus:border-electric-cyan/50 focus:ring-2 focus:ring-electric-cyan/15 scanlines"
                     placeholder="PROVIDE DETAILED LOGS OR REASONING..."
                   />
                 </div>
               </div>
 
               {/* Footer */}
-              <div className="px-6 py-5 sm:px-8 sm:py-6 border-t border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] flex flex-col sm:flex-row gap-3">
+              <div className="shrink-0 px-6 py-5 sm:px-10 sm:py-6 border-t border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] flex flex-col sm:flex-row gap-3">
                 <button
                   type="button"
                   onClick={closeBanModal}
-                  className="flex-1 h-11 rounded-none bg-[var(--admin-muted-surface)] border border-[var(--admin-outline-soft)] text-xs font-bold text-[var(--admin-text)] uppercase tracking-widest hover:bg-[var(--admin-muted-surface)] hover:text-[var(--admin-text)] transition-all active:scale-[0.98]"
+                  className="shrink-0 sm:flex-1 w-full h-14 md:h-14 sm:h-14 rounded-none bg-[var(--admin-muted-surface)] border border-[var(--admin-outline-soft)] text-base sm:text-xs font-bold text-[var(--admin-text)] uppercase tracking-widest hover:bg-[var(--admin-muted-surface)] hover:text-[var(--admin-text)] transition-all active:scale-[0.98]"
                 >
                   CANCEL_OPERATION
                 </button>
@@ -1998,7 +1995,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                   type="button"
                   onClick={handleBanModalSubmit}
                   disabled={submittingBan}
-                  className="flex-1 h-11 rounded-none bg-danger-rose text-[var(--admin-text)] text-xs font-bold uppercase tracking-widest hover:bg-rose-600 shadow-[0_0_24px_rgba(244,63,94,0.25)] hover:shadow-[0_0_32px_rgba(244,63,94,0.4)] transition-all active:scale-[0.98] disabled:opacity-70 disabled:cursor-not-allowed"
+                  className="shrink-0 sm:flex-1 w-full h-14 md:h-14 sm:h-14 rounded-none bg-danger-rose text-[var(--admin-text)] text-base sm:text-xs font-bold uppercase tracking-widest hover:bg-rose-600 shadow-[0_0_24px_rgba(244,63,94,0.25)] hover:shadow-[0_0_32px_rgba(244,63,94,0.4)] transition-all active:scale-[0.98] disabled:opacity-70 disabled:cursor-not-allowed"
                 >
                   {submittingBan ? 'PROCESSING...' : 'CONFIRM_ENFORCEMENT'}
                 </button>
@@ -2019,7 +2016,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
               onClick={() => setExpandedReport(null)}
               className="absolute inset-0 bg-[var(--admin-bg)]/90 backdrop-blur-md"
             />
-            
+
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -2059,33 +2056,32 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                   {reports.find(r => r.id === expandedReport)?.chat_log.map((msg, idx) => (
                     <div key={idx} className={`flex ${msg.sender === 'me' ? 'justify-end' : msg.sender === 'system' ? 'justify-center' : 'justify-start'}`}>
                       <div
-                        className={`max-w-[85%] rounded-none px-4 py-3 text-sm shadow-sm ${
-                          msg.sender === 'me'
-                            ? ''
-                            : msg.sender === 'system'
-                              ? 'text-center text-[11px] px-6 py-1.5'
-                              : ''
-                        }`}
+                        className={`max-w-[85%] rounded-none px-4 py-3 text-sm shadow-sm ${msg.sender === 'me'
+                          ? ''
+                          : msg.sender === 'system'
+                            ? 'text-center text-[11px] px-6 py-1.5'
+                            : ''
+                          }`}
                         style={
                           msg.sender === 'me'
                             ? {
-                                background: 'var(--admin-transcript-bubble-reporter-bg)',
-                                borderColor: 'var(--admin-transcript-bubble-reporter-border)',
-                                color: 'var(--admin-transcript-bubble-reporter-text)',
-                              }
+                              background: 'var(--admin-transcript-bubble-reporter-bg)',
+                              borderColor: 'var(--admin-transcript-bubble-reporter-border)',
+                              color: 'var(--admin-transcript-bubble-reporter-text)',
+                            }
                             : msg.sender === 'peer'
-                            ? {
+                              ? {
                                 background: 'var(--admin-transcript-bubble-peer-bg)',
                                 borderColor: 'var(--admin-transcript-bubble-peer-border)',
                                 color: 'var(--admin-transcript-bubble-peer-text)',
                               }
-                            : msg.sender === 'system'
-                              ? {
+                              : msg.sender === 'system'
+                                ? {
                                   background: 'var(--admin-transcript-bubble-system-bg)',
                                   borderColor: 'var(--admin-transcript-bubble-system-border)',
                                   color: 'var(--admin-transcript-bubble-system-text)',
                                 }
-                              : undefined
+                                : undefined
                         }
                       >
                         {msg.sender !== 'system' && (
@@ -2099,7 +2095,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       </div>
                     </div>
                   ))}
-                  
+
                   {(!reports.find(r => r.id === expandedReport)?.chat_log || reports.find(r => r.id === expandedReport)?.chat_log.length === 0) && (
                     <div className="flex flex-col items-center justify-center py-12 text-[var(--admin-text-muted)] italic">
                       <MessageSquare size={48} className="opacity-10 mb-4" />
@@ -2175,11 +2171,10 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           <p className="mt-1 break-all text-[11px] text-[var(--admin-text-muted)]">{node.node_id}</p>
                         </div>
                         <div className="flex flex-wrap gap-2">
-                          <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${
-                            node.role === 'master'
-                              ? 'border border-electric-cyan/20 bg-electric-cyan/10 text-electric-cyan'
-                              : 'border border-[var(--admin-outline-strong)] bg-[var(--admin-muted-surface)] text-[var(--admin-text)]'
-                          }`}>
+                          <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${node.role === 'master'
+                            ? 'border border-electric-cyan/20 bg-electric-cyan/10 text-electric-cyan'
+                            : 'border border-[var(--admin-outline-strong)] bg-[var(--admin-muted-surface)] text-[var(--admin-text)]'
+                            }`}>
                             {node.role}
                           </span>
                           <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${healthStatusClass(node.status)}`}>
@@ -2270,7 +2265,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
               onClick={() => setViewingDescription(null)}
               className="absolute inset-0 bg-[var(--admin-bg)]/90 backdrop-blur-md"
             />
-            
+
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
