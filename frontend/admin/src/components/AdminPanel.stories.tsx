@@ -5,6 +5,7 @@ import type { AdminAccount, Ban, InfraHealthResponse, Report } from '../types';
 const meta = {
   title: 'Pages/AdminPanel',
   component: AdminPanelStoryHarness,
+  tags: ['autodocs'],
   parameters: {
     layout: 'fullscreen',
   },

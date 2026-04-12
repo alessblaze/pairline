@@ -10,8 +10,8 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "preview": "npm run build && vite preview --port 5174",
-    "storybook": "storybook dev -p 6006",
-    "build-storybook": "storybook build"
+    "storybook": "storybook dev -p 6006 --disable-telemetry",
+    "build-storybook": "storybook build --disable-telemetry"
   },
   "dependencies": {
     "@types/dompurify": "^3.0.5",

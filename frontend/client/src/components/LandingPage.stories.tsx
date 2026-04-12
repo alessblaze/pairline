@@ -5,6 +5,7 @@ import { LandingPage } from './LandingPage';
 const meta = {
   title: 'Pages/LandingPage',
   component: LandingPage,
+  tags: ['autodocs'],
   decorators: [
     (Story) => (
       <MemoryRouter>

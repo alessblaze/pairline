@@ -13,6 +13,7 @@ import participant2Video from '../stories/assets/participant2.mp4';
 const meta = {
   title: 'Pages/VideoChat',
   component: VideoChatView,
+  tags: ['autodocs'],
   decorators: [
     (Story) => (
       <MemoryRouter>
