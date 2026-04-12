@@ -746,9 +746,9 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
             const watermarkPositionClasses = 'pointer-events-none absolute transition-[top,left] duration-500 ease-out';
             const watermarkStyle: React.CSSProperties = isPipOverlappingWatermark
               ? { top: 20, left: 16 }
-              : panelDimensions
-                ? { top: panelDimensions.height - WATERMARK_EST_HEIGHT - WATERMARK_INSET, left: WATERMARK_INSET }
-                : { bottom: WATERMARK_INSET, left: WATERMARK_INSET };
+              : effectiveVideoLayout === 'stacked' || !panelDimensions
+                ? { bottom: WATERMARK_INSET, left: WATERMARK_INSET }
+                : { top: panelDimensions.height - WATERMARK_EST_HEIGHT - WATERMARK_INSET, left: WATERMARK_INSET };
             const mainVideoClasses = `absolute inset-0 z-0 isolate bg-black ${effectiveVideoLayout === 'stacked' ? 'md:relative md:flex-1 md:min-h-0 md:z-10' : ''} ${mainVideoTransitionClasses} overflow-hidden`;
             const pipVideoClasses = `absolute z-20 isolate ${pipSizeClasses} aspect-video bg-gray-900 rounded-lg overflow-hidden shadow-2xl border-2 border-white/20 touch-none cursor-grab active:cursor-grabbing ${pipVideoTransitionClasses} ${localPreviewPosition ? '' : 'bottom-3 right-3'} ${effectiveVideoLayout === 'stacked' ? 'md:static md:w-full md:max-w-none md:flex-1 md:aspect-auto md:border-none md:rounded-none md:border-t md:border-gray-200 dark:md:border-gray-700 md:shadow-none md:touch-auto md:cursor-auto md:z-10' : ''}`;
             const pipStyle = effectiveVideoLayout === 'pip' ? (localPreviewPosition ? { left: localPreviewPosition.x, top: localPreviewPosition.y } : undefined) : undefined;
