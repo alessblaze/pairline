@@ -997,9 +997,9 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       ? 'Ban Registry'
                       : currentTab === 'bannedWords'
                         ? 'Banned Words'
-                      : currentTab === 'infra'
-                        ? 'Infra Health'
-                        : 'Admin Accounts'}
+                        : currentTab === 'infra'
+                          ? 'Infra Health'
+                          : 'Admin Accounts'}
                 </h1>
                 <p className="mt-1 text-[var(--admin-text-soft)]">
                   {currentTab === 'reports'
@@ -1008,9 +1008,9 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       ? 'Manage active and historical user bans.'
                       : currentTab === 'bannedWords'
                         ? 'Block delivery of messages containing restricted words or phrases.'
-                      : currentTab === 'infra'
-                        ? 'Inspect cluster topology, service health, data stores, and observability lanes.'
-                        : 'Manage moderation team access.'}
+                        : currentTab === 'infra'
+                          ? 'Inspect cluster topology, service health, data stores, and observability lanes.'
+                          : 'Manage moderation team access.'}
                 </p>
               </div>
 

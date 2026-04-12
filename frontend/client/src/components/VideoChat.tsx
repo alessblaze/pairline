@@ -171,6 +171,51 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
     sendMessage, sendTyping: rawSendTyping, cameraError
   } = state;
 
+  const [videoLayout, setVideoLayout] = useState<'pip' | 'stacked'>(() => {
+    return (localStorage.getItem('pairline-video-layout') as 'pip' | 'stacked') || 'pip';
+  });
+
+  const toggleVideoLayout = () => {
+    setVideoLayout(prev => {
+      const next = prev === 'pip' ? 'stacked' : 'pip';
+      localStorage.setItem('pairline-video-layout', next);
+      return next;
+    });
+  };
+
+  const [pipSwapped, setPipSwapped] = useState(false);
+  const [isPipSwapTransitionDisabled, setIsPipSwapTransitionDisabled] = useState(false);
+  const pipDragHasMovedRef = useRef(false);
+  const pipSwapTransitionResetRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (videoLayout === 'stacked') {
+      setPipSwapped(false);
+    }
+  }, [videoLayout]);
+
+  useEffect(() => {
+    return () => {
+      if (pipSwapTransitionResetRef.current !== null) {
+        window.clearTimeout(pipSwapTransitionResetRef.current);
+      }
+    };
+  }, []);
+
+  const togglePip = () => {
+    if (videoLayout === 'pip') {
+      setIsPipSwapTransitionDisabled(true);
+      setPipSwapped(prev => !prev);
+      if (pipSwapTransitionResetRef.current !== null) {
+        window.clearTimeout(pipSwapTransitionResetRef.current);
+      }
+      pipSwapTransitionResetRef.current = window.setTimeout(() => {
+        setIsPipSwapTransitionDisabled(false);
+        pipSwapTransitionResetRef.current = null;
+      }, 50);
+    }
+  };
+
   const [showVideoConnecting, setShowVideoConnecting] = useState(false);
   const showVideoConnectingSinceRef = useRef<number | null>(null);
   const showVideoConnectingTimersRef = useRef<{ show?: number; hide?: number }>({});
@@ -282,8 +327,8 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
   const [isDraggingLocalPreview, setIsDraggingLocalPreview] = useState(false);
   // typingTimeoutRef moved to VideoChatInput
   const videoPanelRef = useRef<HTMLDivElement>(null);
-  const localPreviewRef = useRef<HTMLDivElement>(null);
-  const dragOffsetRef = useRef<{ x: number; y: number } | null>(null);
+  const localPreviewRef = useRef<HTMLDivElement | null>(null);
+  const dragOffsetRef = useRef<{ x: number; y: number; startX: number; startY: number } | null>(null);
 
   const systemMessageClass = (message: ChatMessage) => (
     message.systemReason === BANNED_PHRASE_REASON
@@ -316,7 +361,14 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
 
   useEffect(() => {
     const handlePointerMove = (event: PointerEvent) => {
+      if (typeof window !== 'undefined' && window.innerWidth >= 768 && videoLayout === 'stacked') return;
       if (!dragOffsetRef.current || !videoPanelRef.current || !localPreviewRef.current) return;
+      
+      const deltaX = Math.abs(event.clientX - dragOffsetRef.current.startX);
+      const deltaY = Math.abs(event.clientY - dragOffsetRef.current.startY);
+      if (deltaX > 4 || deltaY > 4) {
+        pipDragHasMovedRef.current = true;
+      }
 
       const panelRect = videoPanelRef.current.getBoundingClientRect();
       const previewRect = localPreviewRef.current.getBoundingClientRect();
@@ -336,6 +388,11 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
     };
 
     const handlePointerUp = () => {
+      if (typeof window !== 'undefined' && window.innerWidth >= 768 && videoLayout === 'stacked') {
+        dragOffsetRef.current = null;
+        setIsDraggingLocalPreview(false);
+        return;
+      }
       if (dragOffsetRef.current && videoPanelRef.current && localPreviewRef.current) {
         const panelRect = videoPanelRef.current.getBoundingClientRect();
         const previewRect = localPreviewRef.current.getBoundingClientRect();
@@ -368,7 +425,7 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
     };
-  }, [isDraggingLocalPreview]);
+  }, [isDraggingLocalPreview, videoLayout]);
 
   // handleSend and handleInputChange now live inside VideoChatInput
   const handleSend = useCallback((text: string) => {
@@ -447,7 +504,9 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
   };
 
   const handleLocalPreviewPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (typeof window !== 'undefined' && window.innerWidth >= 768 && videoLayout === 'stacked') return;
     if (!videoPanelRef.current || !localPreviewRef.current) return;
+    pipDragHasMovedRef.current = false;
 
     const panelRect = videoPanelRef.current.getBoundingClientRect();
     const previewRect = localPreviewRef.current.getBoundingClientRect();
@@ -455,6 +514,8 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
     dragOffsetRef.current = {
       x: event.clientX - previewRect.left,
       y: event.clientY - previewRect.top,
+      startX: event.clientX,
+      startY: event.clientY,
     };
     setIsDraggingLocalPreview(true);
 
@@ -497,68 +558,137 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
           <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide hidden xs:inline">
             {status}
           </span>
+          <button
+            onClick={toggleVideoLayout}
+            className="hidden md:flex p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-gray-600 dark:text-gray-300"
+            title="Toggle Video Layout"
+          >
+            {videoLayout === 'stacked' ? (
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <rect x="3" y="2" width="18" height="9" rx="2" ry="2" />
+                <rect x="3" y="13" width="18" height="9" rx="2" ry="2" />
+              </svg>
+            ) : (
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                <rect x="13" y="13" width="8" height="8" rx="1" ry="1" fill="currentColor" />
+              </svg>
+            )}
+          </button>
           <ThemeToggle />
         </div>
       </header>
 
       <div className="flex-1 flex flex-col md:flex-row min-h-0">
         <div className="relative flex-1 flex flex-col min-h-0 md:w-[55%] bg-black overflow-hidden border-b md:border-b-0 md:border-r border-gray-200 dark:border-gray-700" ref={videoPanelRef}>
-          <video
-            ref={remoteVideoRef}
-            autoPlay
-            playsInline
-            className="w-full h-full object-cover"
-          />
-
-          {cameraError ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center px-4 z-10 bg-red-50 dark:bg-black/90">
-              <h2 className="text-lg sm:text-2xl font-bold mb-2 text-center text-gray-900 dark:text-white">Camera Error</h2>
-              <p className="max-w-xs text-center text-sm text-red-600 dark:text-gray-300">{cameraError}</p>
-            </div>
-          ) : status === 'searching' ? (
-            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center px-4 bg-white/95 dark:bg-gray-900/90 animate-in fade-in duration-300">
-              <div className="relative mb-6">
-                <div className="w-16 h-16 sm:w-20 sm:h-20 border-4 border-indigo-200 border-t-indigo-600 dark:border-indigo-400/30 dark:border-t-indigo-400 rounded-full animate-spin"></div>
+          {(() => {
+            const isLocalPip = !(pipSwapped && videoLayout === 'pip');
+            const mainVideoTransitionClasses = isPipSwapTransitionDisabled ? '' : 'transition-[width,height] duration-300';
+            const pipVideoTransitionClasses = isDraggingLocalPreview || isPipSwapTransitionDisabled ? '' : 'transition-[left,top,width,height,transform] duration-300';
+            const mainVideoClasses = `absolute inset-0 z-0 ${videoLayout === 'stacked' ? 'md:relative md:flex-1 md:min-h-0 md:z-10 bg-black' : ''} ${mainVideoTransitionClasses} overflow-hidden`;
+            const pipVideoClasses = `absolute z-20 w-[28%] min-w-[80px] max-w-[150px] aspect-video bg-gray-900 rounded-lg overflow-hidden shadow-2xl border-2 border-white/20 touch-none cursor-grab active:cursor-grabbing ${pipVideoTransitionClasses} ${localPreviewPosition ? '' : 'bottom-3 right-3'} ${videoLayout === 'stacked' ? 'md:static md:w-full md:max-w-none md:flex-1 md:aspect-auto md:border-none md:rounded-none md:border-t md:border-gray-200 dark:md:border-gray-700 md:shadow-none md:touch-auto md:cursor-auto md:z-10' : ''}`;
+            const pipStyle = videoLayout === 'pip' || (typeof window !== 'undefined' && window.innerWidth < 768) ? (localPreviewPosition ? { left: localPreviewPosition.x, top: localPreviewPosition.y } : undefined) : undefined;
+            const watermark = (
+              <span
+                className="text-lg sm:text-xl font-semibold tracking-wide text-white/95 opacity-90 [text-shadow:0_1px_2px_rgba(0,0,0,0.95),0_0_10px_rgba(0,0,0,0.45)]"
+                aria-hidden="true"
+              >
+                Pairline
+              </span>
+            );
+            const overlayContent = cameraError ? (
+              <div className="absolute inset-0 flex flex-col items-center justify-center px-4 bg-red-50 dark:bg-black/90">
+                <h2 className="text-lg sm:text-2xl font-bold mb-2 text-center text-gray-900 dark:text-white">Camera Error</h2>
+                <p className="max-w-xs text-center text-sm text-red-600 dark:text-gray-300">{cameraError}</p>
               </div>
-              <p className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white mb-4">Finding your match...</p>
-              {interestTags.length > 0 && (
-                <div className="flex flex-wrap justify-center gap-2 max-w-[80%]">
-                  {interestTags.map((tag, i) => (
-                    <span key={i} className="px-3 py-1 bg-indigo-50 text-indigo-700 border border-indigo-200 dark:bg-white/10 dark:text-white dark:border-white/20 text-xs font-semibold rounded-full">
-                      #{tag}
-                    </span>
-                  ))}
+            ) : status === 'searching' ? (
+              <div className="absolute inset-0 flex flex-col items-center justify-center px-4 bg-white/95 dark:bg-gray-900/90 animate-in fade-in duration-300">
+                <div className="relative mb-6">
+                  <div className="w-16 h-16 sm:w-20 sm:h-20 border-4 border-indigo-200 border-t-indigo-600 dark:border-indigo-400/30 dark:border-t-indigo-400 rounded-full animate-spin"></div>
                 </div>
-              )}
-            </div>
-          ) : status === 'connected' && showVideoConnecting && !remoteVideoHasRendered ? (
-            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center px-4 bg-black/55 backdrop-blur-[2px] animate-in fade-in duration-300">
-              <div className="relative mb-5">
-                <div className="w-14 h-14 sm:w-16 sm:h-16 border-4 border-white/20 border-t-white rounded-full animate-spin"></div>
+                <p className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white mb-4">Finding your match...</p>
+                {interestTags.length > 0 && (
+                  <div className="flex flex-wrap justify-center gap-2 max-w-[80%]">
+                    {interestTags.map((tag, i) => (
+                      <span key={i} className="px-3 py-1 bg-indigo-50 text-indigo-700 border border-indigo-200 dark:bg-white/10 dark:text-white dark:border-white/20 text-xs font-semibold rounded-full">
+                        #{tag}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
-              <p className="text-lg sm:text-xl font-semibold text-white text-center">Connecting video...</p>
-            </div>
-          ) : status !== 'connected' && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center px-4 z-10 bg-gray-100/95 dark:bg-black/80">
-              <div className="w-14 h-14 sm:w-20 sm:h-20 mb-4 rounded-full bg-indigo-100 dark:bg-indigo-500/20 flex items-center justify-center">
-                <svg className="w-7 h-7 sm:w-9 sm:h-9 text-indigo-500 dark:text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                </svg>
+            ) : status === 'connected' && showVideoConnecting && !remoteVideoHasRendered ? (
+              <div className="absolute inset-0 flex flex-col items-center justify-center px-4 bg-black/55 backdrop-blur-[2px] animate-in fade-in duration-300">
+                <div className="relative mb-5">
+                  <div className="w-14 h-14 sm:w-16 sm:h-16 border-4 border-white/20 border-t-white rounded-full animate-spin"></div>
+                </div>
+                <p className="text-lg sm:text-xl font-semibold text-white text-center">Connecting video...</p>
               </div>
-              <h2 className="text-xl sm:text-3xl font-bold tracking-tight mb-2 text-center text-gray-900 dark:text-white">
-                {status === 'idle' ? 'Ready to connect' : 'Disconnected'}
-              </h2>
-            </div>
-          )}
+            ) : status !== 'connected' ? (
+              <div className="absolute inset-0 flex flex-col items-center justify-center px-4 bg-gray-100/95 dark:bg-black/80">
+                <div className="w-14 h-14 sm:w-20 sm:h-20 mb-4 rounded-full bg-indigo-100 dark:bg-indigo-500/20 flex items-center justify-center">
+                  <svg className="w-7 h-7 sm:w-9 sm:h-9 text-indigo-500 dark:text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                </div>
+                <h2 className="text-xl sm:text-3xl font-bold tracking-tight mb-2 text-center text-gray-900 dark:text-white">
+                  {status === 'idle' ? 'Ready to connect' : 'Disconnected'}
+                </h2>
+              </div>
+            ) : null;
+            
+            const handlePipClick = () => {
+              if (!pipDragHasMovedRef.current) togglePip();
+            };
 
-          <div
-            ref={localPreviewRef}
-            onPointerDown={handleLocalPreviewPointerDown}
-            className={`absolute w-[28%] min-w-[80px] max-w-[150px] aspect-video bg-gray-900 rounded-lg overflow-hidden shadow-2xl border-2 border-white/20 z-20 touch-none cursor-grab active:cursor-grabbing ${isDraggingLocalPreview ? '' : 'transition-[left,top,transform] duration-200'} ${localPreviewPosition ? '' : 'bottom-3 right-3'}`}
-            style={localPreviewPosition ? { left: localPreviewPosition.x, top: localPreviewPosition.y } : undefined}
-          >
-            <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
-          </div>
+            return (
+              <>
+                <div
+                  ref={!isLocalPip ? (el) => { localPreviewRef.current = el; } : undefined}
+                  onPointerDown={!isLocalPip ? handleLocalPreviewPointerDown : undefined}
+                  onClick={!isLocalPip ? handlePipClick : undefined}
+                  className={`${isLocalPip ? mainVideoClasses : pipVideoClasses} ${videoLayout === 'stacked' ? 'isolate' : ''}`}
+                  style={!isLocalPip ? pipStyle : undefined}
+                  data-testid="remote-video-container"
+                >
+                  <video
+                    ref={remoteVideoRef}
+                    autoPlay
+                    playsInline
+                    className="w-full h-full object-cover"
+                  />
+                  {videoLayout === 'stacked' && (
+                    <div className="pointer-events-none absolute bottom-3 left-3 z-10">
+                      {watermark}
+                    </div>
+                  )}
+                </div>
+
+                <div
+                  ref={isLocalPip ? (el) => { localPreviewRef.current = el; } : undefined}
+                  onPointerDown={isLocalPip ? handleLocalPreviewPointerDown : undefined}
+                  onClick={isLocalPip ? handlePipClick : undefined}
+                  className={isLocalPip ? pipVideoClasses : mainVideoClasses}
+                  style={isLocalPip ? pipStyle : undefined}
+                  data-testid="local-video-container"
+                >
+                  <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover shadow-[inherit]" />
+                </div>
+
+                {overlayContent && (
+                  <div className={`pointer-events-none absolute inset-0 z-30 ${videoLayout === 'stacked' ? 'md:h-1/2 md:inset-auto md:w-full md:top-0 md:left-0' : ''}`}>
+                    {overlayContent}
+                  </div>
+                )}
+
+                {videoLayout === 'pip' && (
+                  <div className="pointer-events-none absolute bottom-3 left-3 z-30">
+                    {watermark}
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </div>
 
         <div className="flex-1 flex flex-col min-h-0 md:w-[45%] bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-700">

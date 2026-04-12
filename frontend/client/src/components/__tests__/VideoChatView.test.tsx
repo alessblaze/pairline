@@ -95,4 +95,23 @@ describe('VideoChatView interactions', () => {
 
     expect(screen.getByText(/report dialog for peer-99/i)).toBeInTheDocument();
   });
+
+  it('swaps the pip video on click while connected', () => {
+    const state = createVideoState({
+      status: 'connected',
+    });
+
+    renderVideoChat(state);
+
+    const localContainer = screen.getByTestId('local-video-container');
+    const remoteContainer = screen.getByTestId('remote-video-container');
+
+    expect(localContainer.className).toContain('z-20');
+    expect(remoteContainer.className).toContain('z-0');
+
+    fireEvent.click(localContainer);
+
+    expect(screen.getByTestId('remote-video-container').className).toContain('z-20');
+    expect(screen.getByTestId('local-video-container').className).toContain('z-0');
+  });
 });
