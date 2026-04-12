@@ -128,9 +128,8 @@ const VideoChatInput = memo(function VideoChatInput({
       <div className="grid grid-cols-3 gap-2">
         <button
           onClick={onNext}
-          className={`py-2.5 font-semibold rounded-xl text-xs sm:text-sm transition-colors ${
-            confirmSkip ? 'bg-blue-600 text-white shadow-md' : 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50'
-          }`}
+          className={`py-2.5 font-semibold rounded-xl text-xs sm:text-sm transition-colors ${confirmSkip ? 'bg-blue-600 text-white shadow-md' : 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50'
+            }`}
         >
           {confirmSkip ? 'Sure?' : 'Skip'}
         </button>
@@ -142,9 +141,8 @@ const VideoChatInput = memo(function VideoChatInput({
         </button>
         <button
           onClick={onDisconnect}
-          className={`py-2.5 font-semibold rounded-xl text-xs sm:text-sm transition-colors ${
-            confirmStop ? 'bg-red-600 text-white shadow-md' : 'bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50'
-          }`}
+          className={`py-2.5 font-semibold rounded-xl text-xs sm:text-sm transition-colors ${confirmStop ? 'bg-red-600 text-white shadow-md' : 'bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50'
+            }`}
         >
           {confirmStop ? 'Confirm' : 'Stop'}
         </button>
@@ -363,7 +361,7 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
     const handlePointerMove = (event: PointerEvent) => {
       if (typeof window !== 'undefined' && window.innerWidth >= 768 && videoLayout === 'stacked') return;
       if (!dragOffsetRef.current || !videoPanelRef.current || !localPreviewRef.current) return;
-      
+
       const deltaX = Math.abs(event.clientX - dragOffsetRef.current.startX);
       const deltaY = Math.abs(event.clientY - dragOffsetRef.current.startY);
       if (deltaX > 4 || deltaY > 4) {
@@ -583,14 +581,20 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
         <div className="relative flex-1 flex flex-col min-h-0 md:w-[55%] bg-black overflow-hidden border-b md:border-b-0 md:border-r border-gray-200 dark:border-gray-700" ref={videoPanelRef}>
           {(() => {
             const isLocalPip = !(pipSwapped && videoLayout === 'pip');
+            const isRemoteMainVideo = videoLayout === 'stacked' || isLocalPip;
+            const shouldShowWatermark = status === 'connected' && remoteVideoHasRendered;
+            const overlayContainerClasses = videoLayout === 'stacked'
+              ? 'pointer-events-none absolute inset-0 z-30 md:h-1/2 md:inset-auto md:w-full md:top-0 md:left-0'
+              : 'pointer-events-none absolute inset-0 z-10';
             const mainVideoTransitionClasses = isPipSwapTransitionDisabled ? '' : 'transition-[width,height] duration-300';
             const pipVideoTransitionClasses = isDraggingLocalPreview || isPipSwapTransitionDisabled ? '' : 'transition-[left,top,width,height,transform] duration-300';
-            const mainVideoClasses = `absolute inset-0 z-0 ${videoLayout === 'stacked' ? 'md:relative md:flex-1 md:min-h-0 md:z-10 bg-black' : ''} ${mainVideoTransitionClasses} overflow-hidden`;
-            const pipVideoClasses = `absolute z-20 w-[28%] min-w-[80px] max-w-[150px] aspect-video bg-gray-900 rounded-lg overflow-hidden shadow-2xl border-2 border-white/20 touch-none cursor-grab active:cursor-grabbing ${pipVideoTransitionClasses} ${localPreviewPosition ? '' : 'bottom-3 right-3'} ${videoLayout === 'stacked' ? 'md:static md:w-full md:max-w-none md:flex-1 md:aspect-auto md:border-none md:rounded-none md:border-t md:border-gray-200 dark:md:border-gray-700 md:shadow-none md:touch-auto md:cursor-auto md:z-10' : ''}`;
+            const mainVideoClasses = `absolute inset-0 z-0 isolate bg-black ${videoLayout === 'stacked' ? 'md:relative md:flex-1 md:min-h-0 md:z-10' : ''} ${mainVideoTransitionClasses} overflow-hidden`;
+            const pipVideoClasses = `absolute z-20 isolate w-[28%] min-w-[80px] max-w-[150px] aspect-video bg-gray-900 rounded-lg overflow-hidden shadow-2xl border-2 border-white/20 touch-none cursor-grab active:cursor-grabbing ${pipVideoTransitionClasses} ${localPreviewPosition ? '' : 'bottom-3 right-3'} ${videoLayout === 'stacked' ? 'md:static md:w-full md:max-w-none md:flex-1 md:aspect-auto md:border-none md:rounded-none md:border-t md:border-gray-200 dark:md:border-gray-700 md:shadow-none md:touch-auto md:cursor-auto md:z-10' : ''}`;
             const pipStyle = videoLayout === 'pip' || (typeof window !== 'undefined' && window.innerWidth < 768) ? (localPreviewPosition ? { left: localPreviewPosition.x, top: localPreviewPosition.y } : undefined) : undefined;
             const watermark = (
               <span
-                className="text-lg sm:text-xl font-semibold tracking-wide text-white/95 opacity-90 [text-shadow:0_1px_2px_rgba(0,0,0,0.95),0_0_10px_rgba(0,0,0,0.45)]"
+                className="text-5xl sm:text-4xl tracking-wide text-white mix-blend-difference"
+                style={{ fontFamily: "'Cedarville Cursive', cursive" }}
                 aria-hidden="true"
               >
                 Pairline
@@ -636,7 +640,7 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
                 </h2>
               </div>
             ) : null;
-            
+
             const handlePipClick = () => {
               if (!pipDragHasMovedRef.current) togglePip();
             };
@@ -647,7 +651,7 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
                   ref={!isLocalPip ? (el) => { localPreviewRef.current = el; } : undefined}
                   onPointerDown={!isLocalPip ? handleLocalPreviewPointerDown : undefined}
                   onClick={!isLocalPip ? handlePipClick : undefined}
-                  className={`${isLocalPip ? mainVideoClasses : pipVideoClasses} ${videoLayout === 'stacked' ? 'isolate' : ''}`}
+                  className={isLocalPip ? mainVideoClasses : pipVideoClasses}
                   style={!isLocalPip ? pipStyle : undefined}
                   data-testid="remote-video-container"
                 >
@@ -657,8 +661,8 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
                     playsInline
                     className="w-full h-full object-cover"
                   />
-                  {videoLayout === 'stacked' && (
-                    <div className="pointer-events-none absolute bottom-3 left-3 z-10">
+                  {shouldShowWatermark && isRemoteMainVideo && (
+                    <div className="pointer-events-none absolute bottom-3 left-3">
                       {watermark}
                     </div>
                   )}
@@ -673,19 +677,19 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
                   data-testid="local-video-container"
                 >
                   <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover shadow-[inherit]" />
+                  {shouldShowWatermark && !isRemoteMainVideo && (
+                    <div className="pointer-events-none absolute bottom-3 left-3">
+                      {watermark}
+                    </div>
+                  )}
                 </div>
 
                 {overlayContent && (
-                  <div className={`pointer-events-none absolute inset-0 z-30 ${videoLayout === 'stacked' ? 'md:h-1/2 md:inset-auto md:w-full md:top-0 md:left-0' : ''}`}>
+                  <div className={overlayContainerClasses}>
                     {overlayContent}
                   </div>
                 )}
 
-                {videoLayout === 'pip' && (
-                  <div className="pointer-events-none absolute bottom-3 left-3 z-30">
-                    {watermark}
-                  </div>
-                )}
               </>
             );
           })()}
