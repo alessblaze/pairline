@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { AdminPanelStoryHarness } from './AdminPanelStoryHarness';
-import type { AdminAccount, Ban, InfraHealthResponse, Report } from '../types';
+import type { AdminAccount, Ban, BannedWord, InfraHealthResponse, Report } from '../types';
 
 const meta = {
   title: 'Pages/AdminPanel',
@@ -60,6 +60,23 @@ const mockBans: Ban[] = [
     unbanned_at: null,
     unbanned_by_username: null,
   },
+];
+
+const mockBannedWords: BannedWord[] = [
+  {
+    id: 'wb-1',
+    word: 'offensiveword',
+    normalized_word: 'offensiveword',
+    created_by_username: 'albert',
+    created_at: new Date().toISOString(),
+  },
+  {
+    id: 'wb-2',
+    word: 'b*a*d*w*o*r*d',
+    normalized_word: 'badword',
+    created_by_username: 'mod_jane',
+    created_at: new Date().toISOString(),
+  }
 ];
 
 const mockAccounts: AdminAccount[] = [
@@ -323,6 +340,20 @@ export const BansTemporaryModal: Story = {
         durationUnit: 'days',
       },
       serverBanMetrics: { active: 1, inactive: 0, total: 1 }
+    }
+  }
+};
+
+export const AuthenticatedWordBansView: Story = {
+  name: 'Word Bans Tab',
+  args: {
+    mockState: {
+      isAuthenticated: true,
+      authReady: true,
+      currentAdminUsername: 'albert',
+      role: 'admin',
+      currentTab: 'bannedWords',
+      bannedWords: mockBannedWords,
     }
   }
 };

@@ -1773,55 +1773,16 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                 )}
 
                 {currentTab === 'bannedWords' && canManageBannedWords && (
-                  <div className="space-y-6">
-                    <div className={`${surfaceCardClass} p-6`}>
-                      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] lg:items-end">
-                        <div>
-                          <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Add Word Or Phrase</label>
-                          <input
-                            type="text"
-                            value={bannedWordInput}
-                            onChange={(e) => setBannedWordInput(e.target.value)}
-                            className={inputClass}
-                            placeholder="Enter banned word or phrase..."
-                          />
-                        </div>
-                        <div>
-                          <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Search Phrase Registry</label>
-                          <div className="relative">
-                            <Search className="absolute top-3.5 left-4 text-[var(--admin-text-muted)]" size={18} />
-                            <input
-                              type="text"
-                              value={bannedWordSearch}
-                              onChange={(e) => setBannedWordSearch(e.target.value)}
-                              className={`${inputClass} pl-12`}
-                              placeholder="Search phrase, normalized form, or admin..."
-                            />
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => void createBannedWord()}
-                          className={`${actionButtonClass} bg-danger-rose text-[var(--admin-text)] hover:bg-rose-600`}
-                        >
-                          <Plus size={16} />
-                          Add Word
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void fetchBannedWords()}
-                          className={`${actionButtonClass} bg-[var(--admin-text)] text-[var(--admin-bg)] hover:opacity-90`}
-                        >
-                          <RefreshCw size={16} />
-                          Refresh
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <div className="space-y-4">
+                    {/* Word Bans Metrics Row */}
+                    <div className="grid gap-4 sm:grid-cols-3">
                       <div className={metricCardClass('total')}>
                         <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[inset_0_0_20px_rgba(34,211,238,0.05)]">
                           <MessageSquare size={20} />
+                          <div className="hud-bracket hud-bracket-tl" />
+                          <div className="hud-bracket-tr" />
+                          <div className="hud-bracket-bl" />
+                          <div className="hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
                           <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-1">Registry Size</p>
@@ -1831,6 +1792,10 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       <div className={metricCardClass('inactive')}>
                         <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-[var(--admin-muted-surface)] text-[var(--admin-text-soft)] border border-[var(--admin-outline-soft)]">
                           <Eye size={20} />
+                          <div className="hud-bracket hud-bracket-tl" />
+                          <div className="hud-bracket-tr" />
+                          <div className="hud-bracket-bl" />
+                          <div className="hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
                           <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-1">Visible Results</p>
@@ -1840,6 +1805,10 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       <div className={metricCardClass('active')}>
                         <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-[inset_0_0_20px_rgba(16,185,129,0.05)]">
                           <Search size={20} />
+                          <div className="hud-bracket hud-bracket-tl" />
+                          <div className="hud-bracket-tr" />
+                          <div className="hud-bracket-bl" />
+                          <div className="hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
                           <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-1">Display Limit</p>
@@ -1858,43 +1827,182 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       </div>
                     </div>
 
-                    {bannedWordTotal > 0 && (
-                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] text-right">
-                        {bannedWords.length} / {bannedWordTotal} shown
-                      </p>
-                    )}
+                    {/* Search Controls Panel */}
+                    <div className="surface-card rounded-none p-5">
+                      <div className="hud-bracket hud-bracket-tl" />
+                      <div className="hud-bracket-tr" />
+                      <div className="hud-bracket-bl" />
+                      <div className="hud-bracket-br" />
 
+                      <div className="flex flex-col gap-5">
+                        <div className="grid gap-4 lg:grid-cols-[1fr_auto_auto] lg:items-end">
+                          <div className="flex flex-col gap-2">
+                            <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Search Registry</label>
+                            <div className="relative">
+                              <Search className="absolute left-3 top-3 text-[var(--admin-text-muted)]" size={16} />
+                              <input
+                                type="text"
+                                value={bannedWordSearch}
+                                onChange={(e) => setBannedWordSearch(e.target.value)}
+                                className={`${inputClass} pl-10`}
+                                placeholder="SEARCH PHRASE, NORMALIZED FORM, OR ADMIN..."
+                              />
+                            </div>
+                          </div>
+
+                          <div className="flex-1 lg:w-[140px]">
+                            <label className="mb-2 block font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Show Limit</label>
+                            <select
+                              value={bannedWordLimit}
+                              onChange={(e) => setBannedWordLimit(e.target.value)}
+                              className={compactSelectClass}
+                            >
+                              <option value="10">10 ENTRIES</option>
+                              <option value="25">25 ENTRIES</option>
+                              <option value="50">50 ENTRIES</option>
+                              <option value="100">100 ENTRIES</option>
+                              <option value="all">ALL ENTRIES</option>
+                            </select>
+                          </div>
+
+                          <div className="pt-[22px]">
+                            <button
+                              type="button"
+                              onClick={() => void fetchBannedWords()}
+                              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] text-[var(--admin-text-soft)] transition-all hover:bg-[var(--admin-muted-surface)] hover:text-[var(--admin-text)]"
+                              title="Refresh Registry"
+                            >
+                              <RefreshCw size={16} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Add Word Panel */}
+                    <div className="surface-card rounded-none p-5">
+                      <div className="hud-bracket hud-bracket-tl" />
+                      <div className="hud-bracket-tr" />
+                      <div className="hud-bracket-bl" />
+                      <div className="hud-bracket-br" />
+
+                      <div className="flex items-center gap-3 mb-6">
+                        <h3 className="section-prefix font-heading text-sm font-bold uppercase tracking-[0.14em] text-[var(--admin-text)]">Add Phrase</h3>
+                        <span className="ml-auto font-heading text-[10px] text-[var(--admin-text-muted)] tracking-wider font-bold uppercase tracking-[0.14em] whitespace-nowrap">// WORD_FILTER_INPUT</span>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
+                        <div className="flex flex-col gap-2">
+                          <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Word Or Phrase</label>
+                          <input
+                            type="text"
+                            value={bannedWordInput}
+                            onChange={(e) => setBannedWordInput(e.target.value)}
+                            className={inputClass}
+                            placeholder="ENTER BANNED WORD OR PHRASE..."
+                          />
+                        </div>
+                        <div className="pt-2 sm:pt-0">
+                          <button
+                            type="button"
+                            onClick={() => void createBannedWord()}
+                            className={`${actionButtonClass} w-full lg:w-auto bg-danger-rose text-[var(--admin-text)] hover:bg-rose-600 hover:shadow-[0_0_20px_rgba(244,63,94,0.35)]`}
+                          >
+                            <Plus size={16} />
+                            Add Word
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Banned Words List */}
                     <div className="space-y-4">
+                      {bannedWordTotal > 0 && (
+                        <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] text-right">
+                          {bannedWords.length} / {bannedWordTotal} shown
+                        </p>
+                      )}
+
                       {bannedWords.length === 0 ? (
                         <div className="surface-card rounded-none flex flex-col items-center justify-center px-8 py-16 text-center">
+                          <div className="hud-bracket hud-bracket-tl" />
+                          <div className="hud-bracket-tr" />
+                          <div className="hud-bracket-bl" />
+                          <div className="hud-bracket-br" />
+
                           <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-none border border-[var(--admin-outline-strong)] bg-[var(--admin-muted-surface)]">
                             <MessageSquare size={28} className="text-[var(--admin-text-muted)]" />
                           </div>
-                          <h4 className="font-heading text-lg font-semibold text-[var(--admin-text-soft)] mb-2 tracking-wide">NO BANNED WORDS</h4>
-                          <p className="font-heading text-[11px] text-[var(--admin-text-muted)] uppercase tracking-[0.14em] font-bold">MESSAGE_FILTER_CLEAR</p>
+                          <h4 className="font-heading text-lg font-semibold text-[var(--admin-text-soft)] mb-2 font-heading tracking-wide">NO BANNED WORDS</h4>
+                          <p className="font-heading text-[11px] text-[var(--admin-text-muted)] uppercase tracking-[0.14em] font-bold">SYSTEM_REGISTRY_CLEAR // ALL FILTERS VALID</p>
                         </div>
                       ) : (
-                        bannedWords.map((word) => (
-                          <div key={word.id} className="surface-card rounded-none p-5">
-                            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                              <div className="min-w-0">
-                                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Blocked Token</p>
-                                <p className="mt-2 break-words font-mono text-base text-[var(--admin-text)]">{word.word}</p>
-                                <p className="mt-3 text-xs text-[var(--admin-text-muted)]">
-                                  Normalized as <span className="font-mono text-[var(--admin-text-soft)]">{word.normalized_word}</span> · Added by {word.created_by_username || 'unknown'} · {formatDate(word.created_at)}
-                                </p>
+                        <AnimatePresence mode="popLayout">
+                          {bannedWords.map((word, index) => (
+                            <motion.div
+                              key={word.id}
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: -10 }}
+                              transition={{ delay: index * 0.03, duration: 0.2 }}
+                              className="surface-card group rounded-none p-0 overflow-hidden transition-all duration-300 hover:border-[var(--admin-outline-strong)] hover:translate-y-[-1px] hover:shadow-[0_8px_32px_rgba(0,0,0,0.4)]"
+                            >
+                              <div className="hud-bracket hud-bracket-tl" />
+                              <div className="hud-bracket-tr" />
+                              <div className="hud-bracket-bl" />
+                              <div className="hud-bracket-br" />
+
+                              <div className="flex flex-col md:grid md:grid-cols-[4px_1fr_120px] md:items-stretch h-full">
+                                {/* Status Stripe */}
+                                <div className="w-full h-1 md:w-1 md:h-auto shrink-0 bg-gradient-to-b from-rose-500 to-rose-700 shadow-[2px_0_12px_rgba(244,63,94,0.2)]" />
+
+                                <div className="flex flex-1 flex-col px-4 py-4 md:px-5 md:py-4">
+                                  {/* Meta Row */}
+                                  <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+                                    <div className="inline-flex items-center gap-1.5 rounded-none px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] border border-rose-500/20 bg-rose-500/10 text-rose-300">
+                                      <div className="h-1.5 w-1.5 rounded-none bg-rose-400 animate-pulse" />
+                                      Blocked
+                                    </div>
+                                    <div className="flex items-center gap-1.5 font-heading text-[11px] text-[var(--admin-text-muted)] font-bold uppercase tracking-[0.14em]">
+                                      <Clock size={12} className="text-[var(--admin-text-muted)]" />
+                                      <span>{formatDate(word.created_at)}</span>
+                                    </div>
+                                  </div>
+
+                                  {/* Data Panel */}
+                                  <div className="detail-panel rounded-none px-4 py-3 md:px-5">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-4">
+                                      <div className="flex flex-col">
+                                        <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Blocked Token</p>
+                                        <p className="font-mono text-sm font-medium text-[var(--admin-text)] break-all">{word.word}</p>
+                                      </div>
+                                      <div className="flex flex-col">
+                                        <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Normalized Form</p>
+                                        <p className="font-mono text-sm font-medium text-[var(--admin-text)] break-all">{word.normalized_word}</p>
+                                      </div>
+                                      <div className="flex flex-col sm:col-span-2 lg:col-span-1">
+                                        <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Added By</p>
+                                        <p className="text-sm font-medium text-[var(--admin-text)]">{word.created_by_username || 'unknown'}</p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Action Area */}
+                                <div className="flex items-center justify-start md:justify-center px-4 pb-4 md:pb-0 md:px-4 border-t border-[var(--admin-outline-soft)] md:border-t-0 md:border-l md:border-[var(--admin-outline-soft)]">
+                                  <button
+                                    type="button"
+                                    onClick={() => void deleteBannedWord(word.id)}
+                                    className="inline-flex h-9 min-w-[92px] items-center justify-center gap-1.5 rounded-none border border-rose-500/20 bg-rose-500/10 px-4 font-heading text-[11px] font-bold uppercase tracking-wide text-rose-400 transition-all hover:bg-rose-500/20 hover:border-rose-500/40 hover:shadow-[0_0_16px_rgba(244,63,94,0.2)] active:scale-95"
+                                  >
+                                    <Trash2 size={13} />
+                                    Remove
+                                  </button>
+                                </div>
                               </div>
-                              <button
-                                type="button"
-                                onClick={() => void deleteBannedWord(word.id)}
-                                className="inline-flex h-10 items-center justify-center gap-2 rounded-none border border-rose-500/20 bg-rose-500/10 px-4 text-[11px] font-bold uppercase tracking-[0.14em] text-rose-400 transition-all hover:bg-rose-500/20"
-                              >
-                                <Trash2 size={14} />
-                                Remove
-                              </button>
-                            </div>
-                          </div>
-                        ))
+                            </motion.div>
+                          ))}
+                        </AnimatePresence>
                       )}
                     </div>
                   </div>
