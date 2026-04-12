@@ -232,7 +232,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
       const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: username.trim(), password }),
+        body: JSON.stringify({ username: username.trim(), password: password.trim() }),
         credentials: 'include',
       });
       if (response.ok) {
@@ -510,7 +510,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
     try {
       const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/accounts`, {
         method: 'POST',
-        body: JSON.stringify({ username: accountUsername.trim(), password: accountPassword, role: accountRole }),
+        body: JSON.stringify({ username: accountUsername.trim(), password: accountPassword.trim(), role: accountRole }),
       });
       if (response.status === 401) {
         logout();
