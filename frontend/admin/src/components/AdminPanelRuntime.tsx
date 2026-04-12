@@ -4,7 +4,7 @@
  * Enhanced Admin Dashboard
  */
 
-import React, { useDeferredValue, useEffect, useEffectEvent, useState } from 'react';
+import React, { useDeferredValue, useEffect, useEffectEvent, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DOMPurify from 'dompurify';
 import { motion, AnimatePresence } from 'motion/react';
@@ -91,6 +91,14 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(__mockState?.isMobileMenuOpen ?? false);
   const [bans, setBans] = useState<Ban[]>(__mockState?.bans ?? []);
   const [currentTab, setCurrentTab] = useState<'reports' | 'bans' | 'accounts' | 'infra'>(__mockState?.currentTab ?? 'reports');
+  const mainContentRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (mainContentRef.current) {
+      mainContentRef.current.scrollTo(0, 0);
+    }
+  }, [currentTab]);
+
   const [reportStatusFilter, setReportStatusFilter] = useState<'pending' | 'decided' | 'all'>(__mockState?.reportStatusFilter ?? 'pending');
   const [reportLimit, setReportLimit] = useState<string>('10');
   const [serverReportMetrics, setServerReportMetrics] = useState(__mockState?.serverReportMetrics ?? { pending: 0, approved: 0, rejected: 0 });
@@ -885,7 +893,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
         </aside>
 
         {/* Main Content */}
-        <main className="flex-1 overflow-y-auto">
+        <main ref={mainContentRef} className="flex-1 overflow-y-auto">
           <div className="mx-auto max-w-6xl p-6 lg:p-10">
             {/* Header */}
             <header className="mb-10 flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
@@ -1093,7 +1101,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                               <div className="flex-1 min-w-0">
                                 {report.description && (
                                   <div className="group relative">
-                                    <p className="text-sm text-slate-400 font-medium leading-relaxed line-clamp-4 break-all whitespace-pre-wrap overflow-hidden">
+                                    <p className="text-sm text-slate-400 font-medium leading-relaxed line-clamp-4 break-words whitespace-pre-wrap overflow-hidden">
                                       {report.description}
                                     </p>
                                     {(report.description.length > 100) && (
