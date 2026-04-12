@@ -1,9 +1,10 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { VideoChatView, type VideoChatState } from '../VideoChat';
 
 const entryModalCalls: { onConfirm?: (token: string) => void }[] = [];
+const originalInnerWidth = window.innerWidth;
 
 vi.mock('../ThemeToggle', () => ({
   ThemeToggle: () => <button type="button">Theme</button>,
@@ -56,6 +57,11 @@ describe('VideoChatView interactions', () => {
     entryModalCalls.length = 0;
     Element.prototype.scrollIntoView = vi.fn();
     localStorage.clear();
+    Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: originalInnerWidth });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: originalInnerWidth });
   });
 
   it('requires entry confirmation before searching when no turnstile token is present', () => {
@@ -138,5 +144,18 @@ describe('VideoChatView interactions', () => {
 
     fireEvent.click(pipSizeButton);
     expect(pipSizeButton).toHaveTextContent('L');
+  });
+
+  it('falls back to pip mode on mobile even if stacked is saved', () => {
+    localStorage.setItem('pairline-video-layout', 'stacked');
+    Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: 390 });
+
+    const state = createVideoState({ status: 'connected' });
+    renderVideoChat(state);
+
+    expect(screen.getByRole('button', { name: /toggle pip size/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /toggle stacked video ratio/i })).not.toBeInTheDocument();
+    expect(screen.getByTestId('local-video-container').className).toContain('z-20');
+    expect(screen.getByTestId('remote-video-container').className).toContain('z-0');
   });
 });

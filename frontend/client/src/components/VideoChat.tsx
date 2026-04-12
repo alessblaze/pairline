@@ -185,6 +185,9 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
   const [videoLayout, setVideoLayout] = useState<'pip' | 'stacked'>(() => {
     return (localStorage.getItem('pairline-video-layout') as 'pip' | 'stacked') || 'pip';
   });
+  const [isDesktopViewport, setIsDesktopViewport] = useState(() => (
+    typeof window === 'undefined' ? true : window.innerWidth >= 768
+  ));
   const [stackedVideoRatio, setStackedVideoRatio] = useState<StackedVideoRatio>(() => {
     const savedRatio = localStorage.getItem('pairline-stacked-video-ratio') as StackedVideoRatio | null;
     return STACKED_VIDEO_RATIOS.some(ratio => ratio.key === savedRatio) ? (savedRatio as StackedVideoRatio) : '4:3';
@@ -195,6 +198,7 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
   });
   const contentLayoutRef = useRef<HTMLDivElement>(null);
   const [stackedVideoPanelWidth, setStackedVideoPanelWidth] = useState<number | null>(null);
+  const effectiveVideoLayout = isDesktopViewport ? videoLayout : 'pip';
 
   const toggleVideoLayout = () => {
     setVideoLayout(prev => {
@@ -228,12 +232,6 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
   const pipSwapTransitionResetRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (videoLayout === 'stacked') {
-      setPipSwapped(false);
-    }
-  }, [videoLayout]);
-
-  useEffect(() => {
     return () => {
       if (pipSwapTransitionResetRef.current !== null) {
         window.clearTimeout(pipSwapTransitionResetRef.current);
@@ -241,8 +239,21 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
     };
   }, []);
 
+  useEffect(() => {
+    const updateViewportMode = () => {
+      setIsDesktopViewport(window.innerWidth >= 768);
+    };
+
+    updateViewportMode();
+    window.addEventListener('resize', updateViewportMode);
+
+    return () => {
+      window.removeEventListener('resize', updateViewportMode);
+    };
+  }, []);
+
   const togglePip = () => {
-    if (videoLayout === 'pip') {
+    if (effectiveVideoLayout === 'pip') {
       setIsPipSwapTransitionDisabled(true);
       setPipSwapped(prev => !prev);
       if (pipSwapTransitionResetRef.current !== null) {
@@ -258,16 +269,16 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
   const [showVideoConnecting, setShowVideoConnecting] = useState(false);
   const showVideoConnectingSinceRef = useRef<number | null>(null);
   const showVideoConnectingTimersRef = useRef<{ show?: number; hide?: number }>({});
-
-  const [remoteVideoHasRendered, setRemoteVideoHasRendered] = useState(false);
-  const remoteVideoRenderedRef = useRef(false);
+  const remoteVideoRenderKey = `${status}:${reportPeerId ?? 'none'}`;
+  const [remoteVideoRenderedKey, setRemoteVideoRenderedKey] = useState<string | null>(null);
+  const remoteVideoHasRendered = remoteVideoRenderedKey === remoteVideoRenderKey;
 
   useEffect(() => {
     const layout = contentLayoutRef.current;
     if (!layout) return;
 
     const updateStackedPanelWidth = () => {
-      if (typeof window === 'undefined' || window.innerWidth < 768 || videoLayout !== 'stacked') {
+      if (!isDesktopViewport || effectiveVideoLayout !== 'stacked') {
         setStackedVideoPanelWidth(null);
         return;
       }
@@ -293,27 +304,15 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
       resizeObserver?.disconnect();
       window.removeEventListener('resize', updateStackedPanelWidth);
     };
-  }, [stackedVideoRatio, videoLayout]);
-
-  useEffect(() => {
-    if (status !== 'connected') {
-      remoteVideoRenderedRef.current = false;
-      setRemoteVideoHasRendered(false);
-      return;
-    }
-
-    remoteVideoRenderedRef.current = false;
-    setRemoteVideoHasRendered(false);
-  }, [status, reportPeerId]);
+  }, [stackedVideoRatio, effectiveVideoLayout, isDesktopViewport]);
 
   useEffect(() => {
     const video = remoteVideoRef.current;
     if (!video) return;
+    const renderKey = remoteVideoRenderKey;
 
     const markRendered = () => {
-      if (remoteVideoRenderedRef.current) return;
-      remoteVideoRenderedRef.current = true;
-      setRemoteVideoHasRendered(true);
+      setRemoteVideoRenderedKey(prev => (prev === renderKey ? prev : renderKey));
     };
 
     video.addEventListener('loadeddata', markRendered);
@@ -325,19 +324,19 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
       video.removeEventListener('canplay', markRendered);
       video.removeEventListener('playing', markRendered);
     };
-  }, [remoteVideoRef, status, reportPeerId]);
+  }, [remoteVideoRef, remoteVideoRenderKey]);
 
   useEffect(() => {
-    const timers = showVideoConnectingTimersRef.current;
-    if (timers.show) window.clearTimeout(timers.show);
-    if (timers.hide) window.clearTimeout(timers.hide);
-    timers.show = undefined;
-    timers.hide = undefined;
+    const activeTimers = showVideoConnectingTimersRef.current;
+    if (activeTimers.show) window.clearTimeout(activeTimers.show);
+    if (activeTimers.hide) window.clearTimeout(activeTimers.hide);
+    activeTimers.show = undefined;
+    activeTimers.hide = undefined;
 
     const now = Date.now();
 
     if (status === 'connected' && isVideoConnecting) {
-      timers.show = window.setTimeout(() => {
+      activeTimers.show = window.setTimeout(() => {
         showVideoConnectingSinceRef.current = Date.now();
         setShowVideoConnecting(true);
       }, 150);
@@ -348,17 +347,16 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
     const visibleForMs = since ? now - since : 0;
     const minVisibleMs = 300;
     const hideDelay = Math.max(0, minVisibleMs - visibleForMs);
-    timers.hide = window.setTimeout(() => {
+    activeTimers.hide = window.setTimeout(() => {
       showVideoConnectingSinceRef.current = null;
       setShowVideoConnecting(false);
     }, hideDelay);
 
     return () => {
-      const timers = showVideoConnectingTimersRef.current;
-      if (timers.show) window.clearTimeout(timers.show);
-      if (timers.hide) window.clearTimeout(timers.hide);
-      timers.show = undefined;
-      timers.hide = undefined;
+      if (activeTimers.show) window.clearTimeout(activeTimers.show);
+      if (activeTimers.hide) window.clearTimeout(activeTimers.hide);
+      activeTimers.show = undefined;
+      activeTimers.hide = undefined;
     };
   }, [status, isVideoConnecting]);
 
@@ -368,23 +366,23 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
   // Mirrors the backend's captcha_verified socket flag.
   // Once verified, subsequent searches on the same WS connection skip the modal.
   // Resets when the WebSocket reconnects (new socket = new captcha_verified state).
-  const [captchaVerified, setCaptchaVerified] = useState(false);
+  const captchaVerifiedRef = useRef(false);
 
   // Reset captchaVerified when WebSocket reconnects (new socket = fresh captcha state)
   useEffect(() => {
-    if (!connected && captchaVerified) {
-      setCaptchaVerified(false);
+    if (!connected && captchaVerifiedRef.current) {
+      captchaVerifiedRef.current = false;
     }
-  }, [connected, captchaVerified]);
+  }, [connected]);
 
   // Reset captchaVerified if the backend rejected our token
   useEffect(() => {
-    if (!captchaVerified) return;
+    if (!captchaVerifiedRef.current) return;
     const lastMsg = messages[messages.length - 1];
     if (lastMsg?.sender === 'system' && lastMsg?.text?.includes('CAPTCHA')) {
-      setCaptchaVerified(false);
+      captchaVerifiedRef.current = false;
     }
-  }, [messages, captchaVerified]);
+  }, [messages]);
 
   // input state now lives in <VideoChatInput> — removed from parent to isolate keystroke re-renders
   const [interestTags, setInterestTags] = useState<string[]>([]);
@@ -426,14 +424,14 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
   }, []);
 
   useEffect(() => {
-    if (videoLayout !== 'pip') return;
+    if (effectiveVideoLayout !== 'pip') return;
 
     const frame = window.requestAnimationFrame(() => {
       clampLocalPreviewPosition();
     });
 
     return () => window.cancelAnimationFrame(frame);
-  }, [pipSize, pipSwapped, videoLayout, clampLocalPreviewPosition]);
+  }, [pipSize, pipSwapped, effectiveVideoLayout, clampLocalPreviewPosition]);
 
   const systemMessageClass = (message: ChatMessage) => (
     message.systemReason === BANNED_PHRASE_REASON
@@ -456,17 +454,10 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
 
   useEffect(() => { scrollToBottom(); }, [messages]);
 
-  useEffect(() => {
-    if (status !== 'connected') {
-      setConfirmStop(false);
-      setConfirmSkip(false);
-    }
-  }, [status]);
-
 
   useEffect(() => {
     const handlePointerMove = (event: PointerEvent) => {
-      if (typeof window !== 'undefined' && window.innerWidth >= 768 && videoLayout === 'stacked') return;
+      if (effectiveVideoLayout === 'stacked') return;
       if (!dragOffsetRef.current || !videoPanelRef.current || !localPreviewRef.current) return;
 
       const deltaX = Math.abs(event.clientX - dragOffsetRef.current.startX);
@@ -493,7 +484,7 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
     };
 
     const handlePointerUp = () => {
-      if (typeof window !== 'undefined' && window.innerWidth >= 768 && videoLayout === 'stacked') {
+      if (effectiveVideoLayout === 'stacked') {
         dragOffsetRef.current = null;
         setIsDraggingLocalPreview(false);
         return;
@@ -530,7 +521,7 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
     };
-  }, [isDraggingLocalPreview, videoLayout]);
+  }, [isDraggingLocalPreview, effectiveVideoLayout]);
 
   // handleSend and handleInputChange now live inside VideoChatInput
   const handleSend = useCallback((text: string) => {
@@ -538,7 +529,7 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
   }, [sendMessage]);
 
   const handleDisconnect = () => {
-    if (!confirmStop) {
+    if (!effectiveConfirmStop) {
       setConfirmStop(true);
       setTimeout(() => setConfirmStop(false), 3000);
     } else {
@@ -574,18 +565,17 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
   };
 
   const handleStartSearchClick = useCallback((interestsStr: string) => {
-    if (captchaVerified) {
+    if (captchaVerifiedRef.current) {
       startSearch(interestsStr);
     } else if (turnstileToken) {
       startSearch(interestsStr, turnstileToken);
-      setCaptchaVerified(true);
+      captchaVerifiedRef.current = true;
       navigate(location.pathname, { replace: true, state: {} });
     } else {
       setPendingInterests(interestsStr);
       setShowEntryModal(true);
     }
   }, [
-    captchaVerified,
     turnstileToken,
     startSearch,
     navigate,
@@ -595,11 +585,11 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
   const handleModalConfirm = useCallback((token: string) => {
     setShowEntryModal(false);
     startSearch(pendingInterests, token);
-    setCaptchaVerified(true);
+    captchaVerifiedRef.current = true;
   }, [startSearch, pendingInterests]);
 
   const handleNext = () => {
-    if (!confirmSkip) {
+    if (!effectiveConfirmSkip) {
       setConfirmSkip(true);
       setTimeout(() => setConfirmSkip(false), 3000);
     } else {
@@ -609,7 +599,7 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
   };
 
   const handleLocalPreviewPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (typeof window !== 'undefined' && window.innerWidth >= 768 && videoLayout === 'stacked') return;
+    if (effectiveVideoLayout === 'stacked') return;
     if (!videoPanelRef.current || !localPreviewRef.current) return;
     pipDragHasMovedRef.current = false;
 
@@ -637,6 +627,8 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
       }`} />
   );
   const canReportLastChat = !!reportPeerId;
+  const effectiveConfirmStop = status === 'connected' ? confirmStop : false;
+  const effectiveConfirmSkip = status === 'connected' ? confirmSkip : false;
 
   return (
     <div className="fixed inset-0 flex flex-col bg-gray-100 dark:bg-gray-900 overflow-hidden">
@@ -681,7 +673,7 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
               </svg>
             )}
           </button>
-          {videoLayout === 'pip' && (
+          {effectiveVideoLayout === 'pip' && (
             <button
               onClick={cyclePipSize}
               aria-label="Toggle PiP size"
@@ -691,7 +683,7 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
               {pipSize}
             </button>
           )}
-          {videoLayout === 'stacked' && (
+          {effectiveVideoLayout === 'stacked' && (
             <button
               onClick={cycleStackedVideoRatio}
               aria-label="Toggle stacked video ratio"
@@ -707,26 +699,26 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
 
       <div className="flex-1 flex flex-col md:flex-row min-h-0" ref={contentLayoutRef}>
         <div
-          className={`relative flex-1 flex flex-col min-h-0 bg-black overflow-hidden border-b md:border-b-0 md:border-r border-gray-200 dark:border-gray-700 ${videoLayout === 'stacked' ? 'md:flex-none' : 'md:w-[55%]'}`}
-          style={videoLayout === 'stacked' && stackedVideoPanelWidth ? { width: `${stackedVideoPanelWidth}px` } : undefined}
+          className={`relative flex-1 flex flex-col min-h-0 bg-black overflow-hidden border-b md:border-b-0 md:border-r border-gray-200 dark:border-gray-700 ${effectiveVideoLayout === 'stacked' ? 'md:flex-none' : 'md:w-[55%]'}`}
+          style={effectiveVideoLayout === 'stacked' && stackedVideoPanelWidth ? { width: `${stackedVideoPanelWidth}px` } : undefined}
           ref={videoPanelRef}
         >
           {(() => {
-            const isLocalPip = !(pipSwapped && videoLayout === 'pip');
-            const isRemoteMainVideo = videoLayout === 'stacked' || isLocalPip;
+            const isLocalPip = !(effectiveVideoLayout === 'pip' && pipSwapped);
+            const isRemoteMainVideo = effectiveVideoLayout === 'stacked' || isLocalPip;
             const shouldShowWatermark = status === 'connected' && remoteVideoHasRendered;
-            const overlayContainerClasses = videoLayout === 'stacked'
+            const overlayContainerClasses = effectiveVideoLayout === 'stacked'
               ? 'pointer-events-none absolute inset-0 z-30 md:h-1/2 md:inset-auto md:w-full md:top-0 md:left-0'
               : 'pointer-events-none absolute inset-0 z-10';
             const mainVideoTransitionClasses = isPipSwapTransitionDisabled ? '' : 'transition-[width,height] duration-300';
             const pipVideoTransitionClasses = isDraggingLocalPreview || isPipSwapTransitionDisabled ? '' : 'transition-[left,top,width,height,transform] duration-300';
             const pipSizeClasses = PIP_SIZES.find(size => size.key === pipSize)?.widthClass ?? PIP_SIZES[1].widthClass;
-            const mainVideoClasses = `absolute inset-0 z-0 isolate bg-black ${videoLayout === 'stacked' ? 'md:relative md:flex-1 md:min-h-0 md:z-10' : ''} ${mainVideoTransitionClasses} overflow-hidden`;
-            const pipVideoClasses = `absolute z-20 isolate ${pipSizeClasses} aspect-video bg-gray-900 rounded-lg overflow-hidden shadow-2xl border-2 border-white/20 touch-none cursor-grab active:cursor-grabbing ${pipVideoTransitionClasses} ${localPreviewPosition ? '' : 'bottom-3 right-3'} ${videoLayout === 'stacked' ? 'md:static md:w-full md:max-w-none md:flex-1 md:aspect-auto md:border-none md:rounded-none md:border-t md:border-gray-200 dark:md:border-gray-700 md:shadow-none md:touch-auto md:cursor-auto md:z-10' : ''}`;
-            const pipStyle = videoLayout === 'pip' || (typeof window !== 'undefined' && window.innerWidth < 768) ? (localPreviewPosition ? { left: localPreviewPosition.x, top: localPreviewPosition.y } : undefined) : undefined;
+            const mainVideoClasses = `absolute inset-0 z-0 isolate bg-black ${effectiveVideoLayout === 'stacked' ? 'md:relative md:flex-1 md:min-h-0 md:z-10' : ''} ${mainVideoTransitionClasses} overflow-hidden`;
+            const pipVideoClasses = `absolute z-20 isolate ${pipSizeClasses} aspect-video bg-gray-900 rounded-lg overflow-hidden shadow-2xl border-2 border-white/20 touch-none cursor-grab active:cursor-grabbing ${pipVideoTransitionClasses} ${localPreviewPosition ? '' : 'bottom-3 right-3'} ${effectiveVideoLayout === 'stacked' ? 'md:static md:w-full md:max-w-none md:flex-1 md:aspect-auto md:border-none md:rounded-none md:border-t md:border-gray-200 dark:md:border-gray-700 md:shadow-none md:touch-auto md:cursor-auto md:z-10' : ''}`;
+            const pipStyle = effectiveVideoLayout === 'pip' ? (localPreviewPosition ? { left: localPreviewPosition.x, top: localPreviewPosition.y } : undefined) : undefined;
             const watermark = (
               <span
-                className="text-5xl sm:text-4xl tracking-wide text-white mix-blend-difference"
+                className="text-4xl sm:text-5xl tracking-wide text-white mix-blend-difference"
                 style={{ fontFamily: "'Cedarville Cursive', cursive" }}
                 aria-hidden="true"
               >
@@ -921,8 +913,8 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
                 onNext={handleNext}
                 onReport={() => setShowReport(true)}
                 onDisconnect={handleDisconnect}
-                confirmSkip={confirmSkip}
-                confirmStop={confirmStop}
+                confirmSkip={effectiveConfirmSkip}
+                confirmStop={effectiveConfirmStop}
               />
             )}
           </div>
