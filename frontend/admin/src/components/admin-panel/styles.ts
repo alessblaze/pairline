@@ -26,7 +26,7 @@ export const metricCardClass = (type: 'active' | 'inactive' | 'total' | 'pending
         ? 'shadow-[inset_0_0_20px_rgba(34,211,238,0.05)] border-electric-cyan/20'
         : type === 'approved'
           ? 'shadow-[inset_0_0_20px_rgba(52,211,153,0.05)] border-success-emerald/20'
-          : 'border-white/[0.07]';
+          : 'border-[var(--admin-outline-soft)]';
 
   return `surface-card rounded-none flex flex-row items-center gap-4 p-5 transition-all duration-300 hover:border-[var(--admin-surface-border-strong)] ${glowShadow}`;
 };

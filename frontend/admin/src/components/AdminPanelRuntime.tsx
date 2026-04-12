@@ -659,7 +659,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
       {/* Mobile Top Bar */}
       <div className="admin-sidebar relative z-40 flex h-16 shrink-0 items-center justify-between border-b px-6 backdrop-blur-xl lg:hidden">
         <div className="flex items-center gap-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded-none bg-white text-slate-950">
+          <div className="flex h-8 w-8 items-center justify-center rounded-none bg-[var(--admin-text)] text-[var(--admin-bg)]">
             <Shield size={16} />
           </div>
           <h2 className="text-base font-bold text-[var(--admin-text)]">Pairline</h2>
@@ -692,7 +692,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
             >
               <div className="mb-10 flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-none bg-white text-slate-950">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-none bg-[var(--admin-text)] text-[var(--admin-bg)]">
                     <Shield size={20} />
                   </div>
                   <div>
@@ -796,7 +796,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
         <aside className="admin-sidebar hidden w-72 border-r backdrop-blur-xl lg:block">
           <div className="flex h-full flex-col p-6">
             <div className="mb-10 flex items-center gap-3 px-2">
-              <div className="flex h-10 w-10 items-center justify-center rounded-none bg-white text-slate-950">
+              <div className="flex h-10 w-10 items-center justify-center rounded-none bg-[var(--admin-text)] text-[var(--admin-bg)]">
                 <Shield size={20} />
               </div>
               <div>
@@ -995,7 +995,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           <button
                             type="button"
                             onClick={fetchReports}
-                            className={`${actionButtonClass} bg-white text-slate-950 hover:bg-cyan-100`}
+                            className={`${actionButtonClass} bg-[var(--admin-text)] text-[var(--admin-bg)] hover:bg-cyan-100`}
                           >
                             <RefreshCw size={16} />
                             Refresh Reports
@@ -1423,7 +1423,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                                         ? 'border border-rose-500/20 bg-rose-500/10 text-rose-300' 
                                         : 'border border-[var(--admin-outline-strong)] bg-[var(--admin-muted-surface)] text-[var(--admin-text-muted)]'
                                     }`}>
-                                      <div className={`h-1.5 w-1.5 rounded-none ${ban.is_active ? 'bg-rose-400 animate-pulse' : 'bg-slate-600'}`} />
+                                      <div className={`h-1.5 w-1.5 rounded-none ${ban.is_active ? 'bg-rose-400 animate-pulse' : 'bg-[var(--admin-text-muted)]'}`} />
                                       {ban.is_active ? 'Active' : 'Inactive'}
                                     </div>
                                     <div className="flex items-center gap-1.5 font-heading text-[11px] text-[var(--admin-text-muted)] font-bold uppercase tracking-[0.14em]">
@@ -1713,7 +1713,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                               setAccountPage(1);
                               fetchAccounts();
                             }}
-                            className={`${actionButtonClass} bg-slate-300 text-slate-950 hover:bg-cyan-100 whitespace-nowrap`}
+                            className={`${actionButtonClass} bg-[var(--admin-text)] text-[var(--admin-bg)] hover:bg-cyan-100 whitespace-nowrap`}
                           >
                             <RefreshCw size={16} />
                             Refresh Accounts
@@ -1760,7 +1760,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         <button
                           onClick={createAccount}
                           disabled={submittingAccount}
-                          className={`${actionButtonClass} bg-cyan-400 text-slate-950 hover:bg-cyan-300`}
+                          className={`${actionButtonClass} bg-cyan-400 text-[#050816] hover:bg-cyan-300`}
                         >
                           <UserPlus size={18} />
                           Add Member
