@@ -255,12 +255,14 @@ defmodule OmeglePhoenixWeb.RoomChannel do
                     %{
                       type: "system",
                       data: %{
-                        message: "This message was not sent due to containing a banned phrase."
+                        message: "This message was not sent due to containing a banned phrase.",
+                        reason_code: "banned_phrase"
                       }
                     }}, socket}
 
                 {:error, _reason} ->
-                  {:reply, {:error, %{reason: "Unable to verify message policy right now"}}, socket}
+                  {:reply, {:error, %{reason: "Unable to verify message policy right now"}},
+                   socket}
               end
             else
               {:reply, {:error, %{reason: "Invalid message content"}}, socket}

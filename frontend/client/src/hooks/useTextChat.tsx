@@ -18,9 +18,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { WebSocketClient } from '../services/websocket';
 import { useNetworkHealth } from './useNetworkHealth';
+import { BANNED_PHRASE_REASON, BLOCKED_PHRASE_NOTICE } from '../chatModeration';
 import type { ChatMessage, Message } from '../types';
-
-const blockedPhraseNotice = 'This message was not sent due to containing a banned phrase.';
 
 export function useTextChat(wsUrl: string) {
   const { setChannelStatus, removeChannel } = useNetworkHealth();
@@ -36,25 +35,52 @@ export function useTextChat(wsUrl: string) {
   const [peerTyping, setPeerTyping] = useState(false);
   const peerTypingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showReconnectMessageRef = useRef(false);
+  const chatEpochRef = useRef(0);
 
   const setReconnectMessageVisible = (visible: boolean) => {
     showReconnectMessageRef.current = visible;
     setShowReconnectMessage(visible);
   };
 
-  const showConnectionStatusMessage = (text: string) => {
-    if (showReconnectMessageRef.current) return;
+  const beginNewChatEpoch = () => {
+    chatEpochRef.current += 1;
+  };
 
+  const pushSystemMessage = (text: string, systemReason?: string) => {
     setMessages(msgs => [...msgs, {
       id: crypto.randomUUID(),
       text,
       sender: 'system',
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      systemReason
     }]);
+  };
+
+  const updateDeliveryStatus = (
+    messageId: string,
+    deliveryStatus: ChatMessage['deliveryStatus'],
+    replacementText?: string
+  ) => {
+    setMessages(prev => prev.map((message) => (
+      message.id === messageId
+        ? {
+            ...message,
+            text: replacementText ?? message.text,
+            deliveryStatus
+          }
+        : message
+    )));
+  };
+
+  const showConnectionStatusMessage = (text: string) => {
+    if (showReconnectMessageRef.current) return;
+
+    pushSystemMessage(text);
     setReconnectMessageVisible(true);
   };
 
   const cleanup = () => {
+    beginNewChatEpoch();
     setPeerId(null);
     setSessionId(null);
     setSessionToken(null);
@@ -83,6 +109,7 @@ export function useTextChat(wsUrl: string) {
 
     switch (message.type) {
       case 'match':
+        beginNewChatEpoch();
         const peerIdMatch = message.peer_id;
         const common = (message as any).common_interests || [];
         setPeerId(peerIdMatch || '');
@@ -126,12 +153,7 @@ export function useTextChat(wsUrl: string) {
 
       case 'system':
         if (message.data?.message) {
-          setMessages(prev => [...prev, {
-            id: crypto.randomUUID(),
-            text: message.data.message,
-            sender: 'system',
-            timestamp: Date.now()
-          }]);
+          pushSystemMessage(message.data.message, message.data?.reason_code);
         }
         break;
 
@@ -142,12 +164,8 @@ export function useTextChat(wsUrl: string) {
         setStatus('disconnected');
         setPeerId(null);
         setPeerTyping(false);
-        setMessages(prev => [...prev, {
-          id: crypto.randomUUID(),
-          text: 'Stranger has disconnected.',
-          sender: 'system',
-          timestamp: Date.now()
-        }]);
+        beginNewChatEpoch();
+        pushSystemMessage('Stranger has disconnected.');
         break;
 
       case 'banned':
@@ -155,12 +173,8 @@ export function useTextChat(wsUrl: string) {
         console.error('You have been banned:', textBanReason);
         setStatus('disconnected');
         setPeerTyping(false);
-        setMessages(prev => [...prev, {
-          id: crypto.randomUUID(),
-          text: `You have been banned: ${textBanReason}`,
-          sender: 'system',
-          timestamp: Date.now()
-        }]);
+        beginNewChatEpoch();
+        pushSystemMessage(`You have been banned: ${textBanReason}`);
         break;
 
       case 'error':
@@ -170,12 +184,7 @@ export function useTextChat(wsUrl: string) {
         if (typeof errorMessage === 'string' && errorMessage.includes('CAPTCHA')) {
           setStatus('idle');
         }
-        setMessages(prev => [...prev, {
-          id: crypto.randomUUID(),
-          text: `Error: ${errorMessage}`,
-          sender: 'system',
-          timestamp: Date.now()
-        }]);
+        pushSystemMessage(`Error: ${errorMessage}`);
         break;
 
       case 'timeout':
@@ -185,15 +194,12 @@ export function useTextChat(wsUrl: string) {
         setStatus('disconnected');
         setPeerId(null);
         setPeerTyping(false);
-        setMessages(prev => [...prev, {
-          id: crypto.randomUUID(),
-          text: 'Matchmaking timeout: No strangers are available right now.',
-          sender: 'system',
-          timestamp: Date.now()
-        }]);
+        beginNewChatEpoch();
+        pushSystemMessage('Matchmaking timeout: No strangers are available right now.');
         break;
 
       case 'stopped':
+        beginNewChatEpoch();
         setStatus('idle');
         setPeerId(null);
         setSessionId(null);
@@ -304,6 +310,7 @@ export function useTextChat(wsUrl: string) {
       }
 
       setMessages([]);
+      beginNewChatEpoch();
       setReconnectMessageVisible(false);
       setReportPeerId(null);
       setStatus('searching');
@@ -336,15 +343,11 @@ export function useTextChat(wsUrl: string) {
   const disconnect = () => {
     try {
       wsClient.send('disconnect', {});
+      beginNewChatEpoch();
       setStatus('disconnected');
       setPeerId(null);
       setPeerTyping(false);
-      setMessages(prev => [...prev, {
-        id: crypto.randomUUID(),
-        text: 'You have disconnected.',
-        sender: 'system',
-        timestamp: Date.now()
-      }]);
+      pushSystemMessage('You have disconnected.');
     } catch (error) {
       console.error('Failed to disconnect:', error);
     }
@@ -354,6 +357,7 @@ export function useTextChat(wsUrl: string) {
     try {
       if (status === 'connected') {
         wsClient.send('skip', {});
+        beginNewChatEpoch();
         setPeerId(null);
         setReportPeerId(null);
         setMessages([]);
@@ -368,35 +372,46 @@ export function useTextChat(wsUrl: string) {
   const sendMessage = (text: string) => {
     try {
       if (text.trim() && status === 'connected') {
+        const messageId = crypto.randomUUID();
+        const chatEpoch = chatEpochRef.current;
+
+        setMessages(prev => [...prev, {
+          id: messageId,
+          text,
+          sender: 'me',
+          timestamp: Date.now(),
+          deliveryStatus: 'pending'
+        }]);
+
         void wsClient.sendWithResponse('message', { content: text })
           .then((payload) => {
+            if (chatEpochRef.current !== chatEpoch) {
+              return;
+            }
+
             if (payload?.type === 'system') {
-              if (payload.data?.message === blockedPhraseNotice) {
-                setMessages(prev => [...prev, {
-                  id: crypto.randomUUID(),
-                  text,
-                  sender: 'me',
-                  timestamp: Date.now(),
-                  deliveryStatus: 'blocked'
-                }]);
+              if (payload.data?.reason_code === BANNED_PHRASE_REASON || payload.data?.message === BLOCKED_PHRASE_NOTICE) {
+                updateDeliveryStatus(messageId, 'blocked');
               }
               return;
             }
 
             if (payload?.type === 'error') {
+              const errorMessage = payload.data?.message || payload.data?.error || payload.data?.reason || 'Message could not be sent. Please try again.';
+              updateDeliveryStatus(messageId, 'failed');
+              pushSystemMessage(`Message could not be sent: ${errorMessage}`);
               return;
             }
 
-            setMessages(prev => [...prev, {
-              id: crypto.randomUUID(),
-              text,
-              sender: 'me',
-              timestamp: Date.now(),
-              deliveryStatus: 'sent'
-            }]);
+            updateDeliveryStatus(messageId, 'sent');
           })
           .catch((error) => {
             console.error('Failed to send message:', error);
+            if (chatEpochRef.current !== chatEpoch) {
+              return;
+            }
+            updateDeliveryStatus(messageId, 'failed');
+            pushSystemMessage('Message could not be sent right now. Please try again.');
           });
       }
     } catch (error) {

@@ -21,6 +21,7 @@ import { useVideoChat } from '../hooks/useVideoChat';
 import { ReportDialog } from './ReportDialog';
 import { ThemeToggle } from './ThemeToggle';
 import { EntryModal } from './EntryModal';
+import { BANNED_PHRASE_REASON } from '../chatModeration';
 import DOMPurify from 'dompurify';
 import type { ChatMessage } from '../types';
 
@@ -279,21 +280,24 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
   const [showReport, setShowReport] = useState(false);
   const [localPreviewPosition, setLocalPreviewPosition] = useState<{ x: number; y: number } | null>(null);
   const [isDraggingLocalPreview, setIsDraggingLocalPreview] = useState(false);
-  const blockedPhraseNotice = 'This message was not sent due to containing a banned phrase.';
   // typingTimeoutRef moved to VideoChatInput
   const videoPanelRef = useRef<HTMLDivElement>(null);
   const localPreviewRef = useRef<HTMLDivElement>(null);
   const dragOffsetRef = useRef<{ x: number; y: number } | null>(null);
 
-  const systemMessageClass = (text: string) => (
-    text === blockedPhraseNotice
+  const systemMessageClass = (message: ChatMessage) => (
+    message.systemReason === BANNED_PHRASE_REASON
       ? 'bg-red-100 text-red-700 shadow-[0_0_18px_rgba(239,68,68,0.28)] ring-1 ring-red-300/80 dark:bg-red-950/70 dark:text-red-200 dark:ring-red-500/40 dark:shadow-[0_0_22px_rgba(248,113,113,0.28)]'
       : 'bg-gray-100 dark:bg-gray-800 text-gray-500'
   );
-  const myMessageClass = (deliveryStatus?: 'sent' | 'blocked') => (
-    deliveryStatus === 'blocked'
-      ? 'bg-red-100 text-red-700 ring-1 ring-red-300/80 shadow-[0_0_18px_rgba(239,68,68,0.22)] dark:bg-red-950/70 dark:text-red-100 dark:ring-red-500/40 dark:shadow-[0_0_22px_rgba(248,113,113,0.24)]'
-      : 'bg-indigo-600 text-white'
+  const myMessageClass = (deliveryStatus?: ChatMessage['deliveryStatus']) => (
+    deliveryStatus === 'pending'
+      ? 'bg-indigo-500/70 text-white'
+      : deliveryStatus === 'failed'
+        ? 'bg-amber-100 text-amber-800 ring-1 ring-amber-300/80 dark:bg-amber-950/60 dark:text-amber-100 dark:ring-amber-500/40'
+        : deliveryStatus === 'blocked'
+          ? 'bg-red-100 text-red-700 ring-1 ring-red-300/80 shadow-[0_0_18px_rgba(239,68,68,0.22)] dark:bg-red-950/70 dark:text-red-100 dark:ring-red-500/40 dark:shadow-[0_0_22px_rgba(248,113,113,0.24)]'
+          : 'bg-indigo-600 text-white'
   );
 
   const scrollToBottom = () => {
@@ -561,7 +565,7 @@ export function VideoChatView({ state }: { state: VideoChatState }) {
           <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 flex flex-col" id="messages">
             {messages.map((msg) => (
               <div key={msg.id} className={`flex ${msg.sender === 'system' ? 'justify-center' : msg.sender === 'me' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[85%] px-4 py-2 rounded-2xl text-sm transition-all ${msg.sender === 'system' ? systemMessageClass(msg.text) : msg.sender === 'me' ? myMessageClass(msg.deliveryStatus) : 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white'}`}>
+                <div className={`max-w-[85%] px-4 py-2 rounded-2xl text-sm transition-all ${msg.sender === 'system' ? systemMessageClass(msg) : msg.sender === 'me' ? myMessageClass(msg.deliveryStatus) : 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white'}`}>
                   <p className="whitespace-pre-wrap break-words">{DOMPurify.sanitize(msg.text)}</p>
                 </div>
               </div>

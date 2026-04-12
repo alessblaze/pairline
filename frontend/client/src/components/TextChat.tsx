@@ -21,6 +21,7 @@ import { useTextChat } from '../hooks/useTextChat';
 import { ThemeToggle } from './ThemeToggle';
 import { ReportDialog } from './ReportDialog';
 import { EntryModal } from './EntryModal';
+import { BANNED_PHRASE_REASON } from '../chatModeration';
 import DOMPurify from 'dompurify';
 import type { ChatMessage } from '../types';
 
@@ -198,17 +199,20 @@ export function TextChatView({ state }: { state: TextChatState }) {
   const [confirmStop, setConfirmStop] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const canReportLastChat = !!reportPeerId;
-  const blockedPhraseNotice = 'This message was not sent due to containing a banned phrase.';
 
-  const systemMessageClass = (text: string) => (
-    text === blockedPhraseNotice
+  const systemMessageClass = (message: ChatMessage) => (
+    message.systemReason === BANNED_PHRASE_REASON
       ? 'bg-red-100 text-red-700 shadow-[0_0_18px_rgba(239,68,68,0.28)] ring-1 ring-red-300/80 dark:bg-red-950/70 dark:text-red-200 dark:ring-red-500/40 dark:shadow-[0_0_22px_rgba(248,113,113,0.28)]'
       : 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400'
   );
-  const myMessageClass = (deliveryStatus?: 'sent' | 'blocked') => (
-    deliveryStatus === 'blocked'
-      ? 'bg-red-100 text-red-700 ring-1 ring-red-300/80 shadow-[0_0_18px_rgba(239,68,68,0.22)] dark:bg-red-950/70 dark:text-red-100 dark:ring-red-500/40 dark:shadow-[0_0_22px_rgba(248,113,113,0.24)]'
-      : 'bg-indigo-600 text-white'
+  const myMessageClass = (deliveryStatus?: ChatMessage['deliveryStatus']) => (
+    deliveryStatus === 'pending'
+      ? 'bg-indigo-500/70 text-white'
+      : deliveryStatus === 'failed'
+        ? 'bg-amber-100 text-amber-800 ring-1 ring-amber-300/80 dark:bg-amber-950/60 dark:text-amber-100 dark:ring-amber-500/40'
+        : deliveryStatus === 'blocked'
+          ? 'bg-red-100 text-red-700 ring-1 ring-red-300/80 shadow-[0_0_18px_rgba(239,68,68,0.22)] dark:bg-red-950/70 dark:text-red-100 dark:ring-red-500/40 dark:shadow-[0_0_22px_rgba(248,113,113,0.24)]'
+          : 'bg-indigo-600 text-white'
   );
 
   // handleSend is now inside ChatInput; parent just needs a callback wrapper
@@ -372,7 +376,7 @@ export function TextChatView({ state }: { state: TextChatState }) {
                 }`}
             >
               {msg.sender === 'system' ? (
-                <div className={`px-3 py-2 sm:px-4 sm:py-2 rounded-full text-xs sm:text-sm font-medium transition-all ${systemMessageClass(msg.text)}`}>
+                <div className={`px-3 py-2 sm:px-4 sm:py-2 rounded-full text-xs sm:text-sm font-medium transition-all ${systemMessageClass(msg)}`}>
                   {msg.text}
                 </div>
               ) : (

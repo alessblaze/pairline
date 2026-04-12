@@ -1079,17 +1079,14 @@ func DeleteBannedWordHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 			return
 		}
 
-		if err := redisClient.GetClient().SRem(ctx, appredis.BannedWordsSetKey(), entry.NormalizedWord).Err(); err != nil {
-			log.Printf("Failed to remove banned word from Redis: %v", err)
-			c.JSON(http.StatusBadGateway, gin.H{"error": "Word deleted, but Redis propagation failed"})
+		if err := db.GetDB().WithContext(ctx).Delete(&storage.BannedWord{}, "id = ?", wordID).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete banned word"})
 			return
 		}
 
-		if err := db.GetDB().WithContext(ctx).Delete(&storage.BannedWord{}, "id = ?", wordID).Error; err != nil {
-			if rollbackErr := redisClient.GetClient().SAdd(ctx, appredis.BannedWordsSetKey(), entry.NormalizedWord).Err(); rollbackErr != nil {
-				log.Printf("Failed to restore banned word in Redis after DB delete error: %v", rollbackErr)
-			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete banned word"})
+		if err := redisClient.GetClient().SRem(ctx, appredis.BannedWordsSetKey(), entry.NormalizedWord).Err(); err != nil {
+			log.Printf("Failed to remove banned word from Redis: %v", err)
+			c.JSON(http.StatusBadGateway, gin.H{"error": "Word deleted, but Redis propagation failed"})
 			return
 		}
 

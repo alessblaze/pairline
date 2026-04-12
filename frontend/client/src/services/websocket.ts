@@ -225,22 +225,23 @@ export class WebSocketClient {
     }
   }
 
-  sendWithResponse(type: string, data: any): Promise<Message | void> {
+  sendWithResponse(type: string, data: any, timeoutMs = 8000): Promise<any> {
     try {
       if (this.isConnected() && this.channel) {
         return new Promise((resolve, reject) => {
+          const timeoutId = setTimeout(() => {
+            reject(new Error(`Timed out waiting for "${type}" response`));
+          }, timeoutMs);
+
           this.channel?.push(type, { data })
-            .receive('ok', (payload: Message) => {
-              if (payload?.type) {
-                this.dispatchMessage(payload);
-              }
+            .receive('ok', (payload: Message | { status?: string }) => {
+              clearTimeout(timeoutId);
               resolve(payload);
             })
             .receive('error', (payload: Message | { reason?: string; error?: string; type?: string }) => {
+              clearTimeout(timeoutId);
               if (payload && typeof payload === 'object' && 'type' in payload && payload.type) {
-                const typedPayload = payload as Message;
-                this.dispatchMessage(typedPayload);
-                resolve(typedPayload);
+                resolve(payload as Message);
                 return;
               }
 
@@ -249,7 +250,6 @@ export class WebSocketClient {
                 data: payload
               };
 
-              this.dispatchMessage(errorPayload);
               resolve(errorPayload);
             });
         });

@@ -18,10 +18,12 @@ defmodule OmeglePhoenix.MessageModeration do
     if normalized_content == "" do
       {:ok, nil}
     else
+      content_tokens = String.split(normalized_content, " ", trim: true)
+
       blocked =
         @cache_key
         |> :persistent_term.get([])
-        |> Enum.find(&String.contains?(normalized_content, &1))
+        |> Enum.find(&phrase_matches?(content_tokens, &1))
 
       {:ok, blocked}
     end
@@ -91,4 +93,16 @@ defmodule OmeglePhoenix.MessageModeration do
   end
 
   defp normalize(_value), do: ""
+
+  defp phrase_matches?(_content_tokens, ""), do: false
+
+  defp phrase_matches?(content_tokens, phrase) do
+    phrase_tokens = String.split(phrase, " ", trim: true)
+    phrase_length = length(phrase_tokens)
+
+    phrase_length > 0 and
+      content_tokens
+      |> Enum.chunk_every(phrase_length, 1, :discard)
+      |> Enum.any?(&(&1 == phrase_tokens))
+  end
 end
