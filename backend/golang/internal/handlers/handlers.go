@@ -716,6 +716,9 @@ func CreateBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 }
 
 func GetBansHandlerGin(c *gin.Context) {
+	span := startHandlerSpan(c, "admin.bans.list")
+	defer span.End()
+
 	status := c.Query("status")
 	limitStr := c.Query("limit")
 	searchQuery := strings.ToLower(strings.TrimSpace(c.Query("q")))
@@ -971,6 +974,9 @@ func DeleteBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 }
 
 func GetBannedWordsHandlerGin(c *gin.Context) {
+	span := startHandlerSpan(c, "moderation.banned_words.list")
+	defer span.End()
+
 	db := storage.NewDatabase()
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
@@ -1137,6 +1143,9 @@ func UpdateBannedWordsSettingsHandlerGin(redisClient *appredis.Client) gin.Handl
 
 func CreateBannedWordHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		span := startHandlerSpan(c, "moderation.banned_words.create")
+		defer span.End()
+
 		var req struct {
 			Word string `json:"word" binding:"required,max=128"`
 		}
@@ -1217,6 +1226,9 @@ func CreateBannedWordHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 
 func DeleteBannedWordHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		span := startHandlerSpan(c, "moderation.banned_words.delete")
+		defer span.End()
+
 		wordID := strings.TrimSpace(c.Param("id"))
 		if !uuidRe.MatchString(wordID) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid banned word identifier format"})
@@ -1261,6 +1273,9 @@ func DeleteBannedWordHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 }
 
 func ListAdminAccountsHandlerGin(c *gin.Context) {
+	span := startHandlerSpan(c, "admin.accounts.list")
+	defer span.End()
+
 	limit := 25
 	if limitStr := strings.TrimSpace(c.Query("limit")); limitStr != "" {
 		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
@@ -1321,6 +1336,9 @@ func ListAdminAccountsHandlerGin(c *gin.Context) {
 }
 
 func CreateAdminHandlerGin(c *gin.Context) {
+	span := startHandlerSpan(c, "admin.accounts.create")
+	defer span.End()
+
 	// Per-endpoint request size limit: prevent DoS through large payloads
 	if c.Request.ContentLength > 4096 {
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "Request too large"})
@@ -1406,6 +1424,9 @@ func CreateAdminHandlerGin(c *gin.Context) {
 }
 
 func DeleteAdminHandlerGin(c *gin.Context) {
+	span := startHandlerSpan(c, "admin.accounts.delete")
+	defer span.End()
+
 	username := c.Param("username")
 
 	// Validate username format to prevent injection via path parameter

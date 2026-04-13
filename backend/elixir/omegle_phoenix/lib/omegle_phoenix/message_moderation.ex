@@ -20,6 +20,7 @@ defmodule OmeglePhoenix.MessageModeration do
 
   use GenServer
   require Logger
+  require OpenTelemetry.Tracer, as: Tracer
 
   @banned_words_key "moderation:banned_words"
   @banned_words_enabled_key "moderation:banned_words:enabled"
@@ -32,22 +33,26 @@ defmodule OmeglePhoenix.MessageModeration do
   end
 
   def blocked_word(content) when is_binary(content) do
-    if not :persistent_term.get(@enabled_cache_key, true) do
-      {:ok, nil}
-    else
-      normalized_content = normalize(content)
-
-      if normalized_content == "" do
+    Tracer.with_span "moderation.blocked_word", %{kind: :internal} do
+      if not :persistent_term.get(@enabled_cache_key, true) do
+        Tracer.set_attributes(%{"moderation.enabled" => false})
         {:ok, nil}
       else
-        content_tokens = String.split(normalized_content, " ", trim: true)
+        normalized_content = normalize(content)
 
-        blocked =
-          @cache_key
-          |> :persistent_term.get([])
-          |> Enum.find(&phrase_matches?(content_tokens, &1))
+        if normalized_content == "" do
+          {:ok, nil}
+        else
+          content_tokens = String.split(normalized_content, " ", trim: true)
 
-        {:ok, blocked}
+          blocked =
+            @cache_key
+            |> :persistent_term.get([])
+            |> Enum.find(&phrase_matches?(content_tokens, &1))
+
+          if blocked, do: Tracer.set_attributes(%{"moderation.blocked" => true})
+          {:ok, blocked}
+        end
       end
     end
   end
@@ -83,25 +88,28 @@ defmodule OmeglePhoenix.MessageModeration do
   def handle_info(_message, state), do: {:noreply, state}
 
   defp refresh_cache(state) do
-    case OmeglePhoenix.Redis.command(["GET", @banned_words_enabled_key]) do
-      {:ok, enabled_value} ->
-        enabled = enabled?(enabled_value)
-        :persistent_term.put(@enabled_cache_key, enabled)
+    Tracer.with_span "moderation.refresh_cache", %{kind: :internal} do
+      case OmeglePhoenix.Redis.command(["GET", @banned_words_enabled_key]) do
+        {:ok, enabled_value} ->
+          enabled = enabled?(enabled_value)
+          :persistent_term.put(@enabled_cache_key, enabled)
+          Tracer.set_attributes(%{"moderation.enabled" => enabled})
 
-        if enabled do
-          refresh_words_cache(state)
-        else
-          :persistent_term.put(@cache_key, [])
-          state |> Map.put(:enabled, false) |> Map.put(:words_count, 0)
-        end
+          if enabled do
+            refresh_words_cache(state)
+          else
+            :persistent_term.put(@cache_key, [])
+            state |> Map.put(:enabled, false) |> Map.put(:words_count, 0)
+          end
 
-      {:error, reason} ->
-        Logger.warning("Failed to refresh banned words enabled flag: #{inspect(reason)}")
-        state
+        {:error, reason} ->
+          Logger.warning("Failed to refresh banned words enabled flag: #{inspect(reason)}")
+          state
 
-      other ->
-        Logger.warning("Unexpected banned words enabled flag result: #{inspect(other)}")
-        state
+        other ->
+          Logger.warning("Unexpected banned words enabled flag result: #{inspect(other)}")
+          state
+      end
     end
   end
 
@@ -131,6 +139,7 @@ defmodule OmeglePhoenix.MessageModeration do
           |> Enum.sort()
 
         :persistent_term.put(@cache_key, normalized_words)
+        Tracer.set_attributes(%{"moderation.words_count" => length(normalized_words)})
         state |> Map.put(:enabled, true) |> Map.put(:words_count, length(normalized_words))
 
       {:error, reason} ->

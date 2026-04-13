@@ -17,6 +17,7 @@
 
 defmodule OmeglePhoenix.Turnstile do
   require Logger
+  require OpenTelemetry.Tracer, as: Tracer
 
   @verify_url "https://challenges.cloudflare.com/turnstile/v0/siteverify"
   @max_token_size 2_048
@@ -25,55 +26,63 @@ defmodule OmeglePhoenix.Turnstile do
   def verify(token, remoteip)
       when is_binary(token) and byte_size(token) >= @min_token_size and
              byte_size(token) <= @max_token_size do
-    secret = System.get_env("TURNSTILE_SECRET_KEY")
+    Tracer.with_span "turnstile.verify", %{kind: :client} do
+      Tracer.set_attributes(%{"http.url" => @verify_url, "http.method" => "POST"})
+      secret = System.get_env("TURNSTILE_SECRET_KEY")
 
-    if is_nil(secret) or secret == "" do
-      if OmeglePhoenix.Config.turnstile_insecure_bypass_allowed?() do
-        Logger.warning(
-          "TURNSTILE_SECRET_KEY is not set. Allowing insecure Turnstile bypass outside hardened environments."
-        )
+      if is_nil(secret) or secret == "" do
+        if OmeglePhoenix.Config.turnstile_insecure_bypass_allowed?() do
+          Logger.warning(
+            "TURNSTILE_SECRET_KEY is not set. Allowing insecure Turnstile bypass outside hardened environments."
+          )
 
-        true
-      else
-        Logger.error(
-          "TURNSTILE_SECRET_KEY is not set. Rejecting Turnstile verification because insecure bypass is disabled."
-        )
+          Tracer.set_attributes(%{"turnstile.bypassed" => true})
+          true
+        else
+          Logger.error(
+            "TURNSTILE_SECRET_KEY is not set. Rejecting Turnstile verification because insecure bypass is disabled."
+          )
 
-        false
-      end
-    else
-      body =
-        URI.encode_query(%{
-          "secret" => secret,
-          "response" => token,
-          "remoteip" => remoteip
-        })
-
-      request =
-        Finch.build(
-          :post,
-          @verify_url,
-          [{"content-type", "application/x-www-form-urlencoded"}],
-          body
-        )
-
-      case Finch.request(request, OmeglePhoenixFinch, receive_timeout: 5000) do
-        {:ok, %Finch.Response{status: status, body: resp_body}} when status in 200..299 ->
-          case JSON.decode(resp_body) do
-            {:ok, %{"success" => true}} ->
-              true
-
-            {:ok, %{"success" => false, "error-codes" => errors}} ->
-              Logger.info("Turnstile verification failed: #{inspect(errors)}")
-              false
-
-            _ ->
-              false
-          end
-
-        error ->
-          Logger.error("Failed to connect to Turnstile API: #{inspect(error)}")
           false
+        end
+      else
+        body =
+          URI.encode_query(%{
+            "secret" => secret,
+            "response" => token,
+            "remoteip" => remoteip
+          })
+
+        request =
+          Finch.build(
+            :post,
+            @verify_url,
+            [{"content-type", "application/x-www-form-urlencoded"}],
+            body
+          )
+
+        case Finch.request(request, OmeglePhoenixFinch, receive_timeout: 5000) do
+          {:ok, %Finch.Response{status: status, body: resp_body}} when status in 200..299 ->
+            Tracer.set_attributes(%{"http.status_code" => status})
+
+            case JSON.decode(resp_body) do
+              {:ok, %{"success" => true}} ->
+                Tracer.set_attributes(%{"turnstile.success" => true})
+                true
+
+              {:ok, %{"success" => false, "error-codes" => errors}} ->
+                Tracer.set_attributes(%{"turnstile.success" => false})
+                Logger.info("Turnstile verification failed: #{inspect(errors)}")
+                false
+
+              _ ->
+                false
+            end
+
+          error ->
+            Logger.error("Failed to connect to Turnstile API: #{inspect(error)}")
+            false
+        end
       end
     end
   end

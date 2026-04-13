@@ -18,6 +18,7 @@
 defmodule OmeglePhoenix.Redis.AdminSubscriber do
   use GenServer
   require Logger
+  require OpenTelemetry.Tracer, as: Tracer
 
   alias OmeglePhoenix.Redis.Streams
 
@@ -148,7 +149,10 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
       message ->
         case JSON.decode(message) do
           {:ok, %{"action" => action} = decoded} ->
-            handle_admin_action(action, decoded)
+            Tracer.with_span "admin.stream.action", %{kind: :server} do
+              Tracer.set_attributes(%{"admin.action" => action})
+              handle_admin_action(action, decoded)
+            end
 
           _ ->
             Logger.error("Invalid admin stream payload: #{inspect(message)}")

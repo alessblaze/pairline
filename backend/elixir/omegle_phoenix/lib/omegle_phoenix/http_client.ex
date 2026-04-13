@@ -20,6 +20,8 @@ defmodule OmeglePhoenix.HTTPClient do
   HTTP client for communicating with Go services
   """
 
+  require OpenTelemetry.Tracer, as: Tracer
+
   @go_service_url "http://localhost:8082"
 
   def post(url, body) do
@@ -27,17 +29,22 @@ defmodule OmeglePhoenix.HTTPClient do
   end
 
   def post(url, headers, body) do
-    body_json = JSON.encode!(body)
-    all_headers = [{"content-type", "application/json"} | headers]
+    Tracer.with_span "http_client.post", %{kind: :client} do
+      Tracer.set_attributes(%{"http.method" => "POST", "http.url" => url})
+      body_json = JSON.encode!(body)
+      trace_headers = :otel_propagator_text_map.inject([])
+      all_headers = [{"content-type", "application/json"} | headers] ++ trace_headers
 
-    request = Finch.build(:post, @go_service_url <> url, all_headers, body_json)
+      request = Finch.build(:post, @go_service_url <> url, all_headers, body_json)
 
-    case Finch.request(request, OmeglePhoenixFinch) do
-      {:ok, response} ->
-        {:ok, response.status, response.headers, response.body}
+      case Finch.request(request, OmeglePhoenixFinch) do
+        {:ok, response} ->
+          Tracer.set_attributes(%{"http.status_code" => response.status})
+          {:ok, response.status, response.headers, response.body}
 
-      {:error, reason} ->
-        {:error, reason}
+        {:error, reason} ->
+          {:error, reason}
+      end
     end
   end
 
@@ -46,35 +53,40 @@ defmodule OmeglePhoenix.HTTPClient do
   end
 
   def http_post_signed(url, payload, timeout) do
-    timestamp = System.system_time(:millisecond)
-    nonce = Uniq.UUID.uuid4()
+    Tracer.with_span "http_client.post_signed", %{kind: :client} do
+      Tracer.set_attributes(%{"http.method" => "POST", "http.url" => url})
+      timestamp = System.system_time(:millisecond)
+      nonce = Uniq.UUID.uuid4()
 
-    payload_map = %{
-      timestamp: timestamp,
-      nonce: nonce,
-      data: payload
-    }
+      payload_map = %{
+        timestamp: timestamp,
+        nonce: nonce,
+        data: payload
+      }
 
-    signature = OmeglePhoenix.HMAC.sign_request(payload_map)
+      signature = OmeglePhoenix.HMAC.sign_request(payload_map)
 
-    headers = [
-      {"x-signature", signature},
-      {"x-timestamp", to_string(timestamp)},
-      {"x-nonce", nonce}
-    ]
+      headers = [
+        {"x-signature", signature},
+        {"x-timestamp", to_string(timestamp)},
+        {"x-nonce", nonce}
+      ]
 
-    body_json = JSON.encode!(payload_map)
-    all_headers = [{"content-type", "application/json"} | headers]
+      body_json = JSON.encode!(payload_map)
+      trace_headers = :otel_propagator_text_map.inject([])
+      all_headers = [{"content-type", "application/json"} | headers] ++ trace_headers
 
-    request =
-      Finch.build(:post, @go_service_url <> url, all_headers, body_json)
+      request =
+        Finch.build(:post, @go_service_url <> url, all_headers, body_json)
 
-    case Finch.request(request, OmeglePhoenixFinch, receive_timeout: timeout) do
-      {:ok, response} ->
-        {:ok, response.status, response.headers, response.body}
+      case Finch.request(request, OmeglePhoenixFinch, receive_timeout: timeout) do
+        {:ok, response} ->
+          Tracer.set_attributes(%{"http.status_code" => response.status})
+          {:ok, response.status, response.headers, response.body}
 
-      {:error, reason} ->
-        {:error, reason}
+        {:error, reason} ->
+          {:error, reason}
+      end
     end
   end
 end
