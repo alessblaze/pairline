@@ -33,9 +33,9 @@ import (
 var handlerTracer = otel.Tracer("pairline/go/handlers")
 
 func startHandlerSpan(c *gin.Context, name string) trace.Span {
-	ctx, span := handlerTracer.Start(c.Request.Context(), name, trace.WithSpanKind(trace.SpanKindInternal))
+	ctx, span := handlerTracer.Start(c.Request.Context(), name, trace.WithSpanKind(trace.SpanKindServer))
 	span.SetAttributes(
-		attribute.String("pairline.span.layer", "internal"),
+		attribute.String("pairline.span.layer", "server"),
 		attribute.String("pairline.operation.name", name),
 	)
 	c.Request = c.Request.WithContext(ctx)
