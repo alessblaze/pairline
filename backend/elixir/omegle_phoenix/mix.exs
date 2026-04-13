@@ -55,7 +55,9 @@ defmodule OmeglePhoenix.MixProject do
       {:gettext, "~> 0.23"},
       {:opentelemetry_api, "~> 1.5"},
       {:opentelemetry, "~> 1.7"},
-      {:opentelemetry_exporter, "~> 1.10"}
+      {:opentelemetry_exporter, "~> 1.10"},
+      {:opentelemetry_phoenix, "~> 2.0"},
+      {:opentelemetry_cowboy, "~> 1.0"}
     ]
   end
 

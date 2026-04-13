@@ -22,6 +22,9 @@ defmodule OmeglePhoenix.Application do
 
   @impl true
   def start(_type, _args) do
+    :opentelemetry_cowboy.setup()
+    OpentelemetryPhoenix.setup(adapter: :cowboy2, endpoint_prefix: [:omegle_phoenix, :endpoint])
+
     children = [
       {Finch, name: OmeglePhoenixFinch, pools: %{default: [size: 10]}},
       {Phoenix.PubSub, name: OmeglePhoenix.PubSub},
