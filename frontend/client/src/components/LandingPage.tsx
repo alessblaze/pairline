@@ -23,6 +23,7 @@ import promoPoster from '../assets/promo-poster.webp';
 import promoImg from '../assets/promo.webp';
 import promoFeaturesImg from '../assets/promofeatures.webp';
 import albertImg from '../assets/aless.webp';
+import loadingGif from '../assets/loading.gif';
 
 export function LandingPage() {
   const navigate = useNavigate();
@@ -183,9 +184,13 @@ export function LandingPage() {
       {/* ── Loading Skeleton ─────────────────────────────────────────── */}
       {!pageReady && (
         <div className="fixed inset-0 z-[200] flex flex-col items-center justify-center bg-gradient-to-br from-slate-100 via-pink-50 to-indigo-50 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 transition-colors">
-          <div className="flex flex-col items-center gap-6 animate-pulse">
-            <div className="w-16 h-16 rounded-full border-4 border-pink-300 border-t-transparent dark:border-pink-500 dark:border-t-transparent animate-spin" />
-            <p className="text-sm font-semibold text-slate-400 dark:text-slate-500 tracking-widest uppercase">Loading Pairline…</p>
+          <div className="flex flex-col items-center gap-4">
+            <img
+              src={loadingGif}
+              alt="Loading"
+              className="w-24 h-24 sm:w-32 sm:h-32 object-contain drop-shadow-[0_10px_20px_rgba(255,154,158,0.3)]"
+            />
+            <p className="text-sm font-semibold text-slate-400 dark:text-slate-500 tracking-widest uppercase animate-pulse">待って――それ、お風呂のお湯だ……</p>
           </div>
         </div>
       )}
@@ -284,13 +289,13 @@ export function LandingPage() {
             alt="Albert Profile Reflection"
             className="w-full h-auto block"
           />
-          
+
           {/* Subtle Bottom Inner Shadow for Footer Legibility */}
           <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent pt-32 pb-6 px-4 flex flex-col items-center justify-end pointer-events-none">
             <div className="text-center pointer-events-auto w-full max-w-6xl mx-auto">
-               <p className="text-[10px] sm:text-sm font-semibold text-slate-200 drop-shadow-md">
-                 © 2026 Pairline. All rights reserved. Let your dreams take flight!
-               </p>
+              <p className="text-[10px] sm:text-sm font-semibold text-slate-200 drop-shadow-md">
+                © 2026 Pairline. All rights reserved. Let your dreams take flight!
+              </p>
             </div>
           </div>
         </div>
@@ -298,7 +303,7 @@ export function LandingPage() {
 
       {/* Entry Modal */}
       {showModal && (
-        <EntryModal 
+        <EntryModal
           onClose={() => setShowModal(false)}
           onConfirm={handleConfirm}
         />
