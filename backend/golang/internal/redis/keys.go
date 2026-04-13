@@ -63,6 +63,10 @@ func BannedWordsSetKey() string {
 	return "moderation:banned_words"
 }
 
+func BannedWordsEnabledKey() string {
+	return "moderation:banned_words:enabled"
+}
+
 func ResolveSessionRoute(ctx context.Context, client goredis.UniversalClient, sessionID string) (SessionRoute, error) {
 	locator, err := client.Get(ctx, SessionLocatorKey(sessionID)).Result()
 	if err != nil {

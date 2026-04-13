@@ -125,6 +125,41 @@ func TestResolveBanIPAddressFallsBackToRequestedIP(t *testing.T) {
 	}
 }
 
+func TestParseAdminSettingBoolDefaultsToEnabled(t *testing.T) {
+	tests := []struct {
+		value string
+		want  bool
+	}{
+		{value: "", want: true},
+		{value: "true", want: true},
+		{value: "1", want: true},
+		{value: "false", want: false},
+		{value: "0", want: false},
+		{value: "disabled", want: false},
+	}
+
+	for _, tt := range tests {
+		if got := parseAdminSettingBool(tt.value); got != tt.want {
+			t.Fatalf("parseAdminSettingBool(%q) = %v, want %v", tt.value, got, tt.want)
+		}
+	}
+}
+
+func TestBoolSettingEncoders(t *testing.T) {
+	if got := boolToAdminSettingValue(true); got != "true" {
+		t.Fatalf("boolToAdminSettingValue(true) = %q", got)
+	}
+	if got := boolToAdminSettingValue(false); got != "false" {
+		t.Fatalf("boolToAdminSettingValue(false) = %q", got)
+	}
+	if got := boolToRedisSettingValue(true); got != "1" {
+		t.Fatalf("boolToRedisSettingValue(true) = %q", got)
+	}
+	if got := boolToRedisSettingValue(false); got != "0" {
+		t.Fatalf("boolToRedisSettingValue(false) = %q", got)
+	}
+}
+
 func TestDispatchLocalQueuesOutboundMessage(t *testing.T) {
 	hub := NewRedisSignalingHub()
 	client := newSignalingClient(nil)

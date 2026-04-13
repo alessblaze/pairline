@@ -74,6 +74,10 @@ export interface BannedWord {
   created_at: string;
 }
 
+export interface BannedWordsSettings {
+  enabled: boolean;
+}
+
 export interface AdminAccount {
   id: string;
   username: string;

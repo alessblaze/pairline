@@ -97,6 +97,14 @@ type BannedWord struct {
 	CreatedAt         time.Time `gorm:"autoCreateTime;index" json:"created_at"`
 }
 
+type AdminSetting struct {
+	Key               string    `gorm:"primaryKey;size:128" json:"key"`
+	Value             string    `gorm:"not null" json:"value"`
+	UpdatedByUsername string    `json:"updated_by_username"`
+	CreatedAt         time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt         time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
 type AdminActivityLog struct {
 	ID            string    `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
 	AdminUsername string    `gorm:"index" json:"admin_username"`
@@ -150,7 +158,7 @@ func NewDatabase() *Database {
 			panic(fmt.Errorf("ping database: %w", err))
 		}
 
-		if err := db.AutoMigrate(&AdminAccount{}, &Report{}, &Ban{}, &BannedWord{}, &AdminActivityLog{}); err != nil {
+		if err := db.AutoMigrate(&AdminAccount{}, &Report{}, &Ban{}, &BannedWord{}, &AdminSetting{}, &AdminActivityLog{}); err != nil {
 			panic(fmt.Errorf("auto migrate database: %w", err))
 		}
 

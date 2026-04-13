@@ -64,7 +64,7 @@ import {
   Sun,
   X
 } from 'lucide-react';
-import type { AdminAccount, AdminRole, Ban, BannedWord, CreateBanRequest, InfraHealthResponse, LoginResponse, Report } from '../types';
+import type { AdminAccount, AdminRole, Ban, BannedWord, BannedWordsSettings, CreateBanRequest, InfraHealthResponse, LoginResponse, Report } from '../types';
 
 interface AdminPanelRuntimeProps extends AdminPanelProps {
   __mockState?: AdminPanelMockState;
@@ -91,6 +91,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(__mockState?.isMobileMenuOpen ?? false);
   const [bans, setBans] = useState<Ban[]>(__mockState?.bans ?? []);
   const [bannedWords, setBannedWords] = useState<BannedWord[]>(__mockState?.bannedWords ?? []);
+  const [bannedWordsEnabled, setBannedWordsEnabled] = useState(true);
+  const [updatingBannedWordsEnabled, setUpdatingBannedWordsEnabled] = useState(false);
   const [currentTab, setCurrentTab] = useState<'reports' | 'bans' | 'bannedWords' | 'accounts' | 'infra'>(__mockState?.currentTab ?? 'reports');
   const mainContentRef = useRef<HTMLElement>(null);
 
@@ -368,6 +370,20 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
     }
   };
 
+  const fetchBannedWordsSettings = async () => {
+    if (!canManageBannedWords) return;
+    try {
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/banned-words/settings`);
+      if (response.status === 401) return logout();
+      if (response.ok) {
+        const data: BannedWordsSettings = await response.json();
+        setBannedWordsEnabled(data.enabled !== false);
+      }
+    } catch (error) {
+      console.error('Failed to fetch banned words settings:', error);
+    }
+  };
+
   const fetchAccounts = async () => {
     if (!canManageAccounts) return;
     try {
@@ -521,6 +537,30 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
     } catch (error) {
       console.error('Failed to delete banned word:', error);
       alert('Failed to delete banned word');
+    }
+  };
+
+  const updateBannedWordsEnabled = async (enabled: boolean) => {
+    if (!canManageBannedWords || updatingBannedWordsEnabled) return;
+    setUpdatingBannedWordsEnabled(true);
+    try {
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/banned-words/settings`, {
+        method: 'PUT',
+        body: JSON.stringify({ enabled }),
+      });
+      if (response.status === 401) return logout();
+      if (response.ok) {
+        const data: BannedWordsSettings = await response.json();
+        setBannedWordsEnabled(data.enabled !== false);
+        return;
+      }
+      const data = await response.json().catch(() => ({}));
+      alert(data.error || 'Failed to update banned words enforcement');
+    } catch (error) {
+      console.error('Failed to update banned words settings:', error);
+      alert('Failed to update banned words enforcement');
+    } finally {
+      setUpdatingBannedWordsEnabled(false);
     }
   };
 
@@ -679,6 +719,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
   });
 
   const syncBannedWords = useEffectEvent(() => {
+    void fetchBannedWordsSettings();
     void fetchBannedWords();
   });
 
@@ -1876,6 +1917,35 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                             </button>
                           </div>
                         </div>
+                      </div>
+                    </div>
+
+                    <div className="surface-card rounded-none p-5">
+                      <div className="hud-bracket hud-bracket-tl" />
+                      <div className="hud-bracket-tr" />
+                      <div className="hud-bracket hud-bracket-bl" />
+                      <div className="hud-bracket hud-bracket-br" />
+
+                      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                        <div className="space-y-1">
+                          <h3 className="section-prefix font-heading text-sm font-bold uppercase tracking-[0.14em] text-[var(--admin-text)]">Enforcement Switch</h3>
+                          <p className="text-xs text-[var(--admin-text-soft)]">
+                            Registry entries stay editable, but message scanning is skipped while enforcement is disabled.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void updateBannedWordsEnabled(!bannedWordsEnabled)}
+                          disabled={updatingBannedWordsEnabled}
+                          className={`inline-flex h-11 min-w-[180px] items-center justify-center gap-2 rounded-none border px-4 font-heading text-[11px] font-bold uppercase tracking-[0.14em] transition-all ${
+                            bannedWordsEnabled
+                              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
+                              : 'border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20'
+                          } disabled:cursor-not-allowed disabled:opacity-60`}
+                        >
+                          {updatingBannedWordsEnabled ? <RefreshCw size={14} className="animate-spin" /> : bannedWordsEnabled ? <CheckCircle2 size={14} /> : <EyeOff size={14} />}
+                          {updatingBannedWordsEnabled ? 'Updating...' : bannedWordsEnabled ? 'Enforcement On' : 'Enforcement Off'}
+                        </button>
                       </div>
                     </div>
 

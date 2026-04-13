@@ -20,6 +20,7 @@ package server
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -43,6 +44,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
+	"gorm.io/gorm"
 )
 
 type Server struct {
@@ -134,6 +136,7 @@ func newServer(enablePublic, enableAdmin bool, serviceName string) *Server {
 
 	if enablePublic || enableAdmin {
 		s.syncActiveBansToRedis()
+		s.syncBannedWordsConfigToRedis()
 		s.syncBannedWordsToRedis()
 		s.startBanSyncLoop()
 	}
@@ -264,6 +267,26 @@ func (s *Server) syncBannedWordsToRedis() {
 	}
 }
 
+func (s *Server) syncBannedWordsConfigToRedis() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	enabled, err := bannedWordsEnabledFromDB(ctx, s.db.GetDB())
+	if err != nil {
+		log.Printf("Failed to load banned words config for Redis sync: %v", err)
+		return
+	}
+
+	if err := s.redis.GetClient().Set(ctx, appredis.BannedWordsEnabledKey(), boolToRedisFlag(enabled), 0).Err(); err != nil {
+		log.Printf("Failed to sync banned words config to Redis: %v", err)
+		return
+	}
+
+	if err := s.redis.PublishRefreshBannedWordsAction(ctx); err != nil {
+		log.Printf("Failed to publish banned words refresh after config sync: %v", err)
+	}
+}
+
 func banSyncIntervalSeconds() int {
 	raw := os.Getenv("BAN_SYNC_INTERVAL_SECONDS")
 	if raw == "" {
@@ -276,6 +299,38 @@ func banSyncIntervalSeconds() int {
 	}
 
 	return value
+}
+
+func bannedWordsEnabledFromDB(ctx context.Context, db *gorm.DB) (bool, error) {
+	if db == nil {
+		return true, errors.New("database unavailable")
+	}
+
+	var setting storage.AdminSetting
+	err := db.WithContext(ctx).Where("key = ?", "moderation.banned_words.enabled").First(&setting).Error
+	if err == nil {
+		return parseAdminBool(setting.Value), nil
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return true, nil
+	}
+	return true, err
+}
+
+func parseAdminBool(value string) bool {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "0", "false", "off", "no", "disabled":
+		return false
+	default:
+		return true
+	}
+}
+
+func boolToRedisFlag(enabled bool) string {
+	if enabled {
+		return "1"
+	}
+	return "0"
 }
 
 func (s *Server) reconcileBanKeys(ctx context.Context, bans []storage.Ban) error {
@@ -558,12 +613,14 @@ func (s *Server) setupRoutes() {
 				moderation.PUT("/reports/:id", handlers.UpdateReportHandlerGin)
 				moderation.GET("/bans", handlers.GetBansHandlerGin)
 				moderation.GET("/banned-words", handlers.GetBannedWordsHandlerGin)
+				moderation.GET("/banned-words/settings", handlers.GetBannedWordsSettingsHandlerGin)
 
 				enforcement := adminAuth.Group("")
 				enforcement.Use(s.RoleAuthMiddleware([]string{"moderator", "admin", "root"}))
 				enforcement.POST("/ban", handlers.CreateBanHandlerGin(s.redis))
 				enforcement.POST("/banned-words", handlers.CreateBannedWordHandlerGin(s.redis))
 				enforcement.DELETE("/banned-words/:id", handlers.DeleteBannedWordHandlerGin(s.redis))
+				enforcement.PUT("/banned-words/settings", handlers.UpdateBannedWordsSettingsHandlerGin(s.redis))
 
 				adminOnlyEnforcement := adminAuth.Group("")
 				adminOnlyEnforcement.Use(s.RoleAuthMiddleware([]string{"admin", "root"}))
