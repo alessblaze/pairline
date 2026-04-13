@@ -278,6 +278,9 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
     clearAdminSession();
     setReports([]);
     setBans([]);
+    setBannedWords([]);
+    setBannedWordsEnabled(true);
+    setUpdatingBannedWordsEnabled(false);
     setAccounts([]);
     setInfraHealth(null);
     setIsRedisModalOpen(false);

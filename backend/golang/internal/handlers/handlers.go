@@ -1027,12 +1027,17 @@ func GetBannedWordsHandlerGin(c *gin.Context) {
 }
 
 func GetBannedWordsSettingsHandlerGin(c *gin.Context) {
+	span := startHandlerSpan(c, "moderation.banned_words.settings.get")
+	defer span.End()
+
 	db := storage.NewDatabase()
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 
-	enabled, err := bannedWordsEnabledSetting(ctx, db.GetDB())
+	enabled, err := BannedWordsEnabledSetting(ctx, db.GetDB())
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to load settings")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load banned words settings"})
 		return
 	}
@@ -1044,27 +1049,35 @@ func GetBannedWordsSettingsHandlerGin(c *gin.Context) {
 
 func UpdateBannedWordsSettingsHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		span := startHandlerSpan(c, "moderation.banned_words.settings.update")
+		defer span.End()
+
 		var req struct {
 			Enabled *bool `json:"enabled"`
 		}
 
 		if err := c.ShouldBindJSON(&req); err != nil || req.Enabled == nil {
+			span.SetStatus(codes.Error, "invalid request")
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request properties"})
 			return
 		}
 
 		username, ok := getContextString(c, "username")
 		if !ok {
+			span.SetStatus(codes.Error, "unauthorized")
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 			return
 		}
+		span.SetAttributes(hashedAttribute("admin.user.ref", username))
 
 		db := storage.NewDatabase()
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 		defer cancel()
 
-		previousEnabled, err := bannedWordsEnabledSetting(ctx, db.GetDB())
+		previousEnabled, err := BannedWordsEnabledSetting(ctx, db.GetDB())
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed to load settings")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load banned words settings"})
 			return
 		}
@@ -1079,23 +1092,29 @@ func UpdateBannedWordsSettingsHandlerGin(redisClient *appredis.Client) gin.Handl
 			Columns:   []clause.Column{{Name: "key"}},
 			DoUpdates: clause.AssignmentColumns([]string{"value", "updated_by_username", "updated_at"}),
 		}).Create(&setting).Error; err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed to update setting")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update banned words settings"})
 			return
 		}
 
-		if err := redisClient.GetClient().Set(ctx, appredis.BannedWordsEnabledKey(), boolToRedisSettingValue(*req.Enabled), 0).Err(); err != nil {
+		if err := redisClient.GetClient().Set(ctx, appredis.BannedWordsEnabledKey(), BoolToRedisSettingValue(*req.Enabled), 0).Err(); err != nil {
 			log.Printf("Failed to sync banned words settings to Redis: %v", err)
+			rollbackCtx, rollbackCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer rollbackCancel()
 			rollback := storage.AdminSetting{
 				Key:               bannedWordsEnabledSettingKey,
 				Value:             boolToAdminSettingValue(previousEnabled),
 				UpdatedByUsername: username,
 			}
-			if rollbackErr := db.GetDB().WithContext(ctx).Clauses(clause.OnConflict{
+			if rollbackErr := db.GetDB().WithContext(rollbackCtx).Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "key"}},
 				DoUpdates: clause.AssignmentColumns([]string{"value", "updated_by_username", "updated_at"}),
 			}).Create(&rollback).Error; rollbackErr != nil {
 				log.Printf("Failed to rollback banned words settings after Redis error: %v", rollbackErr)
 			}
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "redis propagation failed")
 			c.JSON(http.StatusBadGateway, gin.H{"error": "Setting saved, but Redis propagation failed"})
 			return
 		}
@@ -1103,6 +1122,12 @@ func UpdateBannedWordsSettingsHandlerGin(redisClient *appredis.Client) gin.Handl
 		if err := redisClient.PublishRefreshBannedWordsAction(ctx); err != nil {
 			log.Printf("Failed to publish banned words refresh action: %v", err)
 		}
+
+		observability.RecordBusinessEvent(
+			c.Request.Context(),
+			"moderation.banned_words.settings.updated",
+			attribute.Bool("moderation.banned_words.enabled", *req.Enabled),
+		)
 
 		c.JSON(http.StatusOK, gin.H{
 			"enabled": *req.Enabled,
@@ -1807,7 +1832,9 @@ func normalizeBannedWord(word string) string {
 
 const bannedWordsEnabledSettingKey = "moderation.banned_words.enabled"
 
-func bannedWordsEnabledSetting(ctx context.Context, db *gorm.DB) (bool, error) {
+// BannedWordsEnabledSetting reads the banned-words enforcement flag from the
+// admin_settings table. Returns true (enabled) when no row exists yet.
+func BannedWordsEnabledSetting(ctx context.Context, db *gorm.DB) (bool, error) {
 	var setting storage.AdminSetting
 	err := db.WithContext(ctx).Where("key = ?", bannedWordsEnabledSettingKey).First(&setting).Error
 	if err == nil {
@@ -1835,7 +1862,8 @@ func boolToAdminSettingValue(enabled bool) string {
 	return "false"
 }
 
-func boolToRedisSettingValue(enabled bool) string {
+// BoolToRedisSettingValue encodes a boolean as a Redis-friendly "1" / "0" string.
+func BoolToRedisSettingValue(enabled bool) string {
 	if enabled {
 		return "1"
 	}

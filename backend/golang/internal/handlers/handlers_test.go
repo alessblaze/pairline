@@ -152,11 +152,11 @@ func TestBoolSettingEncoders(t *testing.T) {
 	if got := boolToAdminSettingValue(false); got != "false" {
 		t.Fatalf("boolToAdminSettingValue(false) = %q", got)
 	}
-	if got := boolToRedisSettingValue(true); got != "1" {
-		t.Fatalf("boolToRedisSettingValue(true) = %q", got)
+	if got := BoolToRedisSettingValue(true); got != "1" {
+		t.Fatalf("BoolToRedisSettingValue(true) = %q", got)
 	}
-	if got := boolToRedisSettingValue(false); got != "0" {
-		t.Fatalf("boolToRedisSettingValue(false) = %q", got)
+	if got := BoolToRedisSettingValue(false); got != "0" {
+		t.Fatalf("BoolToRedisSettingValue(false) = %q", got)
 	}
 }
 
