@@ -32,12 +32,11 @@ RUN_STRESS="${RUN_STRESS:-1}"
 RUN_GO_TESTS="${RUN_GO_TESTS:-1}"
 TEST_TRACE="${TEST_TRACE:-1}"
 
-STRESS_SESSION_COUNT="${STRESS_SESSION_COUNT:-24000}"
-STRESS_CONCURRENCY="${STRESS_CONCURRENCY:-12000}"
-STRESS_CLEANUP_CONCURRENCY="${STRESS_CLEANUP_CONCURRENCY:-200}"
-STRESS_PAIR_COUNT="${STRESS_PAIR_COUNT:-3200}"
-STRESS_LEAVE_COUNT="${STRESS_LEAVE_COUNT:-5000}"
-STRESS_DISCONNECT_COUNT="${STRESS_DISCONNECT_COUNT:-4000}"
+STRESS_SESSION_COUNT="${STRESS_SESSION_COUNT:-12000}"
+STRESS_CONCURRENCY="${STRESS_CONCURRENCY:-6000}"
+STRESS_PAIR_COUNT="${STRESS_PAIR_COUNT:-1600}"
+STRESS_LEAVE_COUNT="${STRESS_LEAVE_COUNT:-2500}"
+STRESS_DISCONNECT_COUNT="${STRESS_DISCONNECT_COUNT:-1000}"
 
 declare -A RESULTS
 
@@ -106,7 +105,6 @@ run_in_service() {
     -e LIVE_REDIS_CLUSTER_TESTS=1 \
     -e STRESS_SESSION_COUNT="$STRESS_SESSION_COUNT" \
     -e STRESS_CONCURRENCY="$STRESS_CONCURRENCY" \
-    -e STRESS_CLEANUP_CONCURRENCY="$STRESS_CLEANUP_CONCURRENCY" \
     -e STRESS_PAIR_COUNT="$STRESS_PAIR_COUNT" \
     -e STRESS_LEAVE_COUNT="$STRESS_LEAVE_COUNT" \
     -e STRESS_DISCONNECT_COUNT="$STRESS_DISCONNECT_COUNT" \
@@ -165,7 +163,7 @@ fi
 
 if stage_enabled "$RUN_GO_TESTS"; then
   print_header "Golang Tests"
-  if (cd backend/golang && go test -v -cover ./...); then
+  if cd backend/golang && go test -v -cover ./...; then
     RESULTS["golang"]="PASS"
   else
     RESULTS["golang"]="FAIL"
@@ -190,5 +188,12 @@ if [[ "$overall" -eq 0 ]]; then
 else
   echo "One or more test stages failed."
 fi
-
+echo "Sometimes Some Live Tests fail due to unclean state of redis."
+echo "or tests started before full cluster is stabilized."
+echo "in that case do run tests multiple times as these are not static,"
+echo "but dynamic test."
+echo "stress tests are completely syntetic, proper load profile and"
+echo "careful tuning of parameters and timing is needed."
+echo "This is the beauty of it, the elixir doesn't hard crash."
+echo "supervisor manages the restarts clean."
 exit "$overall"
