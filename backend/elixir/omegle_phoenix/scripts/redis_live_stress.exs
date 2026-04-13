@@ -1,20 +1,3 @@
-# Pairline - Open Source Video Chat and Matchmaking
-# Copyright (C) 2026 Albert Blasczykowski
-# Aless Microsystems
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published
-# by the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU Affero General Public License for more details.
-#
-# You should have received a copy of the GNU Affero General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
 defmodule RedisLiveStressHelpers do
   def wait_for_matched_pairs!(sessions, pair_count, timeout_ms \\ 10_000)
 
@@ -47,7 +30,7 @@ defmodule RedisLiveStressHelpers do
 
     result =
       Enum.reduce_while(1..attempts, nil, fn _, _acc ->
-        state = :sys.get_state(OmeglePhoenix.Matchmaker)
+        state = :sys.get_state(OmeglePhoenix.Matchmaker, 30_000)
 
         if is_nil(state.local_match_batch_ref) and
              MapSet.size(state.pending_local_match_keys) == 0 do
@@ -85,7 +68,7 @@ defmodule RedisLiveStressHelpers do
   def cleanup_session(session_id) do
     case OmeglePhoenix.SessionManager.delete_session(session_id) do
       :ok ->
-        cleanup_orphan(session_id)
+        :ok
 
       {:error, :not_found} ->
         cleanup_orphan(session_id)
@@ -141,6 +124,14 @@ concurrency =
   |> String.to_integer()
   |> max(1)
 
+cleanup_concurrency =
+  System.get_env(
+    "STRESS_CLEANUP_CONCURRENCY",
+    Integer.to_string(min(max(div(concurrency, 20), 50), 200))
+  )
+  |> String.to_integer()
+  |> max(1)
+
 pair_count =
   System.get_env("STRESS_PAIR_COUNT", "20")
   |> String.to_integer()
@@ -163,6 +154,7 @@ IO.puts("Starting live Redis stress run")
 IO.puts("  run_id=#{run_id}")
 IO.puts("  session_count=#{session_count}")
 IO.puts("  concurrency=#{concurrency}")
+IO.puts("  cleanup_concurrency=#{cleanup_concurrency}")
 IO.puts("  pair_count=#{pair_count}")
 IO.puts("  leave_count=#{leave_count}")
 IO.puts("  disconnect_count=#{disconnect_count}")
@@ -188,12 +180,12 @@ cleanup_sessions = fn ->
     fn %{id: id, ip: ip} ->
       _ = OmeglePhoenix.Matchmaker.leave_queue(id)
       _ = RedisLiveStressHelpers.cleanup_session(id)
-      _ = OmeglePhoenix.Redis.command(["DEL", "ban:ip:#{ip}"])
+      _ = OmeglePhoenix.Redis.command(["UNLINK", "ban:ip:#{ip}"])
       :ok
     end,
-    max_concurrency: concurrency,
+    max_concurrency: cleanup_concurrency,
     ordered: false,
-    timeout: 30_000,
+    timeout: 120_000,
     on_timeout: :kill_task
   )
   |> Stream.run()
@@ -212,7 +204,7 @@ try do
         end,
         max_concurrency: concurrency,
         ordered: false,
-        timeout: 30_000,
+        timeout: 120_000,
         on_timeout: :kill_task
       )
       |> Enum.to_list()
@@ -235,7 +227,7 @@ try do
         end,
         max_concurrency: concurrency,
         ordered: false,
-        timeout: 30_000,
+        timeout: 120_000,
         on_timeout: :kill_task
       )
       |> Enum.to_list()
@@ -270,7 +262,7 @@ try do
         end,
         max_concurrency: concurrency,
         ordered: false,
-        timeout: 30_000,
+        timeout: 120_000,
         on_timeout: :kill_task
       )
       |> Enum.to_list()
@@ -295,7 +287,7 @@ try do
         end,
         max_concurrency: concurrency,
         ordered: false,
-        timeout: 30_000,
+        timeout: 120_000,
         on_timeout: :kill_task
       )
       |> Enum.to_list()
@@ -329,9 +321,9 @@ try do
             other -> {:error, {:cleanup_session, id, other}}
           end
         end,
-        max_concurrency: concurrency,
+        max_concurrency: cleanup_concurrency,
         ordered: false,
-        timeout: 30_000,
+        timeout: 120_000,
         on_timeout: :kill_task
       )
       |> Enum.to_list()
@@ -360,9 +352,17 @@ try do
   if final_active != 0 do
     leftover_ids = RedisLiveStressHelpers.active_session_ids!()
 
-    Enum.each(leftover_ids, fn session_id ->
-      _ = RedisLiveStressHelpers.cleanup_session(session_id)
-    end)
+    leftover_ids
+    |> Task.async_stream(
+      fn session_id ->
+        RedisLiveStressHelpers.cleanup_session(session_id)
+      end,
+      max_concurrency: cleanup_concurrency,
+      ordered: false,
+      timeout: 120_000,
+      on_timeout: :kill_task
+    )
+    |> Stream.run()
 
     retried_final_active =
       Enum.reduce_while(1..20, final_active, fn _, _acc ->

@@ -16,6 +16,24 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+#!/usr/bin/env bash
+# Pairline - Open Source Video Chat and Matchmaking
+# Copyright (C) 2026 Albert Blasczykowski
+# Aless Microsystems
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 set -u
 
 COMPOSE_FILE="${COMPOSE_FILE:-docker/docker-compose.yml}"
@@ -32,11 +50,12 @@ RUN_STRESS="${RUN_STRESS:-1}"
 RUN_GO_TESTS="${RUN_GO_TESTS:-1}"
 TEST_TRACE="${TEST_TRACE:-1}"
 
-STRESS_SESSION_COUNT="${STRESS_SESSION_COUNT:-1000}"
-STRESS_CONCURRENCY="${STRESS_CONCURRENCY:-500}"
-STRESS_PAIR_COUNT="${STRESS_PAIR_COUNT:-200}"
-STRESS_LEAVE_COUNT="${STRESS_LEAVE_COUNT:-320}"
-STRESS_DISCONNECT_COUNT="${STRESS_DISCONNECT_COUNT:-100}"
+STRESS_SESSION_COUNT="${STRESS_SESSION_COUNT:-24000}"
+STRESS_CONCURRENCY="${STRESS_CONCURRENCY:-12000}"
+STRESS_CLEANUP_CONCURRENCY="${STRESS_CLEANUP_CONCURRENCY:-200}"
+STRESS_PAIR_COUNT="${STRESS_PAIR_COUNT:-3200}"
+STRESS_LEAVE_COUNT="${STRESS_LEAVE_COUNT:-5000}"
+STRESS_DISCONNECT_COUNT="${STRESS_DISCONNECT_COUNT:-4000}"
 
 declare -A RESULTS
 
@@ -105,6 +124,7 @@ run_in_service() {
     -e LIVE_REDIS_CLUSTER_TESTS=1 \
     -e STRESS_SESSION_COUNT="$STRESS_SESSION_COUNT" \
     -e STRESS_CONCURRENCY="$STRESS_CONCURRENCY" \
+    -e STRESS_CLEANUP_CONCURRENCY="$STRESS_CLEANUP_CONCURRENCY" \
     -e STRESS_PAIR_COUNT="$STRESS_PAIR_COUNT" \
     -e STRESS_LEAVE_COUNT="$STRESS_LEAVE_COUNT" \
     -e STRESS_DISCONNECT_COUNT="$STRESS_DISCONNECT_COUNT" \

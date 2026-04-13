@@ -23,7 +23,7 @@ defmodule OmeglePhoenix.Redis do
   alias OmeglePhoenix.Redis.AdminSubscriber
 
   @cluster_name :omegle_phoenix_redis_cluster
-  @default_timeout 5_000
+  @default_timeout 60_000
   @any_route_key "__eredis_cluster_any__"
   @any_commands MapSet.new([
                   "CLUSTER",

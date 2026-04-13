@@ -70,7 +70,7 @@ defmodule OmeglePhoenix.Redis.Streams do
       stream_id
     ]
 
-    case OmeglePhoenix.Redis.command(command, timeout: block_ms + 2_000) do
+    case OmeglePhoenix.Redis.command(command, timeout: block_ms + 30_000) do
       {:ok, nil} ->
         {:ok, []}
 

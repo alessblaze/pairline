@@ -100,7 +100,7 @@ defmodule OmeglePhoenix.Config do
   end
 
   def get_redis_pool_size do
-    get("REDIS_POOL_SIZE", "16")
+    get("REDIS_POOL_SIZE", "32")
     |> String.to_integer()
     |> max(1)
   end
@@ -144,11 +144,11 @@ defmodule OmeglePhoenix.Config do
   end
 
   def get_match_batch_size do
-    get("MATCH_BATCH_SIZE", "200") |> String.to_integer()
+    get("MATCH_BATCH_SIZE", "500") |> String.to_integer()
   end
 
   def get_match_frontier_size do
-    get("MATCH_FRONTIER_SIZE", "16")
+    get("MATCH_FRONTIER_SIZE", "40")
     |> String.to_integer()
     |> max(1)
   end
@@ -178,7 +178,7 @@ defmodule OmeglePhoenix.Config do
   end
 
   def get_match_event_stream_batch_size do
-    get("MATCH_EVENT_STREAM_BATCH_SIZE", "100") |> String.to_integer()
+    get("MATCH_EVENT_STREAM_BATCH_SIZE", "500") |> String.to_integer()
   end
 
   def get_match_event_stream_maxlen do
@@ -186,7 +186,7 @@ defmodule OmeglePhoenix.Config do
   end
 
   def get_match_shard_count do
-    get("MATCH_SHARD_COUNT", "8")
+    get("MATCH_SHARD_COUNT", "12")
     |> String.to_integer()
     |> max(1)
   end
