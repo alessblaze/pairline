@@ -47,7 +47,7 @@ This file focuses on **what each variable changes in runtime behavior**, not jus
 - **`REDIS_HOST`** / **`REDIS_PORT`** (defaults: `localhost` / `7000`): single-node address (kept for compatibility; the app expects cluster mode in most deployments).
 - **`REDIS_CLUSTER_NODES`** (format: comma-separated `host:port`): seed nodes for cluster discovery (the client will learn the full cluster topology from these).
 - **`REDIS_PASSWORD`** (default: empty): password for Redis/Valkey auth (must match `requirepass` on the Redis nodes).
-- **`REDIS_POOL_SIZE`** (default: `16`): connection pool size. Increase if Redis latency rises under high concurrency and you see pool exhaustion; too high can overwhelm Redis with connections.
+- **`REDIS_POOL_SIZE`** (default: `256`): connection pool size. Increase if Redis latency rises under high concurrency and you see pool exhaustion; too high can overwhelm Redis with connections.
 
 ### Session lifecycle
 - **`SESSION_TTL`** (default: `3600`): how long session records stay alive in Redis after last refresh. Larger values reduce accidental session expiry but increase orphan memory.
@@ -56,14 +56,15 @@ This file focuses on **what each variable changes in runtime behavior**, not jus
 ### Matchmaking (queue + streams coordination)
 - **`MATCH_TIMEOUT`** (default: `30000` ms): how long a search can run before timing out.
 - **`MATCH_LEADER_TTL_MS`** (default: `5000`): lease TTL for “matchmaker leader” work to avoid multiple nodes doing identical heavy passes.
-- **`MATCH_BATCH_SIZE`** (default: `200`): how many queued session IDs are pulled at a time from a queue head.
-- **`MATCH_FRONTIER_SIZE`** (default: `16`): caps how deep into the head of each interest bucket the matcher will look in one pass.
+- **`MATCH_BATCH_SIZE`** (default: `500`): how many queued session IDs are pulled at a time from a queue head.
+- **`MATCH_FRONTIER_SIZE`** (default: `40`): caps how deep into the head of each interest bucket the matcher will look in one pass.
   - Higher increases match quality/fairness under load but increases Redis reads.
-- **`MATCH_SHARD_COUNT`** (default: `8`): number of relaxed/random shards to fan out across (more shards reduces hot-spotting but increases coordination overhead).
+- **`MATCH_SHARD_COUNT`** (default: `12`): number of relaxed/random shards to fan out across (more shards reduces hot-spotting but increases coordination overhead).
 - **`MATCH_RELAXED_WAIT_MS`** (default: `5000`): when a user can “relax” from exact interest matching into a broader relaxed tier.
 - **`MATCH_OVERFLOW_WAIT_MS`** (default: `15000`): when a user can fall back to “random” matching.
 - **`MATCH_EVENT_STREAM`** / **`MATCH_EVENT_STREAM_GROUP`**: stream + consumer group used for cross-node coordination (ensures nodes don’t all sweep the same shards).
 - **`MATCH_EVENT_STREAM_BLOCK_MS`** / **`MATCH_EVENT_STREAM_BATCH_SIZE`**: polling behavior (lower block = more responsive but more Redis calls; larger batch = fewer calls but more bursty processing).
+  - `MATCH_EVENT_STREAM_BLOCK_MS` defaults to `1000` and is capped at `4000` in code to stay below the underlying Redis client timeout.
 - **`MATCH_EVENT_STREAM_MAXLEN`**: caps stream size to bound memory (too low can drop coordination history aggressively; too high increases memory).
 - **`MATCH_SWEEP_INTERVAL_MS`** / **`MATCH_SWEEP_STALE_AFTER_MS`**: safety sweep knobs for “quiet” queues so they don’t get stuck if stream-triggered events are missed.
 
@@ -75,6 +76,7 @@ This file focuses on **what each variable changes in runtime behavior**, not jus
 - **`ADMIN_STREAM`** (default: `admin:action:stream`): stream name used to fan out admin “emergency” actions across Phoenix nodes (durable coordination).
 - **`ADMIN_STREAM_GROUP`** (default: `admin:workers`): consumer group name for Phoenix nodes.
 - **`ADMIN_STREAM_BLOCK_MS`** (default: `1000`): how long consumers block waiting for new admin actions.
+  - This value is capped at `4000` in code to stay below the underlying Redis client timeout.
 - **`ADMIN_STREAM_BATCH_SIZE`** (default: `50`): max actions processed per poll.
 
 ### BEAM clustering (optional)

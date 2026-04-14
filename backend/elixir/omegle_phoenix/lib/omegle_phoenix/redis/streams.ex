@@ -70,7 +70,9 @@ defmodule OmeglePhoenix.Redis.Streams do
       stream_id
     ]
 
-    case OmeglePhoenix.Redis.command(command, timeout: block_ms + 30_000) do
+    # eredis_cluster uses the underlying eredis default call timeout, so BLOCK
+    # values should stay comfortably below 5 seconds.
+    case OmeglePhoenix.Redis.command(command) do
       {:ok, nil} ->
         {:ok, []}
 

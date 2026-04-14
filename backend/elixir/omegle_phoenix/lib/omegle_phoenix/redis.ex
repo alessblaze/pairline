@@ -23,7 +23,6 @@ defmodule OmeglePhoenix.Redis do
   alias OmeglePhoenix.Redis.AdminSubscriber
 
   @cluster_name :omegle_phoenix_redis_cluster
-  @default_timeout 60_000
   @any_route_key "__eredis_cluster_any__"
   @any_commands MapSet.new([
                   "CLUSTER",
@@ -54,7 +53,7 @@ defmodule OmeglePhoenix.Redis do
     Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  def command(cmd, opts \\ []) do
+  def command(cmd) do
     command = normalize_command(cmd)
     command_name = command_name(command)
 
@@ -67,24 +66,22 @@ defmodule OmeglePhoenix.Redis do
         "redis.args_count" => max(length(command) - 1, 0)
       })
 
-      with_timeout(opts, fn ->
-        case :eredis_cluster.q(@cluster_name, command) do
-          {:error, :invalid_cluster_command} ->
-            :eredis_cluster.qk(@cluster_name, command, @any_route_key)
+      case :eredis_cluster.q(@cluster_name, command) do
+        {:error, :invalid_cluster_command} ->
+          :eredis_cluster.qk(@cluster_name, command, @any_route_key)
 
-          other ->
-            other
-        end
-      end)
+        other ->
+          other
+      end
       |> normalize_command_result(command_name)
       |> tap_redis_result()
     end
   end
 
-  def pipeline(commands, opts \\ [])
-  def pipeline([], _opts), do: {:ok, []}
+  def pipeline(commands)
+  def pipeline([]), do: {:ok, []}
 
-  def pipeline(commands, opts) do
+  def pipeline(commands) do
     normalized = Enum.map(commands, &normalize_command/1)
 
     Tracer.with_span "redis.pipeline", %{kind: :client} do
@@ -95,17 +92,17 @@ defmodule OmeglePhoenix.Redis do
         "redis.pipeline.size" => length(normalized)
       })
 
-      with_timeout(opts, fn -> run_pipeline(normalized) end)
+      run_pipeline(normalized)
       |> normalize_pipeline_result(normalized)
       |> tap_redis_result()
     end
   end
 
-  def mget(keys, opts \\ [])
+  def mget(keys)
 
-  def mget([], _opts), do: {:ok, []}
+  def mget([]), do: {:ok, []}
 
-  def mget(keys, opts) when is_list(keys) do
+  def mget(keys) when is_list(keys) do
     Tracer.with_span "redis.mget", %{kind: :client} do
       Tracing.annotate_client("redis.mget")
 
@@ -117,12 +114,12 @@ defmodule OmeglePhoenix.Redis do
 
       keys
       |> Enum.map(&["GET", &1])
-      |> pipeline(opts)
+      |> pipeline()
       |> tap_redis_result()
     end
   end
 
-  def publish(channel, message, opts \\ []) do
+  def publish(channel, message) do
     payload = JSON.encode!(message)
 
     Tracer.with_span "redis.publish", %{kind: :client} do
@@ -134,7 +131,7 @@ defmodule OmeglePhoenix.Redis do
         "messaging.destination" => channel
       })
 
-      command(["PUBLISH", channel, payload], opts)
+      command(["PUBLISH", channel, payload])
       |> tap_redis_result()
     end
   end
@@ -208,20 +205,6 @@ defmodule OmeglePhoenix.Redis do
   defp tap_redis_result(result) do
     Tracer.set_attribute("redis.outcome", "ok")
     result
-  end
-
-  defp with_timeout(opts, fun) do
-    timeout = Keyword.get(opts, :timeout, @default_timeout)
-
-    timer_ref = Process.send_after(self(), {:redis_timeout, make_ref()}, timeout)
-
-    try do
-      fun.()
-    catch
-      :exit, {:timeout, _} -> {:error, :timeout}
-    after
-      Process.cancel_timer(timer_ref)
-    end
   end
 
   defp run_pipeline(commands) do

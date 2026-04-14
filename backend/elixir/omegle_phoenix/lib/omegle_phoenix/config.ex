@@ -20,6 +20,8 @@ defmodule OmeglePhoenix.Config do
   Configuration module for environment variables
   """
 
+  @max_redis_stream_block_ms 4_000
+
   def get(key, default \\ nil) do
     System.get_env(key) || default
   end
@@ -92,7 +94,9 @@ defmodule OmeglePhoenix.Config do
   end
 
   def get_admin_stream_block_ms do
-    get("ADMIN_STREAM_BLOCK_MS", "1000") |> String.to_integer()
+    get("ADMIN_STREAM_BLOCK_MS", "1000")
+    |> String.to_integer()
+    |> min(@max_redis_stream_block_ms)
   end
 
   def get_admin_stream_batch_size do
@@ -174,7 +178,9 @@ defmodule OmeglePhoenix.Config do
   end
 
   def get_match_event_stream_block_ms do
-    get("MATCH_EVENT_STREAM_BLOCK_MS", "1000") |> String.to_integer()
+    get("MATCH_EVENT_STREAM_BLOCK_MS", "1000")
+    |> String.to_integer()
+    |> min(@max_redis_stream_block_ms)
   end
 
   def get_match_event_stream_batch_size do

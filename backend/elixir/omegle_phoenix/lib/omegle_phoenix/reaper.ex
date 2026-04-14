@@ -123,8 +123,10 @@ defmodule OmeglePhoenix.Reaper do
     end
   end
 
-  defp stop_renewer(nil), do: :ok
-  defp stop_renewer(pid) when is_pid(pid), do: send(pid, :stop)
+  defp stop_renewer(pid) when is_pid(pid) do
+    send(pid, :stop)
+    :ok
+  end
 
   defp reap_orphaned_sessions(state) do
     case OmeglePhoenix.Redis.command([

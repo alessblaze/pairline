@@ -1517,8 +1517,6 @@ defmodule OmeglePhoenix.Matchmaker do
     :ok
   end
 
-  defp stop_renewer(nil), do: :ok
-
   defp stop_renewer(pid) when is_pid(pid) do
     send(pid, :stop)
     :ok

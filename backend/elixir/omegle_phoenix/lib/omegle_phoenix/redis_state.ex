@@ -855,31 +855,6 @@ defmodule OmeglePhoenix.RedisState do
     :ok
   end
 
-  defp persist_locators(session_id, route, ip, ttl_seconds) do
-    ttl = normalize_ttl!(ttl_seconds)
-
-    commands = [
-      [
-        "SETEX",
-        OmeglePhoenix.RedisKeys.session_locator_key(session_id),
-        ttl,
-        OmeglePhoenix.RedisKeys.encode_locator(route)
-      ],
-      [
-        "SETEX",
-        OmeglePhoenix.RedisKeys.session_ip_locator_key(session_id),
-        ttl,
-        ip
-      ]
-    ]
-
-    case OmeglePhoenix.Redis.pipeline(commands) do
-      {:ok, _} -> :ok
-      {:error, reason} -> {:error, reason}
-      other -> {:error, {:unexpected_locator_result, other}}
-    end
-  end
-
   defp cleanup_locators(session_id) do
     commands = [
       ["DEL", OmeglePhoenix.RedisKeys.session_locator_key(session_id)],
@@ -1029,19 +1004,6 @@ defmodule OmeglePhoenix.RedisState do
       {:ok, _} -> :ok
       {:error, reason} -> {:error, reason}
       other -> {:error, {:unexpected_locator_index_result, other}}
-    end
-  end
-
-  defp sync_indexes(session_id, ip, ttl_seconds) do
-    commands = [
-      ["SADD", OmeglePhoenix.RedisKeys.active_sessions_key(), session_id],
-      ["SADD", OmeglePhoenix.RedisKeys.ip_sessions_key(ip), session_id],
-      ["EXPIRE", OmeglePhoenix.RedisKeys.ip_sessions_key(ip), normalize_ttl!(ttl_seconds)]
-    ]
-
-    case OmeglePhoenix.Redis.pipeline(commands) do
-      {:ok, _} -> :ok
-      {:error, reason} -> {:error, reason}
     end
   end
 
