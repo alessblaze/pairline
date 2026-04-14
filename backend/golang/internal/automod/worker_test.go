@@ -1,9 +1,12 @@
 package automod
 
 import (
+	"context"
+	"net/http"
 	"testing"
 
 	"github.com/anish/omegle/backend/golang/internal/storage"
+	"github.com/openai/openai-go/v3"
 )
 
 func TestExtractPeerEvidenceFiltersPeerMessages(t *testing.T) {
@@ -129,6 +132,77 @@ func TestNormalizeOpenAIBaseURL(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestIsRetryableAssessmentError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "rate limit is retryable",
+			err: &openai.Error{
+				StatusCode: http.StatusTooManyRequests,
+				Request:    mustRequest(),
+				Response:   mustResponse(http.StatusTooManyRequests),
+			},
+			want: true,
+		},
+		{
+			name: "not found is retryable",
+			err: &openai.Error{
+				StatusCode: http.StatusNotFound,
+				Request:    mustRequest(),
+				Response:   mustResponse(http.StatusNotFound),
+			},
+			want: true,
+		},
+		{
+			name: "bad request is terminal",
+			err: &openai.Error{
+				StatusCode: http.StatusBadRequest,
+				Request:    mustRequest(),
+				Response:   mustResponse(http.StatusBadRequest),
+			},
+			want: false,
+		},
+		{
+			name: "deadline exceeded is retryable",
+			err:  context.DeadlineExceeded,
+			want: true,
+		},
+		{
+			name: "missing choices is retryable",
+			err:  errNIMResponseMissingChoices,
+			want: true,
+		},
+		{
+			name: "missing base url is terminal",
+			err:  errAutoModerationBaseURLEmpty,
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isRetryableAssessmentError(tt.err); got != tt.want {
+				t.Fatalf("isRetryableAssessmentError() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func mustRequest() *http.Request {
+	req, err := http.NewRequest(http.MethodPost, "https://example.com/v1/chat/completions", nil)
+	if err != nil {
+		panic(err)
+	}
+	return req
+}
+
+func mustResponse(statusCode int) *http.Response {
+	return &http.Response{StatusCode: statusCode}
 }
 
 func contains(haystack, needle string) bool {

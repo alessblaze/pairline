@@ -6,12 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/anish/omegle/backend/golang/internal/moderation"
+	appredis "github.com/anish/omegle/backend/golang/internal/redis"
 	"github.com/anish/omegle/backend/golang/internal/storage"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -34,6 +37,8 @@ const (
 	decisionApproved = "approved"
 	decisionRejected = "rejected"
 	decisionEscalate = "escalate"
+
+	autoBanDuration = 7 * 24 * time.Hour
 )
 
 type Config struct {
@@ -50,6 +55,7 @@ type Config struct {
 
 type Worker struct {
 	db         *gorm.DB
+	redis      *appredis.Client
 	client     *http.Client
 	config     Config
 	triggerCh  chan string
@@ -78,14 +84,25 @@ type safetyAssessment struct {
 	Categories     []string
 }
 
-func NewWorker(db *gorm.DB) *Worker {
+var (
+	errAutoModerationBaseURLEmpty  = errors.New("auto moderation base URL is empty")
+	errAutoModerationMissingAPIKey = errors.New("AUTO_MODERATION_ENABLED is true, but NIM_API_KEY is not configured")
+	errNIMResponseMissingChoices   = errors.New("nim response missing choices")
+)
+
+func NewWorker(db *gorm.DB, redisClient *appredis.Client) *Worker {
 	if db == nil {
 		return nil
 	}
 
 	cfg := loadConfigFromEnv()
+	if strings.TrimSpace(cfg.APIKey) == "" {
+		return nil
+	}
+
 	return &Worker{
 		db:         db,
+		redis:      redisClient,
 		client:     &http.Client{Timeout: cfg.Timeout},
 		config:     cfg,
 		triggerCh:  make(chan string, 256),
@@ -149,7 +166,7 @@ func (w *Worker) processPendingReports(ctx context.Context, prioritizedReportID 
 		return nil
 	}
 	if strings.TrimSpace(w.config.APIKey) == "" {
-		return errors.New("AUTO_MODERATION_ENABLED is true, but NIM_API_KEY is not configured")
+		return errAutoModerationMissingAPIKey
 	}
 
 	reports, err := w.claimReports(ctx, prioritizedReportID)
@@ -223,13 +240,73 @@ func (w *Worker) processSingleReport(ctx context.Context, report storage.Report)
 	if peerMessageCount > 0 || strings.TrimSpace(report.Description) != "" {
 		assessment, err := w.assessReport(ctx, report, peerEvidence)
 		if err != nil {
-			return w.markFailure(ctx, report.ID, err)
+			return w.markFailure(ctx, report.ID, err, isRetryableAssessmentError(err))
 		}
 
 		decision, summary = determineDecision(assessment)
 		categories = assessment.Categories
 	}
 
+	switch decision {
+	case decisionApproved:
+		return w.completeApprovedReport(ctx, report, categories, summary, completedAt)
+	case decisionRejected:
+		_, err := w.finalizeDecision(ctx, report.ID, decision, categories, summary, completedAt, "", true)
+		return err
+	default:
+		_, err := w.finalizeDecision(ctx, report.ID, decision, categories, summary, completedAt, "", false)
+		return err
+	}
+}
+
+func (w *Worker) completeApprovedReport(
+	ctx context.Context,
+	report storage.Report,
+	categories []string,
+	summary string,
+	completedAt time.Time,
+) error {
+	banID := ""
+	if strings.TrimSpace(report.ReportedSessionID) != "" || strings.TrimSpace(report.ReportedIP) != "" {
+		expiresAt := completedAt.Add(autoBanDuration)
+		banResult, banSummary, err := w.createAutomaticBan(ctx, report, categories, &expiresAt)
+		if err != nil {
+			return w.markFailure(ctx, report.ID, err, true)
+		}
+		if banResult.Ban.ID != "" && !banResult.AlreadyBanned {
+			banID = banResult.Ban.ID
+		}
+		if banSummary != "" {
+			summary = summary + " " + banSummary
+		}
+	}
+
+	updated, err := w.finalizeDecision(ctx, report.ID, decisionApproved, categories, summary, completedAt, banID, true)
+	if err != nil {
+		if banID != "" {
+			_ = w.rollbackAutomaticBan(ctx, banID)
+		}
+		return err
+	}
+	if updated {
+		return nil
+	}
+	if banID != "" {
+		_ = w.rollbackAutomaticBan(ctx, banID)
+	}
+	return nil
+}
+
+func (w *Worker) finalizeDecision(
+	ctx context.Context,
+	reportID string,
+	decision string,
+	categories []string,
+	summary string,
+	completedAt time.Time,
+	banID string,
+	autoReview bool,
+) (bool, error) {
 	updates := map[string]any{
 		"auto_moderation_state":        stateCompleted,
 		"auto_moderation_decision":     decision,
@@ -239,31 +316,103 @@ func (w *Worker) processSingleReport(ctx context.Context, report storage.Report)
 		"auto_moderation_model":        w.config.Model,
 		"auto_moderation_completed_at": completedAt,
 		"auto_moderation_claimed_at":   nil,
+		"auto_moderation_ban_id":       banID,
 	}
 
-	if err := w.db.WithContext(ctx).Model(&storage.Report{}).Where("id = ?", report.ID).Updates(updates).Error; err != nil {
-		return err
-	}
-
-	if decision != decisionApproved && decision != decisionRejected {
-		return nil
+	if !autoReview {
+		return true, w.db.WithContext(ctx).Model(&storage.Report{}).Where("id = ?", reportID).Updates(updates).Error
 	}
 
 	reviewedAt := time.Now()
-	return w.db.WithContext(ctx).Model(&storage.Report{}).
-		Where("id = ? AND status = ?", report.ID, statePending).
-		Updates(map[string]any{
-			"status":               decision,
-			"reviewed_by_username": ReviewerName,
-			"reviewed_at":          reviewedAt,
-		}).Error
+	reviewUpdates := make(map[string]any, len(updates)+3)
+	for key, value := range updates {
+		reviewUpdates[key] = value
+	}
+	reviewUpdates["status"] = decision
+	reviewUpdates["reviewed_by_username"] = ReviewerName
+	reviewUpdates["reviewed_at"] = reviewedAt
+
+	tx := w.db.WithContext(ctx).Model(&storage.Report{}).
+		Where("id = ? AND status = ?", reportID, statePending).
+		Updates(reviewUpdates)
+	if tx.Error != nil {
+		return false, tx.Error
+	}
+	if tx.RowsAffected > 0 {
+		return true, nil
+	}
+
+	return false, w.db.WithContext(ctx).Model(&storage.Report{}).Where("id = ?", reportID).Updates(updates).Error
 }
 
-func (w *Worker) markFailure(ctx context.Context, reportID string, err error) error {
+func (w *Worker) rollbackAutomaticBan(ctx context.Context, banID string) error {
+	if strings.TrimSpace(banID) == "" {
+		return nil
+	}
+
+	rollbackCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	_, err := moderation.DeleteBan(rollbackCtx, w.db, w.redis, banID, ReviewerName)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	return err
+}
+
+func (w *Worker) createAutomaticBan(
+	ctx context.Context,
+	report storage.Report,
+	categories []string,
+	expiresAt *time.Time,
+) (moderation.CreateBanResult, string, error) {
+	reason := autoBanReason(report, categories)
+	banResult, err := moderation.CreateOrRefreshBan(ctx, w.db, w.redis, moderation.CreateBanParams{
+		SessionID:        strings.TrimSpace(report.ReportedSessionID),
+		IPAddress:        strings.TrimSpace(report.ReportedIP),
+		Reason:           reason,
+		BannedByUsername: ReviewerName,
+		ExpiresAt:        expiresAt,
+	})
+	if err != nil {
+		return moderation.CreateBanResult{}, "", fmt.Errorf("auto ban reported user: %w", err)
+	}
+
+	if banResult.AlreadyBanned {
+		return banResult, "The reported user already had an active ban, so auto moderation kept the existing ban in place.", nil
+	}
+
+	if expiresAt == nil {
+		return banResult, "Applied an automatic ban.", nil
+	}
+
+	return banResult, fmt.Sprintf("Applied a 7-day temporary ban until %s.", expiresAt.UTC().Format(time.RFC3339)), nil
+}
+
+func autoBanReason(report storage.Report, categories []string) string {
+	reason := "Auto-moderation temporary ban"
+	if strings.TrimSpace(report.Reason) != "" {
+		reason = reason + ": " + safePromptText(report.Reason)
+	}
+	if len(categories) > 0 {
+		reason = reason + " [" + strings.Join(categories, ", ") + "]"
+	}
+	return truncateForDB(reason, 200)
+}
+
+func (w *Worker) markFailure(ctx context.Context, reportID string, err error, retryable bool) error {
+	errorMessage := err.Error()
+	if retryable {
+		errorMessage = "Transient auto moderation error; will retry automatically: " + err.Error()
+	}
+
 	failure := map[string]any{
 		"auto_moderation_state":      stateFailed,
-		"auto_moderation_error":      truncateForDB(err.Error(), 500),
+		"auto_moderation_error":      truncateForDB(errorMessage, 500),
 		"auto_moderation_claimed_at": nil,
+	}
+	if !retryable {
+		failure["auto_moderation_attempts"] = w.config.MaxAttempts
 	}
 	if updateErr := w.db.WithContext(ctx).Model(&storage.Report{}).Where("id = ?", reportID).Updates(failure).Error; updateErr != nil {
 		return errors.Join(err, updateErr)
@@ -276,7 +425,7 @@ func (w *Worker) assessReport(ctx context.Context, report storage.Report, peerEv
 
 	baseURL := normalizeOpenAIBaseURL(w.config.BaseURL)
 	if baseURL == "" {
-		return safetyAssessment{}, errors.New("auto moderation base URL is empty")
+		return safetyAssessment{}, errAutoModerationBaseURLEmpty
 	}
 
 	client := openai.NewClient(
@@ -300,7 +449,7 @@ func (w *Worker) assessReport(ctx context.Context, report storage.Report, peerEv
 		return safetyAssessment{}, fmt.Errorf("nim api %s: %w", baseURL, err)
 	}
 	if len(completion.Choices) == 0 {
-		return safetyAssessment{}, errors.New("nim response missing choices")
+		return safetyAssessment{}, errNIMResponseMissingChoices
 	}
 
 	return parseAssessment(completion.Choices[0].Message.Content)
@@ -466,6 +615,40 @@ func determineDecision(assessment safetyAssessment) (string, string) {
 	}
 
 	return decisionEscalate, "Escalated for human review because the model response could not be classified confidently."
+}
+
+func isRetryableAssessmentError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	switch {
+	case errors.Is(err, errAutoModerationBaseURLEmpty),
+		errors.Is(err, errAutoModerationMissingAPIKey):
+		return false
+	case errors.Is(err, context.Canceled):
+		return false
+	case errors.Is(err, context.DeadlineExceeded),
+		errors.Is(err, errNIMResponseMissingChoices):
+		return true
+	}
+
+	var apiErr *openai.Error
+	if errors.As(err, &apiErr) {
+		switch apiErr.StatusCode {
+		case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusUnprocessableEntity:
+			return false
+		default:
+			return true
+		}
+	}
+
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+
+	return true
 }
 
 func loadConfigFromEnv() Config {

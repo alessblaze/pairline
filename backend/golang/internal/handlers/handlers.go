@@ -33,7 +33,6 @@ import (
 	"os"
 	"regexp"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,6 +41,7 @@ import (
 
 	"github.com/anish/omegle/backend/golang/internal/automod"
 	"github.com/anish/omegle/backend/golang/internal/middleware"
+	"github.com/anish/omegle/backend/golang/internal/moderation"
 	"github.com/anish/omegle/backend/golang/internal/observability"
 	appredis "github.com/anish/omegle/backend/golang/internal/redis"
 	"github.com/anish/omegle/backend/golang/internal/storage"
@@ -266,86 +266,114 @@ func GetReportsHandlerGin(c *gin.Context) {
 	})
 }
 
-func UpdateReportHandlerGin(c *gin.Context) {
-	span := startHandlerSpan(c, "admin.reports.update")
-	defer span.End()
+func UpdateReportHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		span := startHandlerSpan(c, "admin.reports.update")
+		defer span.End()
 
-	id := c.Param("id")
-	span.SetAttributes(hashedAttribute("report.ref", id))
+		id := c.Param("id")
+		span.SetAttributes(hashedAttribute("report.ref", id))
 
-	// Validate UUID format for report ID
-	if !uuidRe.MatchString(id) {
-		span.SetStatus(codes.Error, "invalid report id format")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid report ID format"})
-		return
-	}
+		// Validate UUID format for report ID
+		if !uuidRe.MatchString(id) {
+			span.SetStatus(codes.Error, "invalid report id format")
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid report ID format"})
+			return
+		}
 
-	username, ok := getContextString(c, "username")
-	if !ok {
-		span.SetStatus(codes.Error, "unauthorized")
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-		return
-	}
+		username, ok := getContextString(c, "username")
+		if !ok {
+			span.SetStatus(codes.Error, "unauthorized")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			return
+		}
 
-	var req struct {
-		Status string `json:"status"`
-	}
+		var req struct {
+			Status string `json:"status"`
+		}
 
-	if err := c.ShouldBindJSON(&req); err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "invalid request body")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
-		return
-	}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "invalid request body")
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+			return
+		}
 
-	if req.Status != "approved" && req.Status != "rejected" {
-		span.SetStatus(codes.Error, "invalid status")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid status"})
-		return
-	}
-	span.SetAttributes(
-		hashedAttribute("admin.user.ref", username),
-		attribute.String("report.status", req.Status),
-	)
+		if req.Status != "approved" && req.Status != "rejected" {
+			span.SetStatus(codes.Error, "invalid status")
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid status"})
+			return
+		}
+		span.SetAttributes(
+			hashedAttribute("admin.user.ref", username),
+			attribute.String("report.status", req.Status),
+		)
 
-	db := storage.NewDatabase()
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-	defer cancel()
-	reviewedAt := time.Now()
-	tx := db.GetDB().WithContext(ctx).Model(&storage.Report{}).
-		Where("id = ? AND (status = ? OR reviewed_by_username = ?)", id, "pending", automod.ReviewerName).
-		Updates(map[string]interface{}{
-			"status":               req.Status,
-			"reviewed_by_username": username,
-			"reviewed_at":          reviewedAt,
-		})
+		db := storage.NewDatabase()
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
 
-	if tx.Error != nil {
-		span.RecordError(tx.Error)
-		span.SetStatus(codes.Error, "failed to update report")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update report"})
-		return
-	}
-
-	if tx.RowsAffected == 0 {
-		var existingCount int64
-		if err := db.GetDB().WithContext(ctx).Model(&storage.Report{}).Where("id = ?", id).Count(&existingCount).Error; err != nil {
+		var existing storage.Report
+		if err := db.GetDB().WithContext(ctx).Where("id = ?", id).First(&existing).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Report not found"})
+				return
+			}
 			span.RecordError(err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update report"})
 			return
 		}
-		if existingCount > 0 {
+
+		if existing.Status != "pending" && existing.ReviewedByUsername != automod.ReviewerName {
 			c.JSON(http.StatusConflict, gin.H{"error": "Report has already been reviewed"})
 			return
 		}
 
-		c.JSON(http.StatusNotFound, gin.H{"error": "Report not found"})
-		return
-	}
+		reviewedAt := time.Now()
+		tx := db.GetDB().WithContext(ctx).Model(&storage.Report{}).
+			Where("id = ? AND (status = ? OR reviewed_by_username = ?)", id, "pending", automod.ReviewerName).
+			Updates(map[string]interface{}{
+				"status":               req.Status,
+				"reviewed_by_username": username,
+				"reviewed_at":          reviewedAt,
+			})
 
-	c.JSON(http.StatusOK, gin.H{
-		"status": "updated",
-	})
+		if tx.Error != nil {
+			span.RecordError(tx.Error)
+			span.SetStatus(codes.Error, "failed to update report")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update report"})
+			return
+		}
+
+		if tx.RowsAffected == 0 {
+			c.JSON(http.StatusConflict, gin.H{"error": "Report has already been reviewed"})
+			return
+		}
+
+		if existing.ReviewedByUsername == automod.ReviewerName &&
+			existing.Status == "approved" &&
+			req.Status == "rejected" &&
+			strings.TrimSpace(existing.AutoModerationBanID) != "" {
+			if _, err := moderation.DeleteBan(ctx, db.GetDB(), redisClient, existing.AutoModerationBanID, username); err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, "failed to rollback auto ban")
+				c.JSON(http.StatusBadGateway, gin.H{"error": "Report updated, but automatic ban rollback failed"})
+				return
+			}
+
+			if err := db.GetDB().WithContext(ctx).Model(&storage.Report{}).
+				Where("id = ?", id).
+				Update("auto_moderation_ban_id", "").Error; err != nil {
+				span.RecordError(err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Report updated, but failed to clear automatic ban reference"})
+				return
+			}
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status": "updated",
+		})
+	}
 }
 
 func CreateReportHandlerGin(redisClient redis.UniversalClient, enqueueAutoModeration func(string)) gin.HandlerFunc {
@@ -620,14 +648,6 @@ func CreateBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 			}
 		}
 
-		if ipAddress != "" {
-			if isPrivateOrLocalIP(ipAddress) {
-				span.SetStatus(codes.Error, "internal ip ban rejected")
-				c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot ban internal/local IP address"})
-				return
-			}
-		}
-
 		if req.ExpiryDate != "" {
 			parsedExpiry, err := time.Parse(time.RFC3339, req.ExpiryDate)
 			if err != nil {
@@ -652,56 +672,46 @@ func CreateBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 			expiresAt = &parsedExpiry
 		}
 
-		var (
-			existingBan   storage.Ban
-			createdBan    storage.Ban
-			alreadyBanned bool
-		)
-
-		err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			if err := lockBanTargets(tx, sessionID, ipAddress); err != nil {
-				return err
-			}
-
-			lookup := activeBanLookup(tx, sessionID, ipAddress, time.Now())
-			if err := lookup.Order("created_at DESC").First(&existingBan).Error; err == nil {
-				alreadyBanned = true
-				return nil
-			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-				return err
-			}
-
-			createdBan = storage.Ban{
-				SessionID:        sessionID,
-				IPAddress:        ipAddress,
-				Reason:           req.Reason,
-				BannedByUsername: username,
-				CreatedAt:        time.Now(),
-				ExpiresAt:        expiresAt,
-				IsActive:         true,
-			}
-
-			return tx.Create(&createdBan).Error
+		banResult, err := moderation.CreateOrRefreshBan(ctx, db.GetDB(), redisClient, moderation.CreateBanParams{
+			SessionID:        sessionID,
+			IPAddress:        ipAddress,
+			Reason:           req.Reason,
+			BannedByUsername: username,
+			ExpiresAt:        expiresAt,
 		})
-
-		if err == nil && alreadyBanned {
+		if err == nil && banResult.AlreadyBanned {
 			span.SetAttributes(attribute.Bool("ban.already_present", true))
 			observability.RecordBusinessEvent(c.Request.Context(), "ban.already_present")
 			c.JSON(http.StatusOK, gin.H{
 				"status": "already_banned",
-				"ban_id": existingBan.ID,
+				"ban_id": banResult.Ban.ID,
 			})
 			return
 		}
 
 		if err != nil {
+			if errors.Is(err, moderation.ErrPrivateIPAddress) {
+				span.SetStatus(codes.Error, "internal ip ban rejected")
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot ban internal/local IP address"})
+				return
+			}
+			if errors.Is(err, moderation.ErrMissingBanTarget) {
+				span.SetStatus(codes.Error, "missing ban target")
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Missing session_id or ip"})
+				return
+			}
 			span.RecordError(err)
+			if banResult.Ban.ID != "" {
+				span.SetStatus(codes.Error, "redis propagation failed")
+				c.JSON(http.StatusBadGateway, gin.H{"error": "Ban saved, but Redis propagation failed"})
+				return
+			}
 			span.SetStatus(codes.Error, "failed to create ban")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create ban"})
 			return
 		}
 		banTarget := "ip"
-		if sessionID != "" {
+		if banResult.Ban.SessionID != "" {
 			banTarget = "session"
 		}
 		observability.RecordBusinessEvent(
@@ -710,56 +720,8 @@ func CreateBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 			attribute.String("ban.target", banTarget),
 		)
 
-		redisTTL := time.Duration(0)
-		if expiresAt != nil {
-			redisTTL = time.Until(*expiresAt)
-		}
-		redisPropagationFailed := false
-
-		if sessionID != "" {
-			err := appredis.SetIndexedValue(
-				ctx,
-				redisClient.GetClient(),
-				appredis.BanIndexKey(),
-				appredis.BanSessionKey(sessionID),
-				req.Reason,
-				redisTTL,
-			)
-			if err != nil {
-				log.Printf("Failed to store ban in Redis: %v", err)
-				redisPropagationFailed = true
-			}
-
-			err = redisClient.PublishBanAction(ctx, sessionID, ipAddress, req.Reason)
-			if err != nil {
-				log.Printf("Failed to publish ban action: %v", err)
-				redisPropagationFailed = true
-			}
-		}
-
-		if ipAddress != "" {
-			err := appredis.SetIndexedValue(
-				ctx,
-				redisClient.GetClient(),
-				appredis.BanIndexKey(),
-				appredis.BanIPKey(ipAddress),
-				req.Reason,
-				redisTTL,
-			)
-			if err != nil {
-				log.Printf("Failed to store IP ban in Redis: %v", err)
-				redisPropagationFailed = true
-			}
-
-			err = redisClient.PublishBanIPAction(ctx, ipAddress, req.Reason)
-			if err != nil {
-				log.Printf("Failed to publish ban IP action: %v", err)
-				redisPropagationFailed = true
-			}
-		}
-
 		reviewedAt := time.Now()
-		filter, args := reportAutoApprovalFilter(req.ReportID, sessionID, ipAddress)
+		filter, args := reportAutoApprovalFilter(req.ReportID, banResult.Ban.SessionID, banResult.Ban.IPAddress)
 		reportUpdate := db.GetDB().WithContext(ctx).Model(&storage.Report{}).
 			Where("status = ?", "pending").
 			Where(filter, args...)
@@ -772,17 +734,9 @@ func CreateBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 			log.Printf("Failed to auto-approve related reports after ban: %v", err)
 		}
 
-		if redisPropagationFailed {
-			span.SetStatus(codes.Error, "redis propagation failed")
-			c.JSON(http.StatusBadGateway, gin.H{
-				"error": "Ban saved, but Redis propagation failed",
-			})
-			return
-		}
-
 		c.JSON(http.StatusOK, gin.H{
 			"status": "banned",
-			"ban_id": createdBan.ID,
+			"ban_id": banResult.Ban.ID,
 		})
 	}
 }
@@ -885,62 +839,10 @@ func DeleteBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 			return
 		}
 		span.SetAttributes(hashedAttribute("admin.user.ref", username))
-		now := time.Now()
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 		defer cancel()
 
-		var (
-			ban                 storage.Ban
-			remainingSessionBan *storage.Ban
-			remainingIPBan      *storage.Ban
-		)
-
-		err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			result := tx.Where("id = ? AND is_active = ?", banIdentifier, true).First(&ban).Error
-
-			if errors.Is(result, gorm.ErrRecordNotFound) {
-				result = tx.Where("session_id = ? AND is_active = ?", banIdentifier, true).
-					Order("created_at DESC").
-					First(&ban).Error
-			}
-
-			if result != nil {
-				return result
-			}
-
-			if err := lockBanTargets(tx, ban.SessionID, ban.IPAddress); err != nil {
-				return err
-			}
-
-			if err := tx.Model(&storage.Ban{}).
-				Where("id = ? AND is_active = ?", ban.ID, true).
-				Updates(map[string]interface{}{
-					"is_active":            false,
-					"unbanned_at":          now,
-					"unbanned_by_username": username,
-				}).Error; err != nil {
-				return err
-			}
-
-			if ban.SessionID != "" {
-				if activeBan, err := latestActiveBan(tx, "session_id", ban.SessionID, now); err != nil {
-					return err
-				} else {
-					remainingSessionBan = activeBan
-				}
-			}
-
-			if ban.IPAddress != "" {
-				if activeBan, err := latestActiveBan(tx, "ip_address", ban.IPAddress, now); err != nil {
-					return err
-				} else {
-					remainingIPBan = activeBan
-				}
-			}
-
-			return nil
-		})
-
+		deleteResult, err := moderation.DeleteBan(ctx, db.GetDB(), redisClient, banIdentifier, username)
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			span.SetStatus(codes.Error, "ban not found")
 			c.JSON(http.StatusNotFound, gin.H{"error": "Ban not found"})
@@ -949,87 +851,17 @@ func DeleteBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 
 		if err != nil {
 			span.RecordError(err)
+			if deleteResult.Ban.ID != "" {
+				span.SetStatus(codes.Error, "redis propagation failed")
+				c.JSON(http.StatusBadGateway, gin.H{"error": "Unban saved, but Redis propagation failed"})
+				return
+			}
 			span.SetStatus(codes.Error, "failed to unban")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to unban"})
 			return
 		}
-		redisPropagationFailed := false
-
-		if ban.SessionID != "" {
-			if remainingSessionBan != nil {
-				if err := appredis.SetIndexedValue(
-					ctx,
-					redisClient.GetClient(),
-					appredis.BanIndexKey(),
-					appredis.BanSessionKey(ban.SessionID),
-					remainingSessionBan.Reason,
-					redisBanTTL(*remainingSessionBan),
-				); err != nil {
-					log.Printf("Failed to refresh session ban in Redis: %v", err)
-					redisPropagationFailed = true
-				}
-			} else {
-				err := appredis.DeleteIndexedKey(
-					ctx,
-					redisClient.GetClient(),
-					appredis.BanIndexKey(),
-					appredis.BanSessionKey(ban.SessionID),
-				)
-				if err != nil {
-					log.Printf("Failed to delete ban from Redis: %v", err)
-					redisPropagationFailed = true
-				}
-
-				err = redisClient.PublishUnbanAction(ctx, ban.SessionID, ban.IPAddress)
-				if err != nil {
-					log.Printf("Failed to publish unban action: %v", err)
-					redisPropagationFailed = true
-				}
-			}
-		}
-
-		if ban.IPAddress != "" {
-			if remainingIPBan != nil {
-				if err := appredis.SetIndexedValue(
-					ctx,
-					redisClient.GetClient(),
-					appredis.BanIndexKey(),
-					appredis.BanIPKey(ban.IPAddress),
-					remainingIPBan.Reason,
-					redisBanTTL(*remainingIPBan),
-				); err != nil {
-					log.Printf("Failed to refresh IP ban in Redis: %v", err)
-					redisPropagationFailed = true
-				}
-			} else {
-				err := appredis.DeleteIndexedKey(
-					ctx,
-					redisClient.GetClient(),
-					appredis.BanIndexKey(),
-					appredis.BanIPKey(ban.IPAddress),
-				)
-				if err != nil {
-					log.Printf("Failed to delete IP ban from Redis: %v", err)
-					redisPropagationFailed = true
-				}
-
-				err = redisClient.PublishUnbanIPAction(ctx, ban.IPAddress)
-				if err != nil {
-					log.Printf("Failed to publish unban IP action: %v", err)
-					redisPropagationFailed = true
-				}
-			}
-		}
-
-		if redisPropagationFailed {
-			span.SetStatus(codes.Error, "redis propagation failed")
-			c.JSON(http.StatusBadGateway, gin.H{
-				"error": "Unban saved, but Redis propagation failed",
-			})
-			return
-		}
 		banTarget := "ip"
-		if ban.SessionID != "" {
+		if deleteResult.Ban.SessionID != "" {
 			banTarget = "session"
 		}
 		observability.RecordBusinessEvent(
@@ -1040,7 +872,7 @@ func DeleteBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 
 		c.JSON(http.StatusOK, gin.H{
 			"status": "unbanned",
-			"ban_id": ban.ID,
+			"ban_id": deleteResult.Ban.ID,
 		})
 	}
 }
@@ -1781,22 +1613,6 @@ func normalizeChatLog(raw json.RawMessage) (string, error) {
 	return string(normalized), nil
 }
 
-func isPrivateOrLocalIP(raw string) bool {
-	addr, err := netip.ParseAddr(strings.TrimSpace(raw))
-	if err != nil {
-		return true
-	}
-
-	addr = addr.Unmap()
-
-	if addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() {
-		return true
-	}
-
-	cgnatPrefix := netip.MustParsePrefix("100.64.0.0/10")
-	return cgnatPrefix.Contains(addr)
-}
-
 func getRequestClientIP(c *gin.Context) string {
 	peerIP := parseRemoteIP(c.Request.RemoteAddr)
 	if !isTrustedProxyIP(peerIP) {
@@ -1963,25 +1779,6 @@ func BoolToRedisSettingValue(enabled bool) string {
 	return "0"
 }
 
-func lockBanTargets(tx *gorm.DB, sessionID, ipAddress string) error {
-	keys := make([]string, 0, 2)
-	if sessionID != "" {
-		keys = append(keys, appredis.BanSessionKey(sessionID))
-	}
-	if ipAddress != "" {
-		keys = append(keys, appredis.BanIPKey(ipAddress))
-	}
-	sort.Strings(keys)
-
-	for _, key := range keys {
-		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", key).Error; err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
 func lookupSessionIP(ctx context.Context, redisClient redis.UniversalClient, sessionID string) string {
 	ctx, span := startChildSpanFromContext(ctx, "moderation.lookup_session_ip", hashedAttribute("session.ref", sessionID))
 	defer span.End()
@@ -2020,19 +1817,6 @@ func resolveBanIPAddress(ctx context.Context, redisClient redis.UniversalClient,
 	return normalizeIP(requestedIP)
 }
 
-func activeBanLookup(tx *gorm.DB, sessionID, ipAddress string, now time.Time) *gorm.DB {
-	lookup := tx.Where("is_active = ? AND (expires_at IS NULL OR expires_at > ?)", true, now)
-
-	switch {
-	case sessionID != "" && ipAddress != "":
-		return lookup.Where("(session_id = ? OR ip_address = ?)", sessionID, ipAddress)
-	case sessionID != "":
-		return lookup.Where("session_id = ?", sessionID)
-	default:
-		return lookup.Where("ip_address = ?", ipAddress)
-	}
-}
-
 func reportAutoApprovalFilter(reportID, sessionID, ipAddress string) (string, []interface{}) {
 	switch {
 	case reportID != "" && sessionID != "" && ipAddress != "":
@@ -2050,40 +1834,6 @@ func reportAutoApprovalFilter(reportID, sessionID, ipAddress string) (string, []
 	default:
 		return "reported_ip = ?", []interface{}{ipAddress}
 	}
-}
-
-// allowedBanLookupColumns prevents SQL injection by restricting the column
-// parameter to a known-safe allowlist rather than accepting a raw WHERE clause.
-var allowedBanLookupColumns = map[string]bool{"session_id": true, "ip_address": true}
-
-func latestActiveBan(tx *gorm.DB, column string, value string, now time.Time) (*storage.Ban, error) {
-	if !allowedBanLookupColumns[column] {
-		return nil, errors.New("invalid ban lookup column")
-	}
-	var ban storage.Ban
-	err := tx.Where(column+" = ? AND is_active = ? AND (expires_at IS NULL OR expires_at > ?)", value, true, now).
-		Order("created_at DESC").
-		First(&ban).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &ban, nil
-}
-
-func redisBanTTL(ban storage.Ban) time.Duration {
-	if ban.ExpiresAt == nil {
-		return 0
-	}
-
-	ttl := time.Until(*ban.ExpiresAt)
-	if ttl <= 0 {
-		return time.Second
-	}
-
-	return ttl
 }
 
 func isDuplicateKeyError(err error) bool {

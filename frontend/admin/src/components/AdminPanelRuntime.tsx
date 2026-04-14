@@ -809,7 +809,14 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
     if (report.auto_moderation_error) return report.auto_moderation_error;
     if (report.auto_moderation_summary) return report.auto_moderation_summary;
     if (report.auto_moderation_state === 'processing') return 'Auto moderation is currently analyzing this report.';
-    if (report.auto_moderation_state === 'failed') return 'Auto moderation could not complete and this report needs a human decision.';
+    if (report.auto_moderation_state === 'failed') {
+      const maxAttempts = autoModerationSettings?.max_attempts || 0;
+      const attempts = report.auto_moderation_attempts || 0;
+      if (maxAttempts > 0 && attempts < maxAttempts) {
+        return 'Auto moderation hit a transient error and will retry automatically.';
+      }
+      return 'Auto moderation could not complete and this report needs a human decision.';
+    }
     if (report.auto_moderation_state === 'completed') return 'Auto moderation completed without a summary.';
     return 'Waiting for auto moderation to pick up this report.';
   };

@@ -77,6 +77,7 @@ type Report struct {
 	AutoModerationSummary     string     `gorm:"type:text" json:"auto_moderation_summary"`
 	AutoModerationError       string     `gorm:"type:text" json:"auto_moderation_error"`
 	AutoModerationModel       string     `json:"auto_moderation_model"`
+	AutoModerationBanID       string     `gorm:"index" json:"auto_moderation_ban_id"`
 	AutoModerationAttempts    int        `gorm:"default:0" json:"auto_moderation_attempts"`
 	AutoModerationClaimedAt   *time.Time `json:"auto_moderation_claimed_at"`
 	AutoModerationCompletedAt *time.Time `json:"auto_moderation_completed_at"`

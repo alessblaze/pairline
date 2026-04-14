@@ -142,7 +142,7 @@ func newServer(enablePublic, enableAdmin bool, serviceName string) *Server {
 		s.syncBannedWordsConfigToRedis()
 		s.syncBannedWordsToRedis()
 		s.startBanSyncLoop()
-		s.autoModerator = automod.NewWorker(s.db.GetDB())
+		s.autoModerator = automod.NewWorker(s.db.GetDB(), s.redis)
 		if s.autoModerator != nil {
 			s.autoModerator.Start(s.backgroundCtx)
 		}
@@ -585,7 +585,7 @@ func (s *Server) setupRoutes() {
 				moderation := adminAuth.Group("")
 				moderation.Use(s.RoleAuthMiddleware([]string{"moderator", "admin", "root"}))
 				moderation.GET("/reports", handlers.GetReportsHandlerGin)
-				moderation.PUT("/reports/:id", handlers.UpdateReportHandlerGin)
+				moderation.PUT("/reports/:id", handlers.UpdateReportHandlerGin(s.redis))
 				moderation.GET("/bans", handlers.GetBansHandlerGin)
 				moderation.GET("/banned-words", handlers.GetBannedWordsHandlerGin)
 				moderation.GET("/banned-words/settings", handlers.GetBannedWordsSettingsHandlerGin)
@@ -622,7 +622,11 @@ func (s *Server) setupRoutes() {
 
 		moderation := s.router.Group("/api/v1/moderation")
 		{
-			moderation.POST("/report", handlers.CreateReportHandlerGin(s.redis.GetClient(), s.autoModerator.Enqueue))
+			var enqueueAutoModeration func(string)
+			if s.autoModerator != nil {
+				enqueueAutoModeration = s.autoModerator.Enqueue
+			}
+			moderation.POST("/report", handlers.CreateReportHandlerGin(s.redis.GetClient(), enqueueAutoModeration))
 		}
 	}
 }
