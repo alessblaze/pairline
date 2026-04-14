@@ -307,8 +307,7 @@ defmodule OmeglePhoenix.RedisState do
              ],
              opts
            ),
-         :ok <- persist_locators(session.id, route, session.ip, ttl_seconds),
-         :ok <- sync_indexes(session.id, session.ip, ttl_seconds) do
+         :ok <- persist_locators_and_indexes(session.id, route, session.ip, ttl_seconds) do
       {:ok, 1}
     else
       {:error, _reason} = error ->
@@ -1000,6 +999,36 @@ defmodule OmeglePhoenix.RedisState do
 
       other ->
         {:error, {:unexpected_session_ip_lookup, other}}
+    end
+  end
+
+  defp persist_locators_and_indexes(session_id, route, ip, ttl_seconds) do
+    ttl = normalize_ttl!(ttl_seconds)
+
+    commands = [
+      # Locators (untagged keys — qmn routes to correct slots)
+      [
+        "SETEX",
+        OmeglePhoenix.RedisKeys.session_locator_key(session_id),
+        ttl,
+        OmeglePhoenix.RedisKeys.encode_locator(route)
+      ],
+      [
+        "SETEX",
+        OmeglePhoenix.RedisKeys.session_ip_locator_key(session_id),
+        ttl,
+        ip
+      ],
+      # Indexes (also untagged — different slots, handled by qmn)
+      ["SADD", OmeglePhoenix.RedisKeys.active_sessions_key(), session_id],
+      ["SADD", OmeglePhoenix.RedisKeys.ip_sessions_key(ip), session_id],
+      ["EXPIRE", OmeglePhoenix.RedisKeys.ip_sessions_key(ip), ttl]
+    ]
+
+    case OmeglePhoenix.Redis.pipeline(commands) do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, reason}
+      other -> {:error, {:unexpected_locator_index_result, other}}
     end
   end
 

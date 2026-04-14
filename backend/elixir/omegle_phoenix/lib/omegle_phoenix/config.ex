@@ -100,7 +100,7 @@ defmodule OmeglePhoenix.Config do
   end
 
   def get_redis_pool_size do
-    get("REDIS_POOL_SIZE", "32")
+    get("REDIS_POOL_SIZE", "256")
     |> String.to_integer()
     |> max(1)
   end

@@ -212,11 +212,15 @@ defmodule OmeglePhoenix.Redis do
 
   defp with_timeout(opts, fun) do
     timeout = Keyword.get(opts, :timeout, @default_timeout)
-    task = Task.async(fun)
 
-    case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
-      {:ok, result} -> result
-      nil -> {:error, :timeout}
+    timer_ref = Process.send_after(self(), {:redis_timeout, make_ref()}, timeout)
+
+    try do
+      fun.()
+    catch
+      :exit, {:timeout, _} -> {:error, :timeout}
+    after
+      Process.cancel_timer(timer_ref)
     end
   end
 

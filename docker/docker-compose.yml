@@ -368,6 +368,10 @@ services:
     container_name: pairline-phoenix1
     hostname: phoenix1
     working_dir: /app
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     depends_on:
       redis-cluster-init:
         condition: service_completed_successfully
@@ -418,6 +422,10 @@ services:
     container_name: pairline-phoenix2
     hostname: phoenix2
     working_dir: /app
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     depends_on:
       redis-cluster-init:
         condition: service_completed_successfully
@@ -468,6 +476,10 @@ services:
     container_name: pairline-phoenix3
     hostname: phoenix3
     working_dir: /app
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     depends_on:
       redis-cluster-init:
         condition: service_completed_successfully
