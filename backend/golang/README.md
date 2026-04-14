@@ -48,6 +48,8 @@ Copy `.env.example` to `.env` and review:
 - `CORS_ORIGIN`
 - `TRUSTED_PROXY_CIDRS`
 - `BAN_SYNC_INTERVAL_SECONDS`
+- `AUTO_MODERATION_*`
+- `NIM_API_KEY`
 
 For the full backend env var reference (Phoenix + Go), see [`ENVIRONMENT.md`](../../ENVIRONMENT.md).
 
@@ -55,6 +57,9 @@ For the full backend env var reference (Phoenix + Go), see [`ENVIRONMENT.md`](..
 `JWT_ACCESS_EXPIRATION_MINUTES` defaults to `15` and controls the short-lived access token used for authenticated admin/moderator requests.
 `JWT_EXPIRATION_HOURS` now acts as the refresh-token/session lifetime for admin and moderator accounts.
 `BAN_SYNC_INTERVAL_SECONDS` defaults to disabled behavior when unset or `0`, which means startup reconciliation plus event-driven Redis updates only.
+`AUTO_MODERATION_ENABLED` defaults to `false` and acts as the fallback toggle until an admin updates the persisted setting.
+`NIM_API_KEY` (or `NVIDIA_NIM_API_KEY`) enables the async report auto-moderation worker to call NVIDIA NIM after reports are stored.
+`AUTO_MODERATION_MODEL` defaults to `nvidia/llama-3.1-nemotron-safety-guard-8b-v3`.
 Go services are Redis Cluster only and require `REDIS_CLUSTER_NODES`.
 Set `IGNORE_DOTENV=1` (or any non-empty value) to skip loading a local `.env` file even if one is present in the working directory.
 `ADMIN_HEALTH_PHOENIX_URLS`, `ADMIN_HEALTH_GO_URLS`, and `OTEL_COLLECTOR_HEALTH_URL` are used by the admin binary to build the authenticated infra-health summary consumed by the admin dashboard.
@@ -83,7 +88,9 @@ GOCACHE=/tmp/go-build go test ./...
   - `GET /api/v1/admin/reports`
   - `PUT /api/v1/admin/reports/:id`
   - `GET /api/v1/admin/bans`
+  - `GET /api/v1/admin/auto-moderation/settings`
   - `POST /api/v1/admin/ban`
+  - `PUT /api/v1/admin/auto-moderation/settings`
   - `DELETE /api/v1/admin/ban/:session_id`
 
 ## Admin roles

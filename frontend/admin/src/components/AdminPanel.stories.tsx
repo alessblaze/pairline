@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { AdminPanelStoryHarness } from './AdminPanelStoryHarness';
-import type { AdminAccount, Ban, BannedWord, InfraHealthResponse, Report } from '../types';
+import type { AdminAccount, AutoModerationSettings, Ban, BannedWord, InfraHealthResponse, Report } from '../types';
 
 const meta = {
   title: 'Pages/AdminPanel',
@@ -43,9 +43,50 @@ const mockReports: Report[] = [
       { id: '2', text: 'You are terrible.', sender: 'me', timestamp: 123456800 },
     ],
     status: 'pending' as const,
+    auto_moderation_state: 'completed',
+    auto_moderation_decision: 'escalate',
+    auto_moderation_categories: ['harassment'],
+    auto_moderation_summary: 'Escalated for human review because the evidence suggests harassment, but a moderator should confirm context.',
+    auto_moderation_model: 'nvidia/llama-3.1-nemotron-safety-guard-8b-v3',
+    auto_moderation_attempts: 1,
+    auto_moderation_completed_at: new Date().toISOString(),
+    created_at: new Date().toISOString(),
+  },
+  {
+    id: 'report-2',
+    reporter_session_id: 'client-C',
+    reported_session_id: 'client-D',
+    reporter_ip: '192.168.1.10',
+    reported_ip: '10.0.0.22',
+    reason: 'threats',
+    description: 'User threatened violence in chat.',
+    chat_log: [
+      { id: '3', text: 'I am going to find you.', sender: 'peer', timestamp: 123456900 },
+    ],
+    status: 'approved',
+    auto_moderation_state: 'completed',
+    auto_moderation_decision: 'approved',
+    auto_moderation_categories: ['violence'],
+    auto_moderation_summary: 'Approved automatically because the reported content was marked unsafe.',
+    auto_moderation_model: 'nvidia/llama-3.1-nemotron-safety-guard-8b-v3',
+    auto_moderation_attempts: 1,
+    auto_moderation_completed_at: new Date().toISOString(),
+    reviewed_by_username: 'auto-moderation',
+    reviewed_at: new Date().toISOString(),
     created_at: new Date().toISOString(),
   },
 ];
+
+const mockAutoModerationSettings: AutoModerationSettings = {
+  enabled: true,
+  enabled_default: false,
+  configured: true,
+  model: 'nvidia/llama-3.1-nemotron-safety-guard-8b-v3',
+  batch_size: 10,
+  interval_seconds: 30,
+  timeout_seconds: 20,
+  max_attempts: 3,
+};
 
 const mockBans: Ban[] = [
   {
@@ -250,7 +291,8 @@ export const AuthenticatedReportsView: Story = {
       role: 'admin',
       currentTab: 'reports',
       reports: mockReports,
-      serverReportMetrics: { pending: 1, approved: 0, rejected: 0 }
+      autoModerationSettings: mockAutoModerationSettings,
+      serverReportMetrics: { pending: 1, approved: 1, rejected: 0 }
     }
   }
 };
@@ -266,6 +308,7 @@ export const ReportsEmptyState: Story = {
       currentTab: 'reports',
       reports: [],
       reportStatusFilter: 'decided',
+      autoModerationSettings: mockAutoModerationSettings,
       serverReportMetrics: { pending: 0, approved: 0, rejected: 0 },
     }
   }
@@ -282,7 +325,8 @@ export const ReportsTranscriptModal: Story = {
       currentTab: 'reports',
       reports: mockReports,
       expandedReport: 'report-1',
-      serverReportMetrics: { pending: 1, approved: 0, rejected: 0 },
+      autoModerationSettings: mockAutoModerationSettings,
+      serverReportMetrics: { pending: 1, approved: 1, rejected: 0 },
     }
   }
 };
@@ -298,7 +342,25 @@ export const ReportsDescriptionModal: Story = {
       currentTab: 'reports',
       reports: mockReports,
       viewingDescription: 'report-1',
-      serverReportMetrics: { pending: 1, approved: 0, rejected: 0 },
+      autoModerationSettings: mockAutoModerationSettings,
+      serverReportMetrics: { pending: 1, approved: 1, rejected: 0 },
+    }
+  }
+};
+
+export const ReportsAutoReviewedFilter: Story = {
+  args: {
+    mockState: {
+      isAuthenticated: true,
+      authReady: true,
+      currentAdminUsername: 'albert',
+      role: 'admin',
+      currentTab: 'reports',
+      reports: mockReports,
+      autoModerationSettings: mockAutoModerationSettings,
+      reportStatusFilter: 'all',
+      reportReviewSourceFilter: 'autoReviewed',
+      serverReportMetrics: { pending: 1, approved: 1, rejected: 0 },
     }
   }
 };
@@ -319,7 +381,6 @@ export const AuthenticatedBansView: Story = {
 };
 
 export const BansTemporaryModal: Story = {
-  name: 'Bans Temporary Modal',
   args: {
     mockState: {
       isAuthenticated: true,
@@ -403,7 +464,6 @@ export const AuthenticatedInfraView: Story = {
 };
 
 export const InfraRedisModalOpen: Story = {
-  name: 'Infra Redis Modal Open',
   args: {
     mockState: {
       isAuthenticated: true,
@@ -418,7 +478,6 @@ export const InfraRedisModalOpen: Story = {
 };
 
 export const MobileMenuOpen: Story = {
-  name: 'Mobile Menu Open',
   args: {
     mockState: {
       isAuthenticated: true,
@@ -427,7 +486,8 @@ export const MobileMenuOpen: Story = {
       role: 'root',
       currentTab: 'reports',
       reports: mockReports,
-      serverReportMetrics: { pending: 1, approved: 0, rejected: 0 },
+      autoModerationSettings: mockAutoModerationSettings,
+      serverReportMetrics: { pending: 1, approved: 1, rejected: 0 },
       isMobileMenuOpen: true,
     }
   }

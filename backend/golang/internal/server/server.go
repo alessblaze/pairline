@@ -30,6 +30,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/anish/omegle/backend/golang/internal/automod"
 	"github.com/anish/omegle/backend/golang/internal/handlers"
 	"github.com/anish/omegle/backend/golang/internal/middleware"
 	"github.com/anish/omegle/backend/golang/internal/observability"
@@ -46,15 +47,18 @@ import (
 )
 
 type Server struct {
-	router       *gin.Engine
-	db           *storage.Database
-	redis        *appredis.Client
-	sharedSecret string
-	jwtSecret    string
-	serviceName  string
-	enableAdmin  bool
-	enablePublic bool
-	shutdownOTel func(context.Context) error
+	router         *gin.Engine
+	db             *storage.Database
+	redis          *appredis.Client
+	sharedSecret   string
+	jwtSecret      string
+	serviceName    string
+	enableAdmin    bool
+	enablePublic   bool
+	shutdownOTel   func(context.Context) error
+	backgroundCtx  context.Context
+	stopBackground context.CancelFunc
+	autoModerator  *automod.Worker
 }
 
 func NewServer() *Server {
@@ -100,6 +104,7 @@ func newServer(enablePublic, enableAdmin bool, serviceName string) *Server {
 		router:       gin.New(),
 		shutdownOTel: func(context.Context) error { return nil },
 	}
+	s.backgroundCtx, s.stopBackground = context.WithCancel(context.Background())
 
 	traceShutdown, err := observability.InitTracing(context.Background(), serviceName)
 	if err != nil {
@@ -137,6 +142,10 @@ func newServer(enablePublic, enableAdmin bool, serviceName string) *Server {
 		s.syncBannedWordsConfigToRedis()
 		s.syncBannedWordsToRedis()
 		s.startBanSyncLoop()
+		s.autoModerator = automod.NewWorker(s.db.GetDB())
+		if s.autoModerator != nil {
+			s.autoModerator.Start(s.backgroundCtx)
+		}
 	}
 
 	s.setupRoutes()
@@ -580,6 +589,7 @@ func (s *Server) setupRoutes() {
 				moderation.GET("/bans", handlers.GetBansHandlerGin)
 				moderation.GET("/banned-words", handlers.GetBannedWordsHandlerGin)
 				moderation.GET("/banned-words/settings", handlers.GetBannedWordsSettingsHandlerGin)
+				moderation.GET("/auto-moderation/settings", handlers.GetAutoModerationSettingsHandlerGin)
 
 				enforcement := adminAuth.Group("")
 				enforcement.Use(s.RoleAuthMiddleware([]string{"moderator", "admin", "root"}))
@@ -587,6 +597,7 @@ func (s *Server) setupRoutes() {
 				enforcement.POST("/banned-words", handlers.CreateBannedWordHandlerGin(s.redis))
 				enforcement.DELETE("/banned-words/:id", handlers.DeleteBannedWordHandlerGin(s.redis))
 				enforcement.PUT("/banned-words/settings", handlers.UpdateBannedWordsSettingsHandlerGin(s.redis))
+				enforcement.PUT("/auto-moderation/settings", handlers.UpdateAutoModerationSettingsHandlerGin)
 
 				adminOnlyEnforcement := adminAuth.Group("")
 				adminOnlyEnforcement.Use(s.RoleAuthMiddleware([]string{"admin", "root"}))
@@ -611,7 +622,7 @@ func (s *Server) setupRoutes() {
 
 		moderation := s.router.Group("/api/v1/moderation")
 		{
-			moderation.POST("/report", handlers.CreateReportHandlerGin(s.redis.GetClient()))
+			moderation.POST("/report", handlers.CreateReportHandlerGin(s.redis.GetClient(), s.autoModerator.Enqueue))
 		}
 	}
 }
@@ -710,6 +721,9 @@ func (s *Server) Run(addr string) error {
 	cleanup := func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		if s.stopBackground != nil {
+			s.stopBackground()
+		}
 
 		if err := s.shutdownOTel(shutdownCtx); err != nil {
 			log.Printf("Error shutting down tracing: %v", err)

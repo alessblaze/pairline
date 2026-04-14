@@ -33,6 +33,7 @@ export default defineConfig(({ mode }) => {
       allowedHosts: allowedHosts,
       cors: true,
       historyApiFallback: true,
+      hmr: env.VITE_HMR_CLIENT_PORT ? { clientPort: parseInt(env.VITE_HMR_CLIENT_PORT) } : undefined,
     },
     build: {
       rollupOptions: {

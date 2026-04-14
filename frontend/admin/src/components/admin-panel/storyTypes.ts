@@ -1,5 +1,6 @@
 import type {
   AdminAccount,
+  AutoModerationSettings,
   AdminRole,
   Ban,
   BannedWord,
@@ -30,8 +31,10 @@ export interface AdminPanelMockState {
   bannedWords?: BannedWord[];
   accounts?: AdminAccount[];
   infraHealth?: InfraHealthResponse | null;
+  autoModerationSettings?: AutoModerationSettings | null;
   currentTab?: 'reports' | 'bans' | 'bannedWords' | 'accounts' | 'infra';
   reportStatusFilter?: 'pending' | 'decided' | 'all';
+  reportReviewSourceFilter?: 'all' | 'awaitingHuman' | 'autoReviewed' | 'humanReviewed';
   banFilter?: 'all' | 'active' | 'inactive';
   serverReportMetrics?: { pending: number; approved: number; rejected: number };
   serverBanMetrics?: { active: number; inactive: number; total: number };

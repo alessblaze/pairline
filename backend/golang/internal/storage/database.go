@@ -62,18 +62,27 @@ type AdminAccount struct {
 }
 
 type Report struct {
-	ID                 string     `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	ReporterSessionID  string     `gorm:"index" json:"reporter_session_id"`
-	ReportedSessionID  string     `gorm:"index" json:"reported_session_id"`
-	ReporterIP         string     `json:"reporter_ip"`
-	ReportedIP         string     `gorm:"index" json:"reported_ip"`
-	Reason             string     `json:"reason"`
-	Description        string     `json:"description"`
-	ChatLog            string     `gorm:"type:jsonb;default:'[]'" json:"chat_log"`
-	Status             string     `gorm:"default:'pending';index:idx_reports_status_created_at,priority:1" json:"status"`
-	CreatedAt          time.Time  `gorm:"autoCreateTime;index:idx_reports_status_created_at,priority:2" json:"created_at"`
-	ReviewedByUsername string     `json:"reviewed_by_username"`
-	ReviewedAt         *time.Time `json:"reviewed_at"`
+	ID                        string     `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
+	ReporterSessionID         string     `gorm:"index" json:"reporter_session_id"`
+	ReportedSessionID         string     `gorm:"index" json:"reported_session_id"`
+	ReporterIP                string     `json:"reporter_ip"`
+	ReportedIP                string     `gorm:"index" json:"reported_ip"`
+	Reason                    string     `json:"reason"`
+	Description               string     `json:"description"`
+	ChatLog                   string     `gorm:"type:jsonb;default:'[]'" json:"chat_log"`
+	Status                    string     `gorm:"default:'pending';index:idx_reports_status_created_at,priority:1" json:"status"`
+	AutoModerationState       string     `gorm:"default:'pending';index" json:"auto_moderation_state"`
+	AutoModerationDecision    string     `gorm:"index" json:"auto_moderation_decision"`
+	AutoModerationCategories  string     `gorm:"type:jsonb;default:'[]'" json:"auto_moderation_categories"`
+	AutoModerationSummary     string     `gorm:"type:text" json:"auto_moderation_summary"`
+	AutoModerationError       string     `gorm:"type:text" json:"auto_moderation_error"`
+	AutoModerationModel       string     `json:"auto_moderation_model"`
+	AutoModerationAttempts    int        `gorm:"default:0" json:"auto_moderation_attempts"`
+	AutoModerationClaimedAt   *time.Time `json:"auto_moderation_claimed_at"`
+	AutoModerationCompletedAt *time.Time `json:"auto_moderation_completed_at"`
+	CreatedAt                 time.Time  `gorm:"autoCreateTime;index:idx_reports_status_created_at,priority:2" json:"created_at"`
+	ReviewedByUsername        string     `json:"reviewed_by_username"`
+	ReviewedAt                *time.Time `json:"reviewed_at"`
 }
 
 type Ban struct {

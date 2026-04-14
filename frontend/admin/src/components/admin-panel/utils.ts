@@ -38,6 +38,36 @@ export function reportStatusClass(status: Report['status']) {
   return 'bg-amber-500/10 text-amber-400 border border-amber-500/20';
 }
 
+export function autoModerationStateClass(state?: string) {
+  if (state === 'completed') return 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-400';
+  if (state === 'processing') return 'border border-electric-cyan/20 bg-electric-cyan/10 text-electric-cyan';
+  if (state === 'failed') return 'border border-rose-500/20 bg-rose-500/10 text-rose-400';
+  return 'border border-amber-500/20 bg-amber-500/10 text-amber-400';
+}
+
+export function autoModerationDecisionClass(decision?: string) {
+  if (decision === 'approved') return 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-400';
+  if (decision === 'rejected') return 'border border-rose-500/20 bg-rose-500/10 text-rose-400';
+  if (decision === 'escalate') return 'border border-amber-500/20 bg-amber-500/10 text-amber-400';
+  return 'border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] text-[var(--admin-text-soft)]';
+}
+
+export function humanizeAutoModerationState(state?: string) {
+  if (!state) return 'Pending';
+  if (state === 'processing') return 'Processing';
+  if (state === 'completed') return 'Completed';
+  if (state === 'failed') return 'Failed';
+  return state.replace(/[_-]+/g, ' ');
+}
+
+export function humanizeAutoModerationDecision(decision?: string) {
+  if (!decision) return 'No Decision';
+  if (decision === 'approved') return 'Auto Approved';
+  if (decision === 'rejected') return 'Auto Rejected';
+  if (decision === 'escalate') return 'Escalated';
+  return decision.replace(/[_-]+/g, ' ');
+}
+
 export function healthStatusClass(status?: string) {
   if (status === 'ok') return 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-400';
   if (status === 'degraded') return 'border border-amber-500/20 bg-amber-500/10 text-amber-400';

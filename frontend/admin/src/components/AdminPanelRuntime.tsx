@@ -24,6 +24,8 @@ import {
 import type { AdminPanelMockState } from './admin-panel/storyTypes';
 import type { AdminPanelProps, BanModalState, RawReport } from './admin-panel/types';
 import {
+  autoModerationDecisionClass,
+  autoModerationStateClass,
   buildAdminHeaders,
   buildExpiryDate,
   clearAdminSession,
@@ -32,6 +34,8 @@ import {
   formatLatency,
   goMemorySummary,
   healthStatusClass,
+  humanizeAutoModerationDecision,
+  humanizeAutoModerationState,
   persistAdminSession,
   phoenixMemorySummary,
   reportStatusClass,
@@ -62,9 +66,22 @@ import {
   Menu,
   Moon,
   Sun,
-  X
+  X,
+  Bot,
+  Sparkles
 } from 'lucide-react';
-import type { AdminAccount, AdminRole, Ban, BannedWord, BannedWordsSettings, CreateBanRequest, InfraHealthResponse, LoginResponse, Report } from '../types';
+import type {
+  AdminAccount,
+  AdminRole,
+  AutoModerationSettings,
+  Ban,
+  BannedWord,
+  BannedWordsSettings,
+  CreateBanRequest,
+  InfraHealthResponse,
+  LoginResponse,
+  Report,
+} from '../types';
 
 interface AdminPanelRuntimeProps extends AdminPanelProps {
   __mockState?: AdminPanelMockState;
@@ -93,6 +110,10 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
   const [bannedWords, setBannedWords] = useState<BannedWord[]>(__mockState?.bannedWords ?? []);
   const [bannedWordsEnabled, setBannedWordsEnabled] = useState(true);
   const [updatingBannedWordsEnabled, setUpdatingBannedWordsEnabled] = useState(false);
+  const [autoModerationSettings, setAutoModerationSettings] = useState<AutoModerationSettings | null>(
+    __mockState?.autoModerationSettings ?? null
+  );
+  const [updatingAutoModerationEnabled, setUpdatingAutoModerationEnabled] = useState(false);
   const [currentTab, setCurrentTab] = useState<'reports' | 'bans' | 'bannedWords' | 'accounts' | 'infra'>(__mockState?.currentTab ?? 'reports');
   const mainContentRef = useRef<HTMLElement>(null);
 
@@ -103,6 +124,9 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
   }, [currentTab]);
 
   const [reportStatusFilter, setReportStatusFilter] = useState<'pending' | 'decided' | 'all'>(__mockState?.reportStatusFilter ?? 'pending');
+  const [reportReviewSourceFilter, setReportReviewSourceFilter] = useState<'all' | 'awaitingHuman' | 'autoReviewed' | 'humanReviewed'>(
+    __mockState?.reportReviewSourceFilter ?? 'all'
+  );
   const [reportLimit, setReportLimit] = useState<string>('10');
   const [serverReportMetrics, setServerReportMetrics] = useState(__mockState?.serverReportMetrics ?? { pending: 0, approved: 0, rejected: 0 });
   const [banFilter, setBanFilter] = useState<'all' | 'active' | 'inactive'>(__mockState?.banFilter ?? 'active');
@@ -143,6 +167,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
   const canCreateBans = role === 'moderator' || role === 'admin' || role === 'root';
   const canManageBans = role === 'admin' || role === 'root';
   const canManageBannedWords = role === 'moderator' || role === 'admin' || role === 'root';
+  const canManageAutoModeration = role === 'moderator' || role === 'admin' || role === 'root';
   const canManageAccounts = role === 'admin' || role === 'root';
   const canViewInfraHealth = role === 'root';
   const deferredBanSearch = useDeferredValue(banSearch);
@@ -150,7 +175,15 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
   const deferredAccountSearch = useDeferredValue(accountSearch);
   const accountPageSize = accountLimit === 'all' ? Math.max(accountTotal, accounts.length, 1) : Number(accountLimit);
   const accountTotalPages = Math.max(1, Math.ceil(accountTotal / accountPageSize));
-  const selectableVisibleReports = reports.filter((report) => report.status === 'pending');
+  const visibleReports = reports.filter((report) => {
+    if (reportReviewSourceFilter === 'awaitingHuman') return report.status === 'pending';
+    if (reportReviewSourceFilter === 'autoReviewed') return report.reviewed_by_username === 'auto-moderation';
+    if (reportReviewSourceFilter === 'humanReviewed') {
+      return report.status !== 'pending' && Boolean(report.reviewed_by_username) && report.reviewed_by_username !== 'auto-moderation';
+    }
+    return true;
+  });
+  const selectableVisibleReports = visibleReports.filter((report) => report.status === 'pending');
   const selectedPendingReportIds = selectableVisibleReports
     .filter((report) => selectedReports.has(report.id))
     .map((report) => report.id);
@@ -158,6 +191,11 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
   const allVisibleReportsSelected =
     selectableVisibleReports.length > 0 &&
     selectableVisibleReports.every((report) => selectedReports.has(report.id));
+  const autoReviewedReportsCount = reports.filter((report) => report.reviewed_by_username === 'auto-moderation').length;
+  const humanReviewedReportsCount = reports.filter(
+    (report) => report.status !== 'pending' && Boolean(report.reviewed_by_username) && report.reviewed_by_username !== 'auto-moderation'
+  ).length;
+  const awaitingHumanReportsCount = reports.filter((report) => report.status === 'pending').length;
 
   // Authentication Logic
   useEffect(() => {
@@ -281,6 +319,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
     setBannedWords([]);
     setBannedWordsEnabled(true);
     setUpdatingBannedWordsEnabled(false);
+    setAutoModerationSettings(null);
+    setUpdatingAutoModerationEnabled(false);
     setAccounts([]);
     setInfraHealth(null);
     setIsRedisModalOpen(false);
@@ -315,6 +355,20 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
               return JSON.parse(r.chat_log);
             } catch (error) {
               console.warn('Failed to parse report chat_log', r.id, error);
+              return [];
+            }
+          })(),
+          auto_moderation_categories: (() => {
+            if (!r.auto_moderation_categories) return [];
+            if (!Array.isArray(r.auto_moderation_categories) && typeof r.auto_moderation_categories !== 'string') {
+              return [];
+            }
+            if (Array.isArray(r.auto_moderation_categories)) return r.auto_moderation_categories;
+            try {
+              const parsed = JSON.parse(r.auto_moderation_categories);
+              return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string') : [];
+            } catch (error) {
+              console.warn('Failed to parse report auto_moderation_categories', r.id, error);
               return [];
             }
           })(),
@@ -384,6 +438,20 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
       }
     } catch (error) {
       console.error('Failed to fetch banned words settings:', error);
+    }
+  };
+
+  const fetchAutoModerationSettings = async () => {
+    if (!canManageAutoModeration) return;
+    try {
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/auto-moderation/settings`);
+      if (response.status === 401) return logout();
+      if (response.ok) {
+        const data: AutoModerationSettings = await response.json();
+        setAutoModerationSettings(data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch auto moderation settings:', error);
     }
   };
 
@@ -567,6 +635,30 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
     }
   };
 
+  const updateAutoModerationEnabled = async (enabled: boolean) => {
+    if (!canManageAutoModeration || updatingAutoModerationEnabled) return;
+    setUpdatingAutoModerationEnabled(true);
+    try {
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/auto-moderation/settings`, {
+        method: 'PUT',
+        body: JSON.stringify({ enabled }),
+      });
+      if (response.status === 401) return logout();
+      if (response.ok) {
+        const data: AutoModerationSettings = await response.json();
+        setAutoModerationSettings(data);
+        return;
+      }
+      const data = await response.json().catch(() => ({}));
+      alert(data.error || 'Failed to update auto moderation');
+    } catch (error) {
+      console.error('Failed to update auto moderation settings:', error);
+      alert('Failed to update auto moderation');
+    } finally {
+      setUpdatingAutoModerationEnabled(false);
+    }
+  };
+
   const openBanModal = ({
     sessionId = '',
     ip = '',
@@ -713,6 +805,21 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
     }
   };
 
+  const describeAutoModerationStatus = (report: Report) => {
+    if (report.auto_moderation_error) return report.auto_moderation_error;
+    if (report.auto_moderation_summary) return report.auto_moderation_summary;
+    if (report.auto_moderation_state === 'processing') return 'Auto moderation is currently analyzing this report.';
+    if (report.auto_moderation_state === 'failed') return 'Auto moderation could not complete and this report needs a human decision.';
+    if (report.auto_moderation_state === 'completed') return 'Auto moderation completed without a summary.';
+    return 'Waiting for auto moderation to pick up this report.';
+  };
+
+  const reviewSourceLabel = (report: Report) => {
+    if (report.reviewed_by_username === 'auto-moderation') return 'Auto reviewed';
+    if (report.reviewed_by_username) return `Reviewed by ${report.reviewed_by_username}`;
+    return 'Awaiting human review';
+  };
+
   const syncReports = useEffectEvent(() => {
     void fetchReports();
   });
@@ -724,6 +831,10 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
   const syncBannedWords = useEffectEvent(() => {
     void fetchBannedWordsSettings();
     void fetchBannedWords();
+  });
+
+  const syncAutoModeration = useEffectEvent(() => {
+    void fetchAutoModerationSettings();
   });
 
   const syncAccounts = useEffectEvent(() => {
@@ -744,6 +855,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
   }, [accountLimit]);
 
   useEffect(() => { if (authReady && isAuthenticated && !__mockState) syncReports(); }, [authReady, isAuthenticated, reportStatusFilter, reportLimit, __mockState]);
+  useEffect(() => { if (authReady && isAuthenticated && canManageAutoModeration && !__mockState) syncAutoModeration(); }, [authReady, isAuthenticated, canManageAutoModeration, __mockState]);
   useEffect(() => { if (authReady && isAuthenticated && !__mockState) syncBans(); }, [authReady, isAuthenticated, banFilter, banLimit, deferredBanSearch, __mockState]);
   useEffect(() => { if (authReady && isAuthenticated && canManageBannedWords && !__mockState) syncBannedWords(); }, [authReady, isAuthenticated, canManageBannedWords, bannedWordLimit, deferredBannedWordSearch, __mockState]);
   useEffect(() => { if (authReady && isAuthenticated && canManageAccounts && !__mockState) syncAccounts(); }, [authReady, isAuthenticated, canManageAccounts, accountPage, accountLimit, deferredAccountSearch, __mockState]);
@@ -1108,14 +1220,111 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         </div>
                       </div>
                     </div>
+
+                    {canManageAutoModeration && autoModerationSettings && (
+                      <div className={`${surfaceCardClass} space-y-5`}>
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-3">
+                              <div className="flex h-11 w-11 items-center justify-center rounded-none border border-electric-cyan/20 bg-electric-cyan/10 text-electric-cyan">
+                                <Bot size={18} />
+                              </div>
+                              <div>
+                                <h2 className="text-sm font-bold uppercase tracking-[0.16em] text-[var(--admin-text)]">Auto Moderation</h2>
+                                <p className="mt-1 text-xs text-[var(--admin-text-muted)]">
+                                  Automatically triage incoming reports before a moderator steps in.
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${autoModerationSettings.enabled ? 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-400' : 'border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] text-[var(--admin-text-soft)]'}`}>
+                                {autoModerationSettings.enabled ? 'Enabled' : 'Disabled'}
+                              </span>
+                              <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${autoModerationSettings.configured ? 'border border-electric-cyan/20 bg-electric-cyan/10 text-electric-cyan' : 'border border-amber-500/20 bg-amber-500/10 text-amber-400'}`}>
+                                {autoModerationSettings.configured ? 'Model Configured' : 'Model Not Configured'}
+                              </span>
+                              <span className="border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-soft)]">
+                                Default {autoModerationSettings.enabled_default ? 'On' : 'Off'}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap gap-3 lg:justify-end">
+                            <button
+                              type="button"
+                              onClick={() => void fetchAutoModerationSettings()}
+                              className="flex h-11 items-center gap-2 rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] px-4 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text)] transition-all hover:bg-[var(--admin-muted-surface-hover)]"
+                            >
+                              <RefreshCw size={14} />
+                              Refresh Settings
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void updateAutoModerationEnabled(!autoModerationSettings.enabled)}
+                              disabled={updatingAutoModerationEnabled}
+                              className={`flex h-11 items-center gap-2 rounded-none px-4 text-[10px] font-bold uppercase tracking-[0.14em] transition-all ${
+                                autoModerationSettings.enabled
+                                  ? 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
+                                  : 'border border-amber-500/20 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20'
+                              }`}
+                            >
+                              {updatingAutoModerationEnabled ? <RefreshCw size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                              {updatingAutoModerationEnabled
+                                ? 'Updating...'
+                                : autoModerationSettings.enabled
+                                  ? 'Disable Auto Moderation'
+                                  : 'Enable Auto Moderation'}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="grid gap-3 text-xs text-[var(--admin-text-soft)] sm:grid-cols-2 xl:grid-cols-4">
+                          <div className="border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] p-4">
+                            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Model</p>
+                            <p className="mt-2 break-all text-sm font-medium text-[var(--admin-text)]">{autoModerationSettings.model || 'Not configured'}</p>
+                          </div>
+                          <div className="border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] p-4">
+                            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Batching</p>
+                            <p className="mt-2 text-sm font-medium text-[var(--admin-text)]">{autoModerationSettings.batch_size} per sweep</p>
+                            <p className="mt-1 text-[var(--admin-text-muted)]">Every {autoModerationSettings.interval_seconds}s</p>
+                          </div>
+                          <div className="border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] p-4">
+                            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Timeout</p>
+                            <p className="mt-2 text-sm font-medium text-[var(--admin-text)]">{autoModerationSettings.timeout_seconds}s request timeout</p>
+                            <p className="mt-1 text-[var(--admin-text-muted)]">Max attempts {autoModerationSettings.max_attempts}</p>
+                          </div>
+                          <div className="border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] p-4">
+                            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Queue Snapshot</p>
+                            <p className="mt-2 text-sm font-medium text-[var(--admin-text)]">{awaitingHumanReportsCount} awaiting human</p>
+                            <p className="mt-1 text-[var(--admin-text-muted)]">{autoReviewedReportsCount} auto reviewed in this page load</p>
+                          </div>
+                        </div>
+
+                        {!autoModerationSettings.configured && (
+                          <p className="text-xs text-amber-400">
+                            Auto moderation can be enabled from the UI, but it will not process reports until the backend has a configured NIM API key.
+                          </p>
+                        )}
+                      </div>
+                    )}
+
                     <div className={`${surfaceCardClass} p-5`}>
-                      <div className="grid gap-4 lg:grid-cols-[auto_auto_1fr] lg:items-end">
+                      <div className="grid gap-4 xl:grid-cols-[auto_auto_1fr_auto] xl:items-end">
                         <div>
                           <p className="mb-2 text-xs font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Status Filter</p>
                           <div className="flex flex-wrap gap-2">
                             <button type="button" onClick={() => setReportStatusFilter('pending')} className={filterButtonClass(reportStatusFilter === 'pending')}>Pending</button>
                             <button type="button" onClick={() => setReportStatusFilter('decided')} className={filterButtonClass(reportStatusFilter === 'decided')}>Decided</button>
                             <button type="button" onClick={() => setReportStatusFilter('all')} className={filterButtonClass(reportStatusFilter === 'all')}>All</button>
+                          </div>
+                        </div>
+                        <div>
+                          <p className="mb-2 text-xs font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Review Source</p>
+                          <div className="flex flex-wrap gap-2">
+                            <button type="button" onClick={() => setReportReviewSourceFilter('all')} className={filterButtonClass(reportReviewSourceFilter === 'all')}>All</button>
+                            <button type="button" onClick={() => setReportReviewSourceFilter('awaitingHuman')} className={filterButtonClass(reportReviewSourceFilter === 'awaitingHuman')}>Awaiting Human</button>
+                            <button type="button" onClick={() => setReportReviewSourceFilter('autoReviewed')} className={filterButtonClass(reportReviewSourceFilter === 'autoReviewed')}>Auto Reviewed</button>
+                            <button type="button" onClick={() => setReportReviewSourceFilter('humanReviewed')} className={filterButtonClass(reportReviewSourceFilter === 'humanReviewed')}>Human Reviewed</button>
                           </div>
                         </div>
                         <div>
@@ -1131,7 +1340,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                             <option value="all">All entries</option>
                           </select>
                         </div>
-                        <div className="flex flex-wrap gap-2 lg:justify-end">
+                        <div className="flex flex-wrap gap-2 xl:justify-end">
                           <button
                             type="button"
                             onClick={fetchReports}
@@ -1174,20 +1383,32 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           </button>
                         </div>
                       </div>
+                      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--admin-outline-soft)] pt-4 text-xs text-[var(--admin-text-muted)]">
+                        <p>
+                          Showing {visibleReports.length} of {reports.length} loaded reports
+                        </p>
+                        <div className="flex flex-wrap gap-3">
+                          <span>{awaitingHumanReportsCount} awaiting human</span>
+                          <span>{autoReviewedReportsCount} auto reviewed</span>
+                          <span>{humanReviewedReportsCount} human reviewed</span>
+                        </div>
+                      </div>
                     </div>
 
-                    {reports.length === 0 ? (
+                    {visibleReports.length === 0 ? (
                       <div className="flex flex-col items-center justify-center rounded-none border border-dashed border-[var(--admin-outline-strong)] py-20">
                         <div className="mb-4 rounded-full bg-[var(--admin-muted-surface)] p-4 text-[var(--admin-text-muted)]">
                           <CheckCircle2 size={40} />
                         </div>
                         <p className="text-lg font-medium text-[var(--admin-text)]">{reportStatusFilter === 'pending' ? 'Queue Clear' : 'No Reports Found'}</p>
                         <p className="text-sm text-[var(--admin-text-muted)]">
-                          {reportStatusFilter === 'pending' ? 'No pending reports at the moment.' : 'There are no reports for the selected filter.'}
+                          {reportStatusFilter === 'pending' && reportReviewSourceFilter === 'all'
+                            ? 'No pending reports at the moment.'
+                            : 'There are no reports for the selected filters.'}
                         </p>
                       </div>
                     ) : (
-                      reports.map((report) => (
+                      visibleReports.map((report) => (
                         <div key={report.id} className="surface-card rounded-none overflow-hidden p-0 transition-all duration-300 hover:border-[var(--admin-outline-strong)]">
                           <div className="hud-bracket hud-bracket-tl" />
                           <div className="hud-bracket-tr" />
@@ -1221,9 +1442,20 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                             {/* Content Column */}
                             <div className="flex-1 flex flex-col p-5 sm:p-6 lg:p-7 min-w-0 overflow-hidden">
                               {/* Top Bar */}
-                              <div className="flex items-center gap-4 mb-2">
+                              <div className="mb-2 flex flex-wrap items-center gap-3">
                                 <span className={`rounded-none px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${reportStatusClass(report.status)} text-[var(--admin-text)]`}>
                                   {report.status}
+                                </span>
+                                <span className={`rounded-none px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${autoModerationStateClass(report.auto_moderation_state)}`}>
+                                  Auto {humanizeAutoModerationState(report.auto_moderation_state)}
+                                </span>
+                                {report.auto_moderation_decision && (
+                                  <span className={`rounded-none px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${autoModerationDecisionClass(report.auto_moderation_decision)}`}>
+                                    {humanizeAutoModerationDecision(report.auto_moderation_decision)}
+                                  </span>
+                                )}
+                                <span className="rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-soft)]">
+                                  {reviewSourceLabel(report)}
                                 </span>
                                 <div className="flex items-center gap-2 font-heading text-[11px] text-[var(--admin-text-muted)] font-bold uppercase tracking-[0.14em]">
                                   <Clock size={12} className="text-[var(--admin-text-muted)]" />
@@ -1256,6 +1488,36 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                                     )}
                                   </div>
                                 )}
+
+                                <div className="mt-4 border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] p-4">
+                                  <div className="mb-3 flex flex-wrap items-center gap-2">
+                                    <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">
+                                      <Bot size={12} />
+                                      <span>Auto Moderation</span>
+                                    </div>
+                                    {report.auto_moderation_categories && report.auto_moderation_categories.length > 0 && (
+                                      <div className="flex flex-wrap gap-2">
+                                        {report.auto_moderation_categories.map((category) => (
+                                          <span
+                                            key={`${report.id}-${category}`}
+                                            className="rounded-none border border-electric-cyan/20 bg-electric-cyan/10 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-electric-cyan"
+                                          >
+                                            {category}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                  <p className={`text-sm leading-relaxed ${report.auto_moderation_error ? 'text-rose-400' : 'text-[var(--admin-text-soft)]'}`}>
+                                    {describeAutoModerationStatus(report)}
+                                  </p>
+                                  <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-[11px] text-[var(--admin-text-muted)]">
+                                    <span>Attempts: {report.auto_moderation_attempts || 0}</span>
+                                    <span>Completed: {formatDate(report.auto_moderation_completed_at)}</span>
+                                    <span>Claimed: {formatDate(report.auto_moderation_claimed_at)}</span>
+                                    <span>Model: {report.auto_moderation_model || autoModerationSettings?.model || 'n/a'}</span>
+                                  </div>
+                                </div>
                               </div>
                             </div>
 
@@ -1274,6 +1536,13 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                                   <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Reporter Context</span>
                                   <span className="font-mono text-sm text-[var(--admin-text-soft)] tabular-nums break-all leading-relaxed whitespace-pre-wrap">{report.reporter_ip || 'N/A'}</span>
                                 </div>
+                                <div className="flex min-h-[64px] flex-col justify-center gap-1 border-t border-[var(--admin-detail-border)] px-5 py-3">
+                                  <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Reviewer</span>
+                                  <span className="text-sm text-[var(--admin-text-soft)] break-all leading-relaxed whitespace-pre-wrap">
+                                    {report.reviewed_by_username || 'Unreviewed'}
+                                  </span>
+                                  <span className="text-[11px] text-[var(--admin-text-muted)]">{formatDate(report.reviewed_at)}</span>
+                                </div>
                               </div>
                             </div>
 
@@ -1290,7 +1559,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                                 </button>
                               )}
 
-                              {report.status === 'pending' && (
+                              {(report.status === 'pending' || report.reviewed_by_username === 'auto-moderation') && (
                                 <div className="grid grid-cols-2 gap-3 lg:grid-cols-1">
                                   <button
                                     type="button"
@@ -1298,7 +1567,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                                     className={`${actionButtonClass} w-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 shadow-[0_0_12px_rgba(52,211,153,0.1)]`}
                                   >
                                     <CheckCircle2 size={14} className="mr-0.5" />
-                                    Approve
+                                    {report.reviewed_by_username === 'auto-moderation' ? 'Approve Override' : 'Approve'}
                                   </button>
                                   <button
                                     type="button"
@@ -1306,7 +1575,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                                     className={`${actionButtonClass} w-full bg-rose-500/10 border border-rose-500/20 text-rose-400 hover:bg-rose-500/20 shadow-[0_0_12px_rgba(244,63,94,0.1)]`}
                                   >
                                     <XCircle size={14} className="mr-0.5" />
-                                    Reject
+                                    {report.reviewed_by_username === 'auto-moderation' ? 'Reject Override' : 'Reject'}
                                   </button>
                                 </div>
                               )}

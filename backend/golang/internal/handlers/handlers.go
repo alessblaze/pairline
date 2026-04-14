@@ -40,6 +40,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/anish/omegle/backend/golang/internal/automod"
 	"github.com/anish/omegle/backend/golang/internal/middleware"
 	"github.com/anish/omegle/backend/golang/internal/observability"
 	appredis "github.com/anish/omegle/backend/golang/internal/redis"
@@ -311,11 +312,13 @@ func UpdateReportHandlerGin(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 	reviewedAt := time.Now()
-	tx := db.GetDB().WithContext(ctx).Model(&storage.Report{}).Where("id = ? AND status = ?", id, "pending").Updates(map[string]interface{}{
-		"status":               req.Status,
-		"reviewed_by_username": username,
-		"reviewed_at":          reviewedAt,
-	})
+	tx := db.GetDB().WithContext(ctx).Model(&storage.Report{}).
+		Where("id = ? AND (status = ? OR reviewed_by_username = ?)", id, "pending", automod.ReviewerName).
+		Updates(map[string]interface{}{
+			"status":               req.Status,
+			"reviewed_by_username": username,
+			"reviewed_at":          reviewedAt,
+		})
 
 	if tx.Error != nil {
 		span.RecordError(tx.Error)
@@ -345,7 +348,7 @@ func UpdateReportHandlerGin(c *gin.Context) {
 	})
 }
 
-func CreateReportHandlerGin(redisClient redis.UniversalClient) gin.HandlerFunc {
+func CreateReportHandlerGin(redisClient redis.UniversalClient, enqueueAutoModeration func(string)) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		span := startHandlerSpan(c, "moderation.report.create")
 		defer span.End()
@@ -440,15 +443,18 @@ func CreateReportHandlerGin(redisClient redis.UniversalClient) gin.HandlerFunc {
 		}
 
 		report := storage.Report{
-			ReporterSessionID: req.ReporterSessionID,
-			ReportedSessionID: req.ReportedSessionID,
-			ReporterIP:        reporterIP,
-			ReportedIP:        reportedIP,
-			Reason:            req.Reason,
-			Description:       req.Description,
-			ChatLog:           chatLogStr,
-			Status:            "pending",
-			CreatedAt:         time.Now(),
+			ReporterSessionID:        req.ReporterSessionID,
+			ReportedSessionID:        req.ReportedSessionID,
+			ReporterIP:               reporterIP,
+			ReportedIP:               reportedIP,
+			Reason:                   req.Reason,
+			Description:              req.Description,
+			ChatLog:                  chatLogStr,
+			Status:                   "pending",
+			AutoModerationState:      "pending",
+			AutoModerationDecision:   "",
+			AutoModerationCategories: "[]",
+			CreatedAt:                time.Now(),
 		}
 
 		if err := db.GetDB().WithContext(ctx).Create(&report).Error; err != nil {
@@ -462,11 +468,77 @@ func CreateReportHandlerGin(redisClient redis.UniversalClient) gin.HandlerFunc {
 			"report.created",
 			attribute.Bool("report.chat_log_present", chatLogStr != "[]"),
 		)
+		if enqueueAutoModeration != nil {
+			enqueueAutoModeration(report.ID)
+		}
 
 		c.JSON(http.StatusOK, gin.H{
 			"status": "created",
 		})
 	}
+}
+
+func GetAutoModerationSettingsHandlerGin(c *gin.Context) {
+	span := startHandlerSpan(c, "moderation.auto_reports.settings.get")
+	defer span.End()
+
+	db := storage.NewDatabase()
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	status, err := automod.SettingsStatus(ctx, db.GetDB())
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to load settings")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load auto moderation settings"})
+		return
+	}
+
+	c.JSON(http.StatusOK, status)
+}
+
+func UpdateAutoModerationSettingsHandlerGin(c *gin.Context) {
+	span := startHandlerSpan(c, "moderation.auto_reports.settings.update")
+	defer span.End()
+
+	var req struct {
+		Enabled *bool `json:"enabled"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil || req.Enabled == nil {
+		span.SetStatus(codes.Error, "invalid request")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request properties"})
+		return
+	}
+
+	username, ok := getContextString(c, "username")
+	if !ok {
+		span.SetStatus(codes.Error, "unauthorized")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	span.SetAttributes(hashedAttribute("admin.user.ref", username))
+
+	db := storage.NewDatabase()
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	if err := automod.SetEnabledSetting(ctx, db.GetDB(), username, *req.Enabled); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to update settings")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update auto moderation settings"})
+		return
+	}
+
+	status, err := automod.SettingsStatus(ctx, db.GetDB())
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to load settings")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load auto moderation settings"})
+		return
+	}
+
+	c.JSON(http.StatusOK, status)
 }
 
 func CreateBanHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {

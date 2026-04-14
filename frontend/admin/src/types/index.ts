@@ -40,9 +40,29 @@ export interface Report {
   description: string;
   chat_log: ChatMessage[];
   status: 'pending' | 'approved' | 'rejected';
+  auto_moderation_state?: string;
+  auto_moderation_decision?: string;
+  auto_moderation_categories?: string[];
+  auto_moderation_summary?: string;
+  auto_moderation_error?: string;
+  auto_moderation_model?: string;
+  auto_moderation_attempts?: number;
+  auto_moderation_claimed_at?: string | null;
+  auto_moderation_completed_at?: string | null;
   created_at: string;
   reviewed_by_username?: string;
   reviewed_at?: string;
+}
+
+export interface AutoModerationSettings {
+  enabled: boolean;
+  enabled_default: boolean;
+  configured: boolean;
+  model: string;
+  batch_size: number;
+  interval_seconds: number;
+  timeout_seconds: number;
+  max_attempts: number;
 }
 
 export interface CreateBanRequest {

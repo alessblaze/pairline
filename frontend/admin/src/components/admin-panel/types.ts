@@ -19,4 +19,5 @@ export interface AdminPanelProps {
 
 export type RawReport = Omit<Report, 'chat_log'> & {
   chat_log: string | Report['chat_log'] | null;
+  auto_moderation_categories?: string | Report['auto_moderation_categories'] | null;
 };

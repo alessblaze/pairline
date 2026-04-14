@@ -178,6 +178,102 @@ describe('AdminPanelRuntime state coverage', () => {
     expect(JSON.parse(String(init?.body))).toEqual({ status: 'approved' });
   });
 
+  it('shows auto moderation details and override controls for auto-reviewed reports', () => {
+    renderAdmin({
+      authReady: true,
+      isAuthenticated: true,
+      currentAdminUsername: 'albert',
+      role: 'admin',
+      currentTab: 'reports',
+      autoModerationSettings: {
+        enabled: true,
+        enabled_default: false,
+        configured: true,
+        model: 'nvidia/llama-3.1-nemotron-safety-guard-8b-v3',
+        batch_size: 10,
+        interval_seconds: 30,
+        timeout_seconds: 20,
+        max_attempts: 3,
+      },
+      reports: [{
+        id: 'report-2',
+        reporter_session_id: 'reporter',
+        reported_session_id: 'reported',
+        reporter_ip: '1.1.1.1',
+        reported_ip: '2.2.2.2',
+        reason: 'threats',
+        description: 'violent message',
+        chat_log: [],
+        status: 'approved',
+        auto_moderation_state: 'completed',
+        auto_moderation_decision: 'approved',
+        auto_moderation_categories: ['violence'],
+        auto_moderation_summary: 'Approved automatically because the reported content was marked unsafe.',
+        reviewed_by_username: 'auto-moderation',
+        reviewed_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+      }],
+      reportStatusFilter: 'all',
+      reportReviewSourceFilter: 'autoReviewed',
+      serverReportMetrics: { pending: 0, approved: 1, rejected: 0 },
+    });
+
+    expect(screen.getByRole('button', { name: /auto reviewed/i })).toBeInTheDocument();
+    expect(screen.getByText(/approved automatically because the reported content was marked unsafe/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /reject override/i })).toBeInTheDocument();
+  });
+
+  it('submits auto moderation toggle requests to the admin API', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        enabled: false,
+        enabled_default: false,
+        configured: true,
+        model: 'nvidia/llama-3.1-nemotron-safety-guard-8b-v3',
+        batch_size: 10,
+        interval_seconds: 30,
+        timeout_seconds: 20,
+        max_attempts: 3,
+      }),
+      headers: new Headers(),
+    } as Response);
+
+    renderAdmin({
+      authReady: true,
+      isAuthenticated: true,
+      currentAdminUsername: 'albert',
+      role: 'admin',
+      currentTab: 'reports',
+      autoModerationSettings: {
+        enabled: true,
+        enabled_default: false,
+        configured: true,
+        model: 'nvidia/llama-3.1-nemotron-safety-guard-8b-v3',
+        batch_size: 10,
+        interval_seconds: 30,
+        timeout_seconds: 20,
+        max_attempts: 3,
+      },
+      reports: [],
+      reportStatusFilter: 'all',
+      serverReportMetrics: { pending: 0, approved: 0, rejected: 0 },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /disable auto moderation/i }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalled();
+    });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain('/api/v1/admin/auto-moderation/settings');
+    expect(init?.method).toBe('PUT');
+    expect(JSON.parse(String(init?.body))).toEqual({ enabled: false });
+  });
+
   it('submits account creation requests', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock
