@@ -149,7 +149,7 @@ defmodule OmeglePhoenix.Redis.AdminSubscriber do
       message ->
         case JSON.decode(message) do
           {:ok, %{"action" => action} = decoded} ->
-            Tracer.with_span "admin.stream.action", %{kind: :server} do
+            Tracer.with_span "admin.stream.action", %{kind: :internal} do
               Tracer.set_attributes(%{"admin.action" => action})
               handle_admin_action(action, decoded)
             end

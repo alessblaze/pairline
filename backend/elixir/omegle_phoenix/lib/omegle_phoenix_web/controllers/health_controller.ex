@@ -22,8 +22,8 @@ defmodule OmeglePhoenixWeb.HealthController do
   alias OmeglePhoenix.Tracing
 
   def index(conn, _params) do
-    Tracer.with_span "phoenix.health.index", %{kind: :server} do
-      Tracing.annotate_server("phoenix.health.index")
+    Tracer.with_span "phoenix.health.index", %{kind: :internal} do
+      Tracing.annotate_internal("phoenix.health.index")
       details_allowed = health_details_allowed?(conn)
 
       Tracer.set_attributes(%{
