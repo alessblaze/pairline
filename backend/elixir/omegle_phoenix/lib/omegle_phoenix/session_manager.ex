@@ -55,7 +55,23 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   def get_session_route(session_id) when is_binary(session_id) do
-    OmeglePhoenix.RedisKeys.resolve_session_route(session_id)
+    Tracer.with_span "session_manager.get_session_route", %{kind: :internal} do
+      Tracing.annotate_internal("session_manager.get_session_route")
+      Tracer.set_attribute("session.ref", Tracing.safe_ref(session_id))
+
+      case OmeglePhoenix.RedisKeys.resolve_session_route(session_id) do
+        {:ok, route} = ok ->
+          Tracer.set_attributes(%{
+            "session.route.mode" => route.mode,
+            "session.route.shard" => route.shard
+          })
+
+          ok
+
+        other ->
+          other
+      end
+    end
   end
 
   def get_session(session_id) when is_binary(session_id) do

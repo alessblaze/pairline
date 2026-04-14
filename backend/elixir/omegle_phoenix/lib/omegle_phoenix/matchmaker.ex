@@ -103,28 +103,20 @@ defmodule OmeglePhoenix.Matchmaker do
       Tracer.set_attribute("session.ref", Tracing.safe_ref(session_id))
       clear_fallback_generation(session_id)
 
-      with {:ok, route} <- OmeglePhoenix.SessionManager.get_session_route(session_id) do
+      with {:ok, route} <- resolve_leave_queue_route(session_id) do
         membership_key = session_queue_key(session_id, route)
         registry_key = queue_registry_key(route)
 
-        case OmeglePhoenix.Redis.command(["SMEMBERS", membership_key]) do
+        case load_leave_queue_membership(membership_key) do
           {:ok, []} ->
             :ok
 
           {:ok, queue_keys} when is_list(queue_keys) ->
             Tracer.set_attribute("match.queue_count", length(queue_keys))
 
-            commands =
-              Enum.map(queue_keys, fn queue_key ->
-                ["ZREM", queue_key, session_id]
-              end) ++
-                Enum.map(queue_keys, fn queue_key ->
-                  ["SREM", membership_key, queue_key]
-                end) ++ [["DEL", membership_key]]
-
-            case OmeglePhoenix.Redis.pipeline(commands) do
+            case remove_leave_queue_membership(queue_keys, membership_key, session_id) do
               {:ok, _results} ->
-                Enum.each(queue_keys, &prune_queue_if_empty(&1, registry_key))
+                prune_queue_memberships(queue_keys, registry_key)
                 :ok
 
               {:error, reason} = error ->
@@ -1113,33 +1105,100 @@ defmodule OmeglePhoenix.Matchmaker do
   end
 
   defp cleanup_unknown_queue_membership(session_id) do
-    with {:ok, registry_entries} <- load_registry_entries() do
-      queue_keys =
-        registry_entries
-        |> Enum.map(fn {_registry_key, queue_key} -> queue_key end)
-        |> Enum.uniq()
+    Tracer.with_span "matchmaker.leave_queue.cleanup_unknown", %{kind: :internal} do
+      Tracing.annotate_internal("matchmaker.leave_queue.cleanup_unknown")
+      Tracer.set_attribute("session.ref", Tracing.safe_ref(session_id))
 
-      if queue_keys == [] do
-        :ok
-      else
-        commands = Enum.map(queue_keys, &["ZREM", &1, session_id])
+      with {:ok, registry_entries} <- load_registry_entries() do
+        queue_keys =
+          registry_entries
+          |> Enum.map(fn {_registry_key, queue_key} -> queue_key end)
+          |> Enum.uniq()
 
-        case OmeglePhoenix.Redis.pipeline(commands) do
-          {:ok, _results} ->
-            Enum.each(registry_entries, fn {registry_key, queue_key} ->
-              prune_queue_if_empty(queue_key, registry_key)
-            end)
+        Tracer.set_attribute("match.queue_count", length(queue_keys))
 
-            :ok
+        if queue_keys == [] do
+          :ok
+        else
+          commands = Enum.map(queue_keys, &["ZREM", &1, session_id])
 
-          {:error, reason} = error ->
-            Logger.warning(
-              "Failed to remove stale queue membership for #{session_id}: #{inspect(reason)}"
-            )
+          case OmeglePhoenix.Redis.pipeline(commands) do
+            {:ok, _results} ->
+              prune_registry_entries(registry_entries)
+              :ok
 
-            error
+            {:error, reason} = error ->
+              Logger.warning(
+                "Failed to remove stale queue membership for #{session_id}: #{inspect(reason)}"
+              )
+
+              error
+          end
         end
       end
+    end
+  end
+
+  defp resolve_leave_queue_route(session_id) do
+    Tracer.with_span "matchmaker.leave_queue.resolve_route", %{kind: :internal} do
+      Tracing.annotate_internal("matchmaker.leave_queue.resolve_route")
+      OmeglePhoenix.SessionManager.get_session_route(session_id)
+    end
+  end
+
+  defp load_leave_queue_membership(membership_key) do
+    Tracer.with_span "matchmaker.leave_queue.load_membership", %{kind: :internal} do
+      Tracing.annotate_internal("matchmaker.leave_queue.load_membership")
+      Tracer.set_attribute("match.membership_key", membership_key)
+      OmeglePhoenix.Redis.command(["SMEMBERS", membership_key])
+    end
+  end
+
+  defp remove_leave_queue_membership(queue_keys, membership_key, session_id) do
+    commands =
+      Enum.map(queue_keys, fn queue_key ->
+        ["ZREM", queue_key, session_id]
+      end) ++
+        Enum.map(queue_keys, fn queue_key ->
+          ["SREM", membership_key, queue_key]
+        end) ++ [["DEL", membership_key]]
+
+    Tracer.with_span "matchmaker.leave_queue.remove_membership", %{kind: :internal} do
+      Tracing.annotate_internal("matchmaker.leave_queue.remove_membership")
+
+      Tracer.set_attributes(%{
+        "match.queue_count" => length(queue_keys),
+        "redis.pipeline.size" => length(commands)
+      })
+
+      OmeglePhoenix.Redis.pipeline(commands)
+    end
+  end
+
+  defp prune_queue_memberships(queue_keys, registry_key) do
+    Tracer.with_span "matchmaker.leave_queue.prune_queues", %{kind: :internal} do
+      Tracing.annotate_internal("matchmaker.leave_queue.prune_queues")
+
+      Tracer.set_attributes(%{
+        "match.queue_count" => length(queue_keys),
+        "match.registry_key" => registry_key
+      })
+
+      Enum.each(queue_keys, &prune_queue_if_empty(&1, registry_key))
+      :ok
+    end
+  end
+
+  defp prune_registry_entries(registry_entries) do
+    Tracer.with_span "matchmaker.leave_queue.prune_queues", %{kind: :internal} do
+      Tracing.annotate_internal("matchmaker.leave_queue.prune_queues")
+      Tracer.set_attribute("match.queue_count", length(registry_entries))
+
+      Enum.each(registry_entries, fn {registry_key, queue_key} ->
+        prune_queue_if_empty(queue_key, registry_key)
+      end)
+
+      :ok
     end
   end
 
