@@ -88,13 +88,13 @@ func TestSafetyGuardPromptIncludesReportContext(t *testing.T) {
 	if prompt == "" {
 		t.Fatal("BuildPrompt() returned empty prompt")
 	}
-	for _, want := range []string{"Reporter description: peer kept threatening me", "- I will find you"} {
-		if !contains(prompt, want) {
-			t.Fatalf("buildPrompt() missing %q", want)
-		}
+	
+	if !contains(prompt, "- I will find you") {
+		t.Fatalf("buildPrompt() missing peer evidence")
 	}
-	if contains(prompt, "Report reason: harassment") {
-		t.Fatal("BuildPrompt() should not include report reason for the safety guard model")
+	
+	if contains(prompt, "Report reason: harassment") || contains(prompt, "Reporter description: peer kept threatening me") {
+		t.Fatal("BuildPrompt() should not include report metadata for the safety guard model as it causes hallucinations")
 	}
 }
 

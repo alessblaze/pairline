@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/anish/omegle/backend/golang/internal/automod/models"
+	"github.com/anish/omegle/backend/golang/internal/automod/models/shared"
 	"github.com/anish/omegle/backend/golang/internal/moderation"
 	appredis "github.com/anish/omegle/backend/golang/internal/redis"
 	"github.com/anish/omegle/backend/golang/internal/storage"
@@ -243,14 +244,63 @@ func (w *Worker) processSingleReport(ctx context.Context, report storage.Report)
 	summary := "Escalated for human review because the report did not include enough text evidence."
 	completedAt := time.Now()
 
-	if peerMessageCount > 0 || strings.TrimSpace(report.Description) != "" {
-		assessment, err := w.assessReport(ctx, report, peerEvidence)
+	reporterEvidence, reporterMessageCount := extractReporterEvidence(report.ChatLog)
+
+	modelAdapter, err := models.Resolve(w.config.ModelType)
+	if err != nil {
+		return w.markFailure(ctx, report.ID, err, false)
+	}
+
+	if dualAdapter, ok := modelAdapter.(shared.DualAssessmentAdapter); ok && (peerMessageCount > 0 || reporterMessageCount > 0 || strings.TrimSpace(report.Description) != "") {
+		messages := dualAdapter.BuildDualMessages(report, peerEvidence, reporterEvidence)
+		raw, err := w.callModelAPIMulti(ctx, report, messages)
+		if err != nil {
+			return w.markFailure(ctx, report.ID, err, isRetryableAssessmentError(err))
+		}
+		dualAssessment, err := dualAdapter.ParseDualAssessment(raw)
 		if err != nil {
 			return w.markFailure(ctx, report.ID, err, isRetryableAssessmentError(err))
 		}
 
-		decision, summary = determineDecision(assessment)
-		categories = assessment.Categories
+		reporterBanned := false
+		if reporterMessageCount > 0 && dualAssessment.Reporter.UserSafety == "unsafe" {
+			w.silentBanReporter(ctx, report, dualAssessment.Reporter.Categories, completedAt)
+			reporterBanned = true
+		}
+
+		decision, summary = determineDecision(safetyAssessment{
+			UserSafety:     dualAssessment.ReportedUser.UserSafety,
+			ResponseSafety: dualAssessment.ReportedUser.ResponseSafety,
+			Categories:     dualAssessment.ReportedUser.Categories,
+		})
+		if reporterBanned {
+			summary += " Note: The reporter was found to be abusive and was automatically counter-banned."
+		}
+		categories = dualAssessment.ReportedUser.Categories
+	} else {
+		// Fallback for models without DualAssessment support (e.g. Llama Guard)
+		if peerMessageCount > 0 || strings.TrimSpace(report.Description) != "" {
+			assessment, err := w.assessReport(ctx, report, peerEvidence, modelAdapter)
+			if err != nil {
+				return w.markFailure(ctx, report.ID, err, isRetryableAssessmentError(err))
+			}
+			decision, summary = determineDecision(assessment)
+			categories = assessment.Categories
+		}
+
+		reporterBanned := false
+		if reporterMessageCount > 0 {
+			reporterAssessment, err := w.assessReport(ctx, report, reporterEvidence, modelAdapter)
+			if err != nil {
+				log.Printf("auto moderation reporter counter-assessment failed for report %s: %v", report.ID, err)
+			} else if reporterAssessment.UserSafety == "unsafe" {
+				w.silentBanReporter(ctx, report, reporterAssessment.Categories, completedAt)
+				reporterBanned = true
+			}
+		}
+		if reporterBanned {
+			summary += " Note: The reporter was found to be abusive and was automatically counter-banned."
+		}
 	}
 
 	switch decision {
@@ -395,6 +445,35 @@ func (w *Worker) createAutomaticBan(
 	return banResult, fmt.Sprintf("Applied a 7-day temporary ban until %s.", expiresAt.UTC().Format(time.RFC3339)), nil
 }
 
+func (w *Worker) silentBanReporter(ctx context.Context, report storage.Report, categories []string, completedAt time.Time) {
+	sessionID := strings.TrimSpace(report.ReporterSessionID)
+	ip := strings.TrimSpace(report.ReporterIP)
+	if sessionID == "" && ip == "" {
+		return
+	}
+
+	reason := "Auto-moderation counter-ban: reporter's own messages violated policy"
+	if len(categories) > 0 {
+		reason = reason + " [" + strings.Join(categories, ", ") + "]"
+	}
+	reason = truncateForDB(reason, 200)
+
+	expiresAt := completedAt.Add(autoBanDuration)
+	_, err := moderation.CreateOrRefreshBan(ctx, w.db, w.redis, moderation.CreateBanParams{
+		SessionID:        sessionID,
+		IPAddress:        ip,
+		Reason:           reason,
+		BannedByUsername: ReviewerName,
+		ExpiresAt:        &expiresAt,
+	})
+	if err != nil {
+		log.Printf("auto moderation reporter counter-ban failed for report %s: %v", report.ID, err)
+		return
+	}
+
+	log.Printf("auto moderation reporter counter-ban applied for report %s (session=%s ip=%s)", report.ID, sessionID, ip)
+}
+
 func autoBanReason(report storage.Report, categories []string) string {
 	reason := "Auto-moderation temporary ban"
 	if strings.TrimSpace(report.Reason) != "" {
@@ -426,17 +505,30 @@ func (w *Worker) markFailure(ctx context.Context, reportID string, err error, re
 	return err
 }
 
-func (w *Worker) assessReport(ctx context.Context, report storage.Report, peerEvidence string) (safetyAssessment, error) {
-	modelAdapter, err := models.Resolve(w.config.ModelType)
+func (w *Worker) assessReport(ctx context.Context, report storage.Report, peerEvidence string, modelAdapter shared.Adapter) (safetyAssessment, error) {
+	prompt := modelAdapter.BuildPrompt(report, peerEvidence)
+
+	rawResponse, err := w.callModelAPI(ctx, report, prompt)
 	if err != nil {
 		return safetyAssessment{}, err
 	}
 
-	prompt := modelAdapter.BuildPrompt(report, peerEvidence)
+	assessment, err := modelAdapter.ParseAssessment(rawResponse)
+	if err != nil {
+		return safetyAssessment{}, err
+	}
 
+	return safetyAssessment{
+		UserSafety:     assessment.UserSafety,
+		ResponseSafety: assessment.ResponseSafety,
+		Categories:     assessment.Categories,
+	}, nil
+}
+
+func (w *Worker) callModelAPI(ctx context.Context, report storage.Report, prompt string) (string, error) {
 	baseURL := normalizeOpenAIBaseURL(w.config.BaseURL)
 	if baseURL == "" {
-		return safetyAssessment{}, errAutoModerationBaseURLEmpty
+		return "", errAutoModerationBaseURLEmpty
 	}
 
 	client := openai.NewClient(
@@ -457,10 +549,10 @@ func (w *Worker) assessReport(ctx context.Context, report storage.Report, peerEv
 		MaxTokens:   openai.Int(w.config.MaxTokens),
 	})
 	if err != nil {
-		return safetyAssessment{}, fmt.Errorf("nim api %s: %w", baseURL, err)
+		return "", fmt.Errorf("nim api %s: %w", baseURL, err)
 	}
 	if len(completion.Choices) == 0 {
-		return safetyAssessment{}, errNIMResponseMissingChoices
+		return "", errNIMResponseMissingChoices
 	}
 
 	rawResponse := completion.Choices[0].Message.Content
@@ -476,16 +568,64 @@ func (w *Worker) assessReport(ctx context.Context, report storage.Report, peerEv
 		fmt.Printf("=== END DEBUG ===\n\n")
 	}
 
-	assessment, err := modelAdapter.ParseAssessment(rawResponse)
-	if err != nil {
-		return safetyAssessment{}, err
+	return rawResponse, nil
+}
+
+func (w *Worker) callModelAPIMulti(ctx context.Context, report storage.Report, coreMessages []shared.CoreMessage) (string, error) {
+	baseURL := normalizeOpenAIBaseURL(w.config.BaseURL)
+	if baseURL == "" {
+		return "", errAutoModerationBaseURLEmpty
 	}
 
-	return safetyAssessment{
-		UserSafety:     assessment.UserSafety,
-		ResponseSafety: assessment.ResponseSafety,
-		Categories:     assessment.Categories,
-	}, nil
+	client := openai.NewClient(
+		option.WithAPIKey(w.config.APIKey),
+		option.WithBaseURL(baseURL),
+		option.WithHTTPClient(w.client),
+	)
+
+	requestCtx, cancel := context.WithTimeout(ctx, w.config.Timeout)
+	defer cancel()
+
+	var apiMessages []openai.ChatCompletionMessageParamUnion
+	for _, m := range coreMessages {
+		if m.Role == "user" {
+			apiMessages = append(apiMessages, openai.UserMessage(m.Content))
+		} else if m.Role == "assistant" {
+			apiMessages = append(apiMessages, openai.AssistantMessage(m.Content))
+		} else if m.Role == "system" {
+			apiMessages = append(apiMessages, openai.SystemMessage(m.Content))
+		}
+	}
+
+	completion, err := client.Chat.Completions.New(requestCtx, openai.ChatCompletionNewParams{
+		Messages:    apiMessages,
+		Model:       openai.ChatModel(w.config.Model),
+		Temperature: openai.Float(w.config.Temperature),
+		MaxTokens:   openai.Int(w.config.MaxTokens),
+	})
+	if err != nil {
+		return "", fmt.Errorf("nim api %s: %w", baseURL, err)
+	}
+	if len(completion.Choices) == 0 {
+		return "", errNIMResponseMissingChoices
+	}
+
+	rawResponse := completion.Choices[0].Message.Content
+	if w.config.DebugLogging {
+		fmt.Printf("\n=== AUTO-MODERATION DEBUG (report %s) ===\n", report.ID)
+		fmt.Printf("--- USAGE ---\nInput: %d | Output: %d | Total: %d tokens\n",
+			completion.Usage.PromptTokens,
+			completion.Usage.CompletionTokens,
+			completion.Usage.TotalTokens,
+		)
+		for i, m := range coreMessages {
+			fmt.Printf("--- MESSAGE %d (%s) ---\n%s\n", i, m.Role, m.Content)
+		}
+		fmt.Printf("--- RAW RESPONSE ---\n%s\n", rawResponse)
+		fmt.Printf("=== END DEBUG ===\n\n")
+	}
+
+	return rawResponse, nil
 }
 
 func normalizeOpenAIBaseURL(baseURL string) string {
@@ -549,7 +689,7 @@ func SetEnabledSetting(ctx context.Context, db *gorm.DB, username string, enable
 	}).Create(&setting).Error
 }
 
-func extractPeerEvidence(raw string) (string, int) {
+func extractEvidence(raw string, senderFilter string) (string, int) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || raw == "[]" {
 		return "", 0
@@ -562,7 +702,7 @@ func extractPeerEvidence(raw string) (string, int) {
 
 	lines := make([]string, 0, len(messages))
 	for _, msg := range messages {
-		if msg.Sender != "peer" {
+		if msg.Sender != senderFilter {
 			continue
 		}
 		text := strings.TrimSpace(msg.Text)
@@ -573,6 +713,14 @@ func extractPeerEvidence(raw string) (string, int) {
 	}
 
 	return strings.Join(lines, "\n"), len(lines)
+}
+
+func extractPeerEvidence(raw string) (string, int) {
+	return extractEvidence(raw, "peer")
+}
+
+func extractReporterEvidence(raw string) (string, int) {
+	return extractEvidence(raw, "me")
 }
 
 func determineDecision(assessment safetyAssessment) (string, string) {

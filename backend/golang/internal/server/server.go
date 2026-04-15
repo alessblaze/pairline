@@ -605,6 +605,12 @@ func (s *Server) setupRoutes() {
 				adminOnlyEnforcement.GET("/accounts", handlers.ListAdminAccountsHandlerGin)
 				adminOnlyEnforcement.POST("/accounts", handlers.CreateAdminHandlerGin)
 				adminOnlyEnforcement.DELETE("/accounts/:username", handlers.DeleteAdminHandlerGin)
+				
+				var enqueueAutoModeration func(string)
+				if s.autoModerator != nil {
+					enqueueAutoModeration = s.autoModerator.Enqueue
+				}
+				adminOnlyEnforcement.POST("/test/seed-reports", handlers.SeedReportsHandlerGin(enqueueAutoModeration))
 
 				rootOnly := adminAuth.Group("")
 				rootOnly.Use(s.RoleAuthMiddleware([]string{"root"}))

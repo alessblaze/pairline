@@ -28,3 +28,5 @@ func (adapter) BuildPrompt(report storage.Report, peerEvidence string) string {
 func (adapter) ParseAssessment(raw string) (shared.Assessment, error) {
 	return shared.ParseJSONSafetyAssessment(raw)
 }
+
+

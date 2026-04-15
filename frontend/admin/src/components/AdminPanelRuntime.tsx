@@ -68,7 +68,8 @@ import {
   Sun,
   X,
   Bot,
-  Sparkles
+  Sparkles,
+  Play
 } from 'lucide-react';
 import type {
   AdminAccount,
@@ -163,6 +164,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
       durationUnit: 'hours',
     }
   );
+  const [isSeedingReports, setIsSeedingReports] = useState(false);
 
   const canCreateBans = role === 'moderator' || role === 'admin' || role === 'root';
   const canManageBans = role === 'admin' || role === 'root';
@@ -656,6 +658,30 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
       alert('Failed to update auto moderation');
     } finally {
       setUpdatingAutoModerationEnabled(false);
+    }
+  };
+
+  const seedTestReports = async () => {
+    if (isSeedingReports) return;
+    setIsSeedingReports(true);
+    try {
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/test/seed-reports`, {
+        method: 'POST',
+      });
+      if (response.status === 401) return logout();
+      if (response.ok) {
+        const data = await response.json();
+        alert(`Successfully seeded ${data.count} test reports.`);
+        fetchReports();
+        return;
+      }
+      const data = await response.json().catch(() => ({}));
+      alert(data.error || 'Failed to seed test reports');
+    } catch (error) {
+      console.error('Failed to seed test reports:', error);
+      alert('Failed to seed test reports');
+    } finally {
+      setIsSeedingReports(false);
     }
   };
 
@@ -1304,6 +1330,15 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                             <p className="section-prefix text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Queue Snapshot</p>
                             <p className="mt-2 text-sm font-medium text-[var(--admin-text)]">{awaitingHumanReportsCount} awaiting human</p>
                             <p className="mt-1 text-[var(--admin-text-muted)]">{autoReviewedReportsCount} auto reviewed in this page load</p>
+                            <button
+                                type="button"
+                                onClick={() => void seedTestReports()}
+                                disabled={isSeedingReports}
+                                className="mt-4 flex w-full items-center justify-center gap-2 rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] px-3 py-2 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text)] transition-all hover:bg-[var(--admin-muted-surface-hover)]"
+                              >
+                                {isSeedingReports ? <RefreshCw size={12} className="animate-spin" /> : <Play size={12} />}
+                                {isSeedingReports ? 'Seeding...' : 'Seed Test Cases'}
+                              </button>
                           </div>
                         </div>
 

@@ -27,6 +27,26 @@ type Adapter interface {
 	ParseAssessment(raw string) (Assessment, error)
 }
 
+// DualAssessment holds safety verdicts for both the reported user and the reporter.
+type DualAssessment struct {
+	ReportedUser Assessment
+	Reporter     Assessment
+}
+
+// CoreMessage represents a single message in a chat history for the model payload.
+type CoreMessage struct {
+	Role    string
+	Content string
+}
+
+// DualAssessmentAdapter is an optional interface that adapters can implement
+// to assess both participants in a single API call, saving tokens and
+// providing better context for the model.
+type DualAssessmentAdapter interface {
+	BuildDualMessages(report storage.Report, reportedEvidence, reporterEvidence string) []CoreMessage
+	ParseDualAssessment(raw string) (DualAssessment, error)
+}
+
 func NormalizeModelID(model string) string {
 	return strings.ToLower(strings.TrimSpace(model))
 }
@@ -66,11 +86,13 @@ func BuildJSONSafetyPrompt(report storage.Report, peerEvidence string, includeRe
 	b.WriteString("<END UNSAFE CONTENT CATEGORIES>\n")
 	b.WriteString("<BEGIN CONVERSATION>\n")
 	b.WriteString("user: Review the following report evidence about a reported chat participant.\n")
-	if includeReportReason && strings.TrimSpace(report.Reason) != "" {
-		b.WriteString("Report reason: " + SanitizePromptText(report.Reason) + "\n")
-	}
-	if description := strings.TrimSpace(report.Description); description != "" {
-		b.WriteString("Reporter description: " + SanitizePromptText(description) + "\n")
+	if includeReportReason {
+		if strings.TrimSpace(report.Reason) != "" {
+			b.WriteString("Report reason: " + SanitizePromptText(report.Reason) + "\n")
+		}
+		if description := strings.TrimSpace(report.Description); description != "" {
+			b.WriteString("Reporter description: " + SanitizePromptText(description) + "\n")
+		}
 	}
 	if peerEvidence != "" {
 		b.WriteString("Messages from reported user:\n")
@@ -111,6 +133,79 @@ func ParseJSONSafetyAssessment(raw string) (Assessment, error) {
 	}
 
 	return assessment, nil
+}
+
+func BuildDualJSONSafetyPrompt(report storage.Report, reportedEvidence string, reporterEvidence string, includeReportReason bool) string {
+	var b strings.Builder
+	b.WriteString("Task: Check if there is unsafe content in the given chat log in accordance with our safety policy below. ")
+	b.WriteString("Assess the messages sent by both the 'Reported User' and the 'Reporter' independently. ")
+	b.WriteString("Provide a 'safe' or 'unsafe' rating for each user. If either user has unsafe content, provide a comma-separated list of violated categories. ")
+	b.WriteString("If a user's evidence is too limited or missing, mark them safe.\n")
+	b.WriteString("<BEGIN UNSAFE CONTENT CATEGORIES>\n")
+	b.WriteString(taxonomy.Render())
+	b.WriteString("<END UNSAFE CONTENT CATEGORIES>\n")
+	b.WriteString("<BEGIN CONVERSATION>\n")
+	if includeReportReason && strings.TrimSpace(report.Reason) != "" {
+		b.WriteString("Report reason context: " + SanitizePromptText(report.Reason) + "\n")
+	}
+	b.WriteString("\nReported User Evidence:\n")
+	if reportedEvidence != "" {
+		b.WriteString(reportedEvidence + "\n")
+	} else {
+		b.WriteString("- None provided\n")
+	}
+	b.WriteString("\nReporter Evidence:\n")
+	if reporterEvidence != "" {
+		b.WriteString(reporterEvidence + "\n")
+	} else {
+		b.WriteString("- None provided\n")
+	}
+	b.WriteString("<END CONVERSATION>\n")
+	b.WriteString("Provide your assessment in the following strict JSON format:\n")
+	b.WriteString("{\"Reported Safety\": \"safe\" or \"unsafe\", \"Reported Categories\": \"comma-separated list of applicable categories when unsafe\", ")
+	b.WriteString("\"Reporter Safety\": \"safe\" or \"unsafe\", \"Reporter Categories\": \"comma-separated list of applicable categories when unsafe\"}\n")
+	b.WriteString("Do not include anything other than the output JSON in your response.\n")
+	return b.String()
+}
+
+func ParseDualJSONSafetyAssessment(raw string) (DualAssessment, error) {
+	type rawDualAssessment struct {
+		ReportedSafety     string `json:"Reported Safety"`
+		ReportedCategories string `json:"Reported Categories,omitempty"`
+		ReporterSafety     string `json:"Reporter Safety"`
+		ReporterCategories string `json:"Reporter Categories,omitempty"`
+	}
+
+	jsonBody, err := ExtractJSONObject(raw)
+	if err != nil {
+		return DualAssessment{}, err
+	}
+
+	var parsed rawDualAssessment
+	if err := json.Unmarshal([]byte(jsonBody), &parsed); err != nil {
+		return DualAssessment{}, err
+	}
+
+	reportedUser := strings.ToLower(strings.TrimSpace(parsed.ReportedSafety))
+	reporterUser := strings.ToLower(strings.TrimSpace(parsed.ReporterSafety))
+
+	if reportedUser != "safe" && reportedUser != "unsafe" {
+		return DualAssessment{}, fmt.Errorf("unexpected reported safety value %q", parsed.ReportedSafety)
+	}
+	if reporterUser != "safe" && reporterUser != "unsafe" {
+		return DualAssessment{}, fmt.Errorf("unexpected reporter safety value %q", parsed.ReporterSafety)
+	}
+
+	return DualAssessment{
+		ReportedUser: Assessment{
+			UserSafety: reportedUser,
+			Categories: taxonomy.CanonicalizeMany(NormalizeCategories(parsed.ReportedCategories)),
+		},
+		Reporter: Assessment{
+			UserSafety: reporterUser,
+			Categories: taxonomy.CanonicalizeMany(NormalizeCategories(parsed.ReporterCategories)),
+		},
+	}, nil
 }
 
 func ParsePlaintextSafetyAssessment(raw string) (Assessment, error) {

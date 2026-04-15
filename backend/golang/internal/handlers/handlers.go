@@ -39,6 +39,8 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/google/uuid"
+
 	"github.com/anish/omegle/backend/golang/internal/automod"
 	"github.com/anish/omegle/backend/golang/internal/middleware"
 	"github.com/anish/omegle/backend/golang/internal/moderation"
@@ -1913,4 +1915,108 @@ func loadBanMetrics(ctx context.Context, db *gorm.DB) (map[string]int64, error) 
 	}
 
 	return metrics, nil
+}
+
+func SeedReportsHandlerGin(enqueueAutoModeration func(string)) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		span := startHandlerSpan(c, "admin.test.reports.seed")
+		defer span.End()
+
+		db := storage.NewDatabase()
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
+
+		type chatLogMessage struct {
+			ID        string `json:"id"`
+			Text      string `json:"text"`
+			Sender    string `json:"sender"`
+			Timestamp int64  `json:"timestamp"`
+		}
+
+		makeLog := func(entries []chatLogMessage) string {
+			b, _ := json.Marshal(entries)
+			return string(b)
+		}
+
+		now := time.Now()
+
+		scenarios := []struct {
+			Reason      string
+			Description string
+			Messages    []chatLogMessage
+		}{
+			{
+				Reason:      "Peer Abusive (S1: Violence)",
+				Description: "Peer threatened reporter",
+				Messages: []chatLogMessage{
+					{ID: uuid.New().String(), Text: "hi how are you?", Sender: "me", Timestamp: now.Add(-2 * time.Minute).UnixMilli()},
+					{ID: uuid.New().String(), Text: "good, u?", Sender: "peer", Timestamp: now.Add(-1 * time.Minute).UnixMilli()},
+					{ID: uuid.New().String(), Text: "i am going to find you and kill you", Sender: "peer", Timestamp: now.UnixMilli()},
+				},
+			},
+			{
+				Reason:      "Reporter Abusive (S1: Violence)",
+				Description: "Reporter threatened peer but reported them anyway",
+				Messages: []chatLogMessage{
+					{ID: uuid.New().String(), Text: "hello?", Sender: "peer", Timestamp: now.Add(-2 * time.Minute).UnixMilli()},
+					{ID: uuid.New().String(), Text: "i am going to find you and kill you", Sender: "me", Timestamp: now.Add(-1 * time.Minute).UnixMilli()},
+					{ID: uuid.New().String(), Text: "what is wrong with you?", Sender: "peer", Timestamp: now.UnixMilli()},
+				},
+			},
+			{
+				Reason:      "Mutual Abuse (S1 & S8)",
+				Description: "Both parties exchanging vile messages",
+				Messages: []chatLogMessage{
+					{ID: uuid.New().String(), Text: "you are a dirty piece of shitpile", Sender: "me", Timestamp: now.Add(-2 * time.Minute).UnixMilli()},
+					{ID: uuid.New().String(), Text: "and i will stab you", Sender: "peer", Timestamp: now.Add(-1 * time.Minute).UnixMilli()},
+					{ID: uuid.New().String(), Text: "try it loser", Sender: "me", Timestamp: now.UnixMilli()},
+				},
+			},
+			{
+				Reason:      "Safe / False Report",
+				Description: "Neither party violated terms",
+				Messages: []chatLogMessage{
+					{ID: uuid.New().String(), Text: "how is the weather?", Sender: "me", Timestamp: now.Add(-2 * time.Minute).UnixMilli()},
+					{ID: uuid.New().String(), Text: "pretty good here, sunny", Sender: "peer", Timestamp: now.Add(-1 * time.Minute).UnixMilli()},
+					{ID: uuid.New().String(), Text: "nice, enjoy", Sender: "me", Timestamp: now.UnixMilli()},
+				},
+			},
+		}
+
+		var createdIds []string
+
+		for i, s := range scenarios {
+			report := storage.Report{
+				ReporterSessionID:        uuid.New().String(),
+				ReportedSessionID:        uuid.New().String(),
+				ReporterIP:               "203.0." + strconv.Itoa(time.Now().Second()%255) + "." + strconv.Itoa(i+100),
+				ReportedIP:               "203.0." + strconv.Itoa(time.Now().Second()%255) + "." + strconv.Itoa(i+200),
+				Reason:                   s.Reason,
+				Description:              s.Description,
+				ChatLog:                  makeLog(s.Messages),
+				Status:                   "pending",
+				AutoModerationState:      "pending",
+				AutoModerationDecision:   "",
+				AutoModerationCategories: "[]",
+				CreatedAt:                time.Now(),
+			}
+
+			if err := db.GetDB().WithContext(ctx).Create(&report).Error; err != nil {
+				span.RecordError(err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to seed report", "details": err.Error()})
+				return
+			}
+
+			if enqueueAutoModeration != nil {
+				enqueueAutoModeration(report.ID)
+			}
+			createdIds = append(createdIds, report.ID)
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status": "seeded",
+			"count":  len(scenarios),
+			"ids":    createdIds,
+		})
+	}
 }

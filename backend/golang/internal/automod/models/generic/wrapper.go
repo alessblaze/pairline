@@ -25,3 +25,16 @@ func (adapter) BuildPrompt(report storage.Report, peerEvidence string) string {
 func (adapter) ParseAssessment(raw string) (shared.Assessment, error) {
 	return shared.ParseJSONSafetyAssessment(raw)
 }
+
+func (adapter) BuildDualMessages(report storage.Report, reportedEvidence, reporterEvidence string) []shared.CoreMessage {
+	return []shared.CoreMessage{
+		{
+			Role:    "user",
+			Content: shared.BuildDualJSONSafetyPrompt(report, reportedEvidence, reporterEvidence, true),
+		},
+	}
+}
+
+func (adapter) ParseDualAssessment(raw string) (shared.DualAssessment, error) {
+	return shared.ParseDualJSONSafetyAssessment(raw)
+}
