@@ -1269,11 +1269,10 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                               type="button"
                               onClick={() => void updateAutoModerationEnabled(!autoModerationSettings.enabled)}
                               disabled={updatingAutoModerationEnabled}
-                              className={`flex h-11 items-center gap-2 rounded-none px-4 text-[10px] font-bold uppercase tracking-[0.14em] transition-all ${
-                                autoModerationSettings.enabled
-                                  ? 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
-                                  : 'border border-amber-500/20 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20'
-                              }`}
+                              className={`flex h-11 items-center gap-2 rounded-none px-4 text-[10px] font-bold uppercase tracking-[0.14em] transition-all ${autoModerationSettings.enabled
+                                ? 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
+                                : 'border border-amber-500/20 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20'
+                                }`}
                             >
                               {updatingAutoModerationEnabled ? <RefreshCw size={14} className="animate-spin" /> : <Sparkles size={14} />}
                               {updatingAutoModerationEnabled
@@ -1316,23 +1315,31 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                     )}
 
                     <div className={`${surfaceCardClass} p-5`}>
-                      <div className="grid gap-4 xl:grid-cols-[auto_auto_1fr_auto] xl:items-end">
+                      <div className="grid gap-4 xl:grid-cols-[auto_auto_1fr] xl:items-end">
                         <div>
-                          <p className="mb-2 text-xs font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Status Filter</p>
-                          <div className="flex flex-wrap gap-2">
-                            <button type="button" onClick={() => setReportStatusFilter('pending')} className={filterButtonClass(reportStatusFilter === 'pending')}>Pending</button>
-                            <button type="button" onClick={() => setReportStatusFilter('decided')} className={filterButtonClass(reportStatusFilter === 'decided')}>Decided</button>
-                            <button type="button" onClick={() => setReportStatusFilter('all')} className={filterButtonClass(reportStatusFilter === 'all')}>All</button>
-                          </div>
+                          <label className="mb-2 block text-xs font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Status Filter</label>
+                          <select
+                            value={reportStatusFilter}
+                            onChange={(e) => setReportStatusFilter(e.target.value as any)}
+                            className={`${compactSelectClass} min-w-[150px] appearance-none`}
+                          >
+                            <option value="pending">Pending</option>
+                            <option value="decided">Decided</option>
+                            <option value="all">All</option>
+                          </select>
                         </div>
                         <div>
-                          <p className="mb-2 text-xs font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Review Source</p>
-                          <div className="flex flex-wrap gap-2">
-                            <button type="button" onClick={() => setReportReviewSourceFilter('all')} className={filterButtonClass(reportReviewSourceFilter === 'all')}>All</button>
-                            <button type="button" onClick={() => setReportReviewSourceFilter('awaitingHuman')} className={filterButtonClass(reportReviewSourceFilter === 'awaitingHuman')}>Awaiting Human</button>
-                            <button type="button" onClick={() => setReportReviewSourceFilter('autoReviewed')} className={filterButtonClass(reportReviewSourceFilter === 'autoReviewed')}>Auto Reviewed</button>
-                            <button type="button" onClick={() => setReportReviewSourceFilter('humanReviewed')} className={filterButtonClass(reportReviewSourceFilter === 'humanReviewed')}>Human Reviewed</button>
-                          </div>
+                          <label className="mb-2 block text-xs font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Review Source</label>
+                          <select
+                            value={reportReviewSourceFilter}
+                            onChange={(e) => setReportReviewSourceFilter(e.target.value as any)}
+                            className={`${compactSelectClass} min-w-[170px] appearance-none`}
+                          >
+                            <option value="all">All Sources</option>
+                            <option value="awaitingHuman">Awaiting Human</option>
+                            <option value="autoReviewed">Auto Reviewed</option>
+                            <option value="humanReviewed">Human Reviewed</option>
+                          </select>
                         </div>
                         <div>
                           <label className="mb-2 block text-xs font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Show Limit</label>
@@ -1347,48 +1354,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                             <option value="all">All entries</option>
                           </select>
                         </div>
-                        <div className="flex flex-wrap gap-2 xl:justify-end">
-                          <button
-                            type="button"
-                            onClick={fetchReports}
-                            className={`${actionButtonClass} bg-[var(--admin-text)] text-[var(--admin-bg)] hover:opacity-90`}
-                          >
-                            <RefreshCw size={16} />
-                            Refresh Reports
-                          </button>
-                          <button
-                            type="button"
-                            onClick={toggleSelectAllVisibleReports}
-                            disabled={selectableVisibleReports.length === 0}
-                            className={`${actionButtonClass} border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] text-[var(--admin-text)] hover:bg-[var(--admin-muted-surface-hover)]`}
-                          >
-                            {allVisibleReportsSelected ? 'Clear Selection' : 'Select All'}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              void Promise.all(selectedPendingReportIds.map((id) => updateReportStatus(id, 'approved')));
-                              setSelectedReports(new Set());
-                            }}
-                            disabled={selectedPendingReportsCount === 0}
-                            className={`${actionButtonClass} bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20`}
-                          >
-                            <CheckCircle2 size={16} />
-                            Approve Selected ({selectedPendingReportsCount})
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              void Promise.all(selectedPendingReportIds.map((id) => updateReportStatus(id, 'rejected')));
-                              setSelectedReports(new Set());
-                            }}
-                            disabled={selectedPendingReportsCount === 0}
-                            className={`${actionButtonClass} bg-rose-500/10 text-rose-300 hover:bg-rose-500/20`}
-                          >
-                            <XCircle size={16} />
-                            Reject Selected ({selectedPendingReportsCount})
-                          </button>
-                        </div>
+                        {/* Actions moved to floating toolbar */}
                       </div>
                       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--admin-outline-soft)] pt-4 text-xs text-[var(--admin-text-muted)]">
                         <p>
@@ -1609,6 +1575,56 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         </div>
                       ))
                     )}
+
+                    {/* Floating Toolbar for Actions */}
+                    <motion.div
+                      initial={{ y: 20, opacity: 0 }}
+                      animate={{ y: 0, opacity: 1 }}
+                      className="fixed shadow-[0_0_0_1px_rgba(0,0,0,0.06),0_8px_25px_rgba(0,0,0,0.15)] dark:shadow-[0_0_0_1px_rgba(255,255,255,0.14),0_8px_20px_rgba(0,0,0,0.7),0_0_20px_rgba(255,255,255,0.3)] bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-surface-bg)]/90 backdrop-blur-xl p-2 lg:left-[calc(50%+144px)] flex-wrap justify-center w-[calc(100vw-2rem)] sm:w-max max-w-full md:max-w-[90vw]"
+                    >
+                      <button
+                        type="button"
+                        onClick={fetchReports}
+                        className={`${actionButtonClass} flex-1 min-w-[140px] rounded-none bg-[var(--admin-text)] text-[var(--admin-bg)] hover:opacity-90`}
+                      >
+                        <RefreshCw size={16} />
+                        <span className="hidden sm:inline">Refresh Reports</span>
+                        <span className="sm:hidden">Refresh</span>
+                      </button>
+                      <div className="h-6 w-px bg-[var(--admin-outline-soft)] mx-1 hidden sm:block"></div>
+                      <button
+                        type="button"
+                        onClick={toggleSelectAllVisibleReports}
+                        disabled={selectableVisibleReports.length === 0}
+                        className={`${actionButtonClass} flex-1 min-w-[140px] rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] text-[var(--admin-text)] hover:bg-[var(--admin-muted-surface-hover)]`}
+                      >
+                        {allVisibleReportsSelected ? 'Clear' : 'Select All'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void Promise.all(selectedPendingReportIds.map((id) => updateReportStatus(id, 'approved')));
+                          setSelectedReports(new Set());
+                        }}
+                        disabled={selectedPendingReportsCount === 0}
+                        className={`${actionButtonClass} flex-1 min-w-[140px] rounded-none bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20`}
+                      >
+                        <CheckCircle2 size={16} />
+                        Approve ({selectedPendingReportsCount})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void Promise.all(selectedPendingReportIds.map((id) => updateReportStatus(id, 'rejected')));
+                          setSelectedReports(new Set());
+                        }}
+                        disabled={selectedPendingReportsCount === 0}
+                        className={`${actionButtonClass} flex-1 min-w-[140px] rounded-none bg-rose-500/10 text-rose-300 hover:bg-rose-500/20`}
+                      >
+                        <XCircle size={16} />
+                        Reject ({selectedPendingReportsCount})
+                      </button>
+                    </motion.div>
                   </div>
                 )}
 
@@ -2216,11 +2232,10 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           type="button"
                           onClick={() => void updateBannedWordsEnabled(!bannedWordsEnabled)}
                           disabled={updatingBannedWordsEnabled}
-                          className={`inline-flex h-11 min-w-[180px] items-center justify-center gap-2 rounded-none border px-4 font-heading text-[11px] font-bold uppercase tracking-[0.14em] transition-all ${
-                            bannedWordsEnabled
-                              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
-                              : 'border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20'
-                          } disabled:cursor-not-allowed disabled:opacity-60`}
+                          className={`inline-flex h-11 min-w-[180px] items-center justify-center gap-2 rounded-none border px-4 font-heading text-[11px] font-bold uppercase tracking-[0.14em] transition-all ${bannedWordsEnabled
+                            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
+                            : 'border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20'
+                            } disabled:cursor-not-allowed disabled:opacity-60`}
                         >
                           {updatingBannedWordsEnabled ? <RefreshCw size={14} className="animate-spin" /> : bannedWordsEnabled ? <CheckCircle2 size={14} /> : <EyeOff size={14} />}
                           {updatingBannedWordsEnabled ? 'Updating...' : bannedWordsEnabled ? 'Enforcement On' : 'Enforcement Off'}
