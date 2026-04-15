@@ -1681,21 +1681,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
 
                       <div className="flex flex-col gap-5">
                         {/* Search & Filters Grid */}
-                        <div className="grid gap-4 lg:grid-cols-[1fr_auto_auto] lg:items-end">
-                          <div className="flex flex-col gap-2">
-                            <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Search Registry</label>
-                            <div className="relative">
-                              <Search className="absolute left-3 top-3 text-[var(--admin-text-muted)]" size={16} />
-                              <input
-                                type="text"
-                                value={banSearch}
-                                onChange={(e) => setBanSearch(e.target.value)}
-                                className={`${inputClass} pl-10`}
-                                placeholder="SEARCH IP, SESSION, REASON, OR ADMIN..."
-                              />
-                            </div>
-                          </div>
-
+                        <div className="flex flex-wrap items-end justify-between gap-4 w-full">
                           <div className="flex flex-col gap-2">
                             <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Status Filter</label>
                             <div className="flex items-center gap-2">
@@ -1912,6 +1898,24 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         </AnimatePresence>
                       )}
                     </div>
+
+                    {/* Floating Toolbar for Ban Search */}
+                    <motion.div 
+                      initial={{ y: 20, opacity: 0 }}
+                      animate={{ y: 0, opacity: 1 }}
+                      className="fixed shadow-[0_0_0_1px_rgba(0,0,0,0.06),0_8px_25px_rgba(0,0,0,0.15)] dark:shadow-[0_0_0_1px_rgba(255,255,255,0.14),0_8px_20px_rgba(0,0,0,0.7),0_0_20px_rgba(255,255,255,0.3)] bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-surface-bg)]/90 backdrop-blur-xl p-2 lg:left-[calc(50%+144px)] flex-wrap justify-center w-[calc(100vw-2rem)] sm:w-[500px] max-w-full md:max-w-[90vw]"
+                    >
+                      <div className="relative w-full">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--admin-text-muted)]" size={16} />
+                        <input
+                          type="text"
+                          value={banSearch}
+                          onChange={(e) => setBanSearch(e.target.value)}
+                          className={`${inputClass} pl-10 w-full !mb-0 bg-[var(--admin-input-bg)]`}
+                          placeholder="SEARCH IP, SESSION, REASON, OR ADMIN..."
+                        />
+                      </div>
+                    </motion.div>
                   </div>
                 )}
 
