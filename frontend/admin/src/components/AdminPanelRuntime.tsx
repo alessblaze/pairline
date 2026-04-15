@@ -1229,7 +1229,11 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                     </div>
 
                     {canManageAutoModeration && autoModerationSettings && (
-                      <div className={`${surfaceCardClass} space-y-5`}>
+                      <div className={`${surfaceCardClass} space-y-5 p-5`}>
+                        <div className="hud-bracket hud-bracket-tl" />
+                        <div className="hud-bracket-tr" />
+                        <div className="hud-bracket-bl" />
+                        <div className="hud-bracket-br" />
                         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                           <div className="space-y-2">
                             <div className="flex items-center gap-3">
@@ -1315,6 +1319,10 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                     )}
 
                     <div className={`${surfaceCardClass} p-5`}>
+                      <div className="hud-bracket hud-bracket-tl" />
+                      <div className="hud-bracket-tr" />
+                      <div className="hud-bracket-bl" />
+                      <div className="hud-bracket-br" />
                       <div className="grid gap-4 xl:grid-cols-[auto_auto_1fr] xl:items-end">
                         <div>
                           <label className="mb-2 block text-xs font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Status Filter</label>
@@ -1900,7 +1908,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                     </div>
 
                     {/* Floating Toolbar for Ban Search */}
-                    <motion.div 
+                    <motion.div
                       initial={{ y: 20, opacity: 0 }}
                       animate={{ y: 0, opacity: 1 }}
                       className="fixed shadow-[0_0_0_1px_rgba(0,0,0,0.06),0_8px_25px_rgba(0,0,0,0.15)] dark:shadow-[0_0_0_1px_rgba(255,255,255,0.14),0_8px_20px_rgba(0,0,0,0.7),0_0_20px_rgba(255,255,255,0.3)] bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-surface-bg)]/90 backdrop-blur-xl p-2 lg:left-[calc(50%+144px)] flex-wrap justify-center w-[calc(100vw-2rem)] sm:w-[500px] max-w-full md:max-w-[90vw]"
