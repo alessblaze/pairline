@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/anish/omegle/backend/golang/internal/automod/models"
 	"github.com/anish/omegle/backend/golang/internal/storage"
 	"github.com/openai/openai-go/v3"
 )
@@ -21,10 +22,15 @@ func TestExtractPeerEvidenceFiltersPeerMessages(t *testing.T) {
 	}
 }
 
-func TestParseAssessmentAcceptsJSONWrappedInText(t *testing.T) {
-	assessment, err := parseAssessment("Output JSON:\n{\"User Safety\":\"unsafe\",\"Safety Categories\":\"Harassment, Profanity\"}")
+func TestSafetyGuardModelParsesJSONWrappedInText(t *testing.T) {
+	adapter, err := models.Resolve("nvidia/llama-3.1-nemotron-safety-guard-8b-v3")
 	if err != nil {
-		t.Fatalf("parseAssessment returned error: %v", err)
+		t.Fatalf("Resolve() returned error: %v", err)
+	}
+
+	assessment, err := adapter.ParseAssessment("Output JSON:\n{\"User Safety\":\"unsafe\",\"Safety Categories\":\"Harassment, Profanity\"}")
+	if err != nil {
+		t.Fatalf("ParseAssessment() returned error: %v", err)
 	}
 	if assessment.UserSafety != "unsafe" {
 		t.Fatalf("assessment.UserSafety = %q, want %q", assessment.UserSafety, "unsafe")
@@ -67,20 +73,119 @@ func TestDetermineDecision(t *testing.T) {
 	}
 }
 
-func TestBuildPromptIncludesReportContext(t *testing.T) {
+func TestSafetyGuardPromptIncludesReportContext(t *testing.T) {
+	adapter, err := models.Resolve("nvidia/llama-3.1-nemotron-safety-guard-8b-v3")
+	if err != nil {
+		t.Fatalf("Resolve() returned error: %v", err)
+	}
+
 	report := storage.Report{
 		Reason:      "harassment",
 		Description: "peer kept threatening me",
 	}
 
-	prompt := buildPrompt(report, "- I will find you")
+	prompt := adapter.BuildPrompt(report, "- I will find you")
 	if prompt == "" {
-		t.Fatal("buildPrompt() returned empty prompt")
+		t.Fatal("BuildPrompt() returned empty prompt")
 	}
-	for _, want := range []string{"Report reason: harassment", "Reporter description: peer kept threatening me", "- I will find you"} {
+	for _, want := range []string{"Reporter description: peer kept threatening me", "- I will find you"} {
 		if !contains(prompt, want) {
 			t.Fatalf("buildPrompt() missing %q", want)
 		}
+	}
+	if contains(prompt, "Report reason: harassment") {
+		t.Fatal("BuildPrompt() should not include report reason for the safety guard model")
+	}
+}
+
+func TestContentSafetyReasoningModelParsesPromptHarm(t *testing.T) {
+	adapter, err := models.Resolve("nvidia/nemotron-content-safety-reasoning-4b")
+	if err != nil {
+		t.Fatalf("Resolve() returned error: %v", err)
+	}
+
+	assessment, err := adapter.ParseAssessment("<think>\ninternal reasoning\n</think>\nPrompt harm: harmful\nResponse harm: None")
+	if err != nil {
+		t.Fatalf("ParseAssessment() returned error: %v", err)
+	}
+	if assessment.UserSafety != "unsafe" {
+		t.Fatalf("assessment.UserSafety = %q, want %q", assessment.UserSafety, "unsafe")
+	}
+}
+
+func TestContentSafetyReasoningPromptIncludesTaxonomyAndEvidence(t *testing.T) {
+	adapter, err := models.Resolve("nvidia/nemotron-content-safety-reasoning-4b")
+	if err != nil {
+		t.Fatalf("Resolve() returned error: %v", err)
+	}
+
+	report := storage.Report{
+		Reason:      "harassment",
+		Description: "peer kept threatening me",
+	}
+
+	prompt := adapter.BuildPrompt(report, "- I will find you")
+	for _, want := range []string{"<BEGIN SAFETY TAXONOMY>", "Report reason: harassment", "Reporter description: peer kept threatening me", "Prompt harm: <harmful/unharmful>"} {
+		if !contains(prompt, want) {
+			t.Fatalf("BuildPrompt() missing %q", want)
+		}
+	}
+}
+
+func TestResolveRejectsUnknownAutoModerationModel(t *testing.T) {
+	if _, err := models.Resolve("nvidia/unknown-model"); err == nil {
+		t.Fatal("Resolve() should reject unknown models")
+	}
+}
+
+func TestMultilingualSafetyGuardUsesJSONFormat(t *testing.T) {
+	adapter, err := models.Resolve("nvidia/llama-3.1-nemotron-safety-guard-multilingual-8b-v1")
+	if err != nil {
+		t.Fatalf("Resolve() returned error: %v", err)
+	}
+
+	assessment, err := adapter.ParseAssessment("{\"User Safety\":\"safe\"}")
+	if err != nil {
+		t.Fatalf("ParseAssessment() returned error: %v", err)
+	}
+	if assessment.UserSafety != "safe" {
+		t.Fatalf("assessment.UserSafety = %q, want %q", assessment.UserSafety, "safe")
+	}
+}
+
+func TestNemoGuardContentSafetyUsesJSONFormat(t *testing.T) {
+	adapter, err := models.Resolve("nvidia/llama-3.1-nemoguard-8b-content-safety")
+	if err != nil {
+		t.Fatalf("Resolve() returned error: %v", err)
+	}
+
+	assessment, err := adapter.ParseAssessment("{\"User Safety\":\"unsafe\",\"Safety Categories\":\"PII/Privacy\"}")
+	if err != nil {
+		t.Fatalf("ParseAssessment() returned error: %v", err)
+	}
+	if assessment.UserSafety != "unsafe" {
+		t.Fatalf("assessment.UserSafety = %q, want %q", assessment.UserSafety, "unsafe")
+	}
+	if len(assessment.Categories) != 1 || assessment.Categories[0] != "pii/privacy" {
+		t.Fatalf("assessment.Categories = %#v", assessment.Categories)
+	}
+}
+
+func TestLlamaGuard4ParsesPlaintextFormat(t *testing.T) {
+	adapter, err := models.Resolve("meta/llama-guard-4-12b")
+	if err != nil {
+		t.Fatalf("Resolve() returned error: %v", err)
+	}
+
+	assessment, err := adapter.ParseAssessment("unsafe\nS7")
+	if err != nil {
+		t.Fatalf("ParseAssessment() returned error: %v", err)
+	}
+	if assessment.UserSafety != "unsafe" {
+		t.Fatalf("assessment.UserSafety = %q, want %q", assessment.UserSafety, "unsafe")
+	}
+	if len(assessment.Categories) != 1 || assessment.Categories[0] != "pii/privacy" {
+		t.Fatalf("assessment.Categories = %#v", assessment.Categories)
 	}
 }
 

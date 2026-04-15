@@ -60,6 +60,7 @@ For the full backend env var reference (Phoenix + Go), see [`ENVIRONMENT.md`](..
 `AUTO_MODERATION_ENABLED` defaults to `false` and acts as the fallback toggle until an admin updates the persisted setting.
 `NIM_API_KEY` (or `NVIDIA_NIM_API_KEY`) enables the async report auto-moderation worker to call NVIDIA NIM after reports are stored.
 `AUTO_MODERATION_MODEL` defaults to `nvidia/llama-3.1-nemotron-safety-guard-8b-v3`.
+The Go worker currently ships model adapters for `nvidia/llama-3.1-nemotron-safety-guard-8b-v3`, `nvidia/llama-3.1-nemotron-safety-guard-multilingual-8b-v1`, `nvidia/llama-3.1-nemoguard-8b-content-safety`, `nvidia/nemotron-content-safety-reasoning-4b`, and `meta/llama-guard-4-12b` under `internal/automod/models/`.
 Go services are Redis Cluster only and require `REDIS_CLUSTER_NODES`.
 Set `IGNORE_DOTENV=1` (or any non-empty value) to skip loading a local `.env` file even if one is present in the working directory.
 `ADMIN_HEALTH_PHOENIX_URLS`, `ADMIN_HEALTH_GO_URLS`, and `OTEL_COLLECTOR_HEALTH_URL` are used by the admin binary to build the authenticated infra-health summary consumed by the admin dashboard.

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/anish/omegle/backend/golang/internal/automod/models"
 	"github.com/anish/omegle/backend/golang/internal/moderation"
 	appredis "github.com/anish/omegle/backend/golang/internal/redis"
 	"github.com/anish/omegle/backend/golang/internal/storage"
@@ -421,7 +422,12 @@ func (w *Worker) markFailure(ctx context.Context, reportID string, err error, re
 }
 
 func (w *Worker) assessReport(ctx context.Context, report storage.Report, peerEvidence string) (safetyAssessment, error) {
-	prompt := buildPrompt(report, peerEvidence)
+	modelAdapter, err := models.Resolve(w.config.Model)
+	if err != nil {
+		return safetyAssessment{}, err
+	}
+
+	prompt := modelAdapter.BuildPrompt(report, peerEvidence)
 
 	baseURL := normalizeOpenAIBaseURL(w.config.BaseURL)
 	if baseURL == "" {
@@ -452,7 +458,16 @@ func (w *Worker) assessReport(ctx context.Context, report storage.Report, peerEv
 		return safetyAssessment{}, errNIMResponseMissingChoices
 	}
 
-	return parseAssessment(completion.Choices[0].Message.Content)
+	assessment, err := modelAdapter.ParseAssessment(completion.Choices[0].Message.Content)
+	if err != nil {
+		return safetyAssessment{}, err
+	}
+
+	return safetyAssessment{
+		UserSafety:     assessment.UserSafety,
+		ResponseSafety: assessment.ResponseSafety,
+		Categories:     assessment.Categories,
+	}, nil
 }
 
 func normalizeOpenAIBaseURL(baseURL string) string {
@@ -515,38 +530,6 @@ func SetEnabledSetting(ctx context.Context, db *gorm.DB, username string, enable
 	}).Create(&setting).Error
 }
 
-func buildPrompt(report storage.Report, peerEvidence string) string {
-	var b strings.Builder
-	b.WriteString("Task: Check if there is unsafe content in the reported user's messages and the report evidence in accordance with our safety policy below. ")
-	b.WriteString("Provide a 'safe' or 'unsafe' rating for the reported user content only. If there is unsafe content, provide a comma-separated list of violated categories. ")
-	b.WriteString("If the evidence is too limited to support an unsafe finding, mark it safe.\n")
-	b.WriteString("<BEGIN UNSAFE CONTENT CATEGORIES>\n")
-	b.WriteString("S1: Violence.\nS2: Sexual.\nS3: Criminal Planning/Confessions.\nS4: Guns and Illegal Weapons.\n")
-	b.WriteString("S5: Controlled/Regulated Substances.\nS6: Suicide and Self Harm.\nS7: Sexual (minor).\n")
-	b.WriteString("S8: Hate/Identity Hate.\nS9: PII/Privacy.\nS10: Harassment.\nS11: Threat.\nS12: Profanity.\n")
-	b.WriteString("S13: Needs Caution.\nS14: Other.\nS15: Manipulation.\nS16: Fraud/Deception.\nS17: Malware.\n")
-	b.WriteString("S18: High Risk Gov Decision Making.\nS19: Political/Misinformation/Conspiracy.\n")
-	b.WriteString("S20: Copyright/Trademark/Plagiarism.\nS21: Unauthorized Advice.\nS22: Illegal Activity.\n")
-	b.WriteString("S23: Immoral/Unethical.\n")
-	b.WriteString("<END UNSAFE CONTENT CATEGORIES>\n")
-	b.WriteString("<BEGIN CONVERSATION>\n")
-	b.WriteString("user: Review the following report evidence about a reported chat participant.\n")
-	b.WriteString("Report reason: " + safePromptText(report.Reason) + "\n")
-	if description := strings.TrimSpace(report.Description); description != "" {
-		b.WriteString("Reporter description: " + safePromptText(description) + "\n")
-	}
-	if peerEvidence != "" {
-		b.WriteString("Messages from reported user:\n")
-		b.WriteString(peerEvidence)
-		b.WriteString("\n")
-	}
-	b.WriteString("<END CONVERSATION>\n")
-	b.WriteString("Provide your safety assessment for the above report in the below JSON format:\n")
-	b.WriteString("{\"User Safety\": \"safe\" or \"unsafe\", \"Safety Categories\": \"comma-separated list of applicable categories when unsafe\"}\n")
-	b.WriteString("Do not include anything other than the output JSON in your response.\n")
-	return b.String()
-}
-
 func extractPeerEvidence(raw string) (string, int) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || raw == "[]" {
@@ -573,35 +556,6 @@ func extractPeerEvidence(raw string) (string, int) {
 	return strings.Join(lines, "\n"), len(lines)
 }
 
-func parseAssessment(raw string) (safetyAssessment, error) {
-	type rawAssessment struct {
-		UserSafety     string `json:"User Safety"`
-		ResponseSafety string `json:"Response Safety,omitempty"`
-		Categories     string `json:"Safety Categories,omitempty"`
-	}
-
-	jsonBody, err := extractJSONObject(raw)
-	if err != nil {
-		return safetyAssessment{}, err
-	}
-
-	var parsed rawAssessment
-	if err := json.Unmarshal([]byte(jsonBody), &parsed); err != nil {
-		return safetyAssessment{}, err
-	}
-
-	assessment := safetyAssessment{
-		UserSafety:     strings.ToLower(strings.TrimSpace(parsed.UserSafety)),
-		ResponseSafety: strings.ToLower(strings.TrimSpace(parsed.ResponseSafety)),
-		Categories:     normalizeCategories(parsed.Categories),
-	}
-	if assessment.UserSafety != "safe" && assessment.UserSafety != "unsafe" {
-		return safetyAssessment{}, fmt.Errorf("unexpected user safety value %q", parsed.UserSafety)
-	}
-
-	return assessment, nil
-}
-
 func determineDecision(assessment safetyAssessment) (string, string) {
 	if assessment.UserSafety == "unsafe" {
 		if len(assessment.Categories) == 0 {
@@ -624,7 +578,8 @@ func isRetryableAssessmentError(err error) bool {
 
 	switch {
 	case errors.Is(err, errAutoModerationBaseURLEmpty),
-		errors.Is(err, errAutoModerationMissingAPIKey):
+		errors.Is(err, errAutoModerationMissingAPIKey),
+		errors.Is(err, models.ErrUnsupportedModel):
 		return false
 	case errors.Is(err, context.Canceled):
 		return false
@@ -663,31 +618,6 @@ func loadConfigFromEnv() Config {
 		ClaimTimeout:   time.Duration(boundedInt(firstNonEmptyEnv("AUTO_MODERATION_CLAIM_TIMEOUT_SECONDS"), 300, 30, 3600)) * time.Second,
 		MaxAttempts:    boundedInt(firstNonEmptyEnv("AUTO_MODERATION_MAX_ATTEMPTS"), 3, 1, 10),
 	}
-}
-
-func extractJSONObject(raw string) (string, error) {
-	start := strings.Index(raw, "{")
-	end := strings.LastIndex(raw, "}")
-	if start == -1 || end == -1 || end < start {
-		return "", errors.New("model response did not contain a JSON object")
-	}
-	return raw[start : end+1], nil
-}
-
-func normalizeCategories(raw string) []string {
-	if strings.TrimSpace(raw) == "" {
-		return nil
-	}
-
-	parts := strings.Split(raw, ",")
-	categories := make([]string, 0, len(parts))
-	for _, part := range parts {
-		trimmed := strings.TrimSpace(strings.ToLower(part))
-		if trimmed != "" {
-			categories = append(categories, trimmed)
-		}
-	}
-	return categories
 }
 
 func mustMarshalCategories(categories []string) string {
