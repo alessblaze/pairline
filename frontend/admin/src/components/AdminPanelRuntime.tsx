@@ -1236,10 +1236,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         <div className="hud-bracket-br" />
                         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                           <div className="space-y-2">
-                            <div className="flex items-center gap-3">
-                              <div className="flex h-11 w-11 items-center justify-center rounded-none border border-electric-cyan/20 bg-electric-cyan/10 text-electric-cyan">
-                                <Bot size={18} />
-                              </div>
+                            <div className="flex items-center">
                               <div>
                                 <h2 className="text-sm font-bold uppercase tracking-[0.16em] text-[var(--admin-text)]">Auto Moderation</h2>
                                 <p className="mt-1 text-xs text-[var(--admin-text-muted)]">
@@ -1248,13 +1245,13 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                               </div>
                             </div>
                             <div className="flex flex-wrap justify-center lg:justify-start gap-2">
-                              <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${autoModerationSettings.enabled ? 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-400' : 'border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] text-[var(--admin-text-soft)]'}`}>
+                              <span className={`section-prefix px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${autoModerationSettings.enabled ? 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-400' : 'border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] text-[var(--admin-text-soft)]'}`}>
                                 {autoModerationSettings.enabled ? 'Enabled' : 'Disabled'}
                               </span>
-                              <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${autoModerationSettings.configured ? 'border border-electric-cyan/20 bg-electric-cyan/10 text-electric-cyan' : 'border border-amber-500/20 bg-amber-500/10 text-amber-400'}`}>
+                              <span className={`section-prefix px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${autoModerationSettings.configured ? 'border border-electric-cyan/20 bg-electric-cyan/10 text-electric-cyan' : 'border border-amber-500/20 bg-amber-500/10 text-amber-400'}`}>
                                 {autoModerationSettings.configured ? 'Model Configured' : 'Model Not Configured'}
                               </span>
-                              <span className="border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-soft)]">
+                              <span className="section-prefix border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-soft)]">
                                 Default {autoModerationSettings.enabled_default ? 'On' : 'Off'}
                               </span>
                             </div>
@@ -1290,21 +1287,21 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
 
                         <div className="grid gap-3 text-xs text-[var(--admin-text-soft)] sm:grid-cols-2 xl:grid-cols-4">
                           <div className="border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] p-4">
-                            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Model</p>
+                            <p className="section-prefix text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Model</p>
                             <p className="mt-2 break-all text-sm font-medium text-[var(--admin-text)]">{autoModerationSettings.model || 'Not configured'}</p>
                           </div>
                           <div className="border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] p-4">
-                            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Batching</p>
+                            <p className="section-prefix text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Batching</p>
                             <p className="mt-2 text-sm font-medium text-[var(--admin-text)]">{autoModerationSettings.batch_size} per sweep</p>
                             <p className="mt-1 text-[var(--admin-text-muted)]">Every {autoModerationSettings.interval_seconds}s</p>
                           </div>
                           <div className="border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] p-4">
-                            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Timeout</p>
+                            <p className="section-prefix text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Timeout</p>
                             <p className="mt-2 text-sm font-medium text-[var(--admin-text)]">{autoModerationSettings.timeout_seconds}s request timeout</p>
                             <p className="mt-1 text-[var(--admin-text-muted)]">Max attempts {autoModerationSettings.max_attempts}</p>
                           </div>
                           <div className="border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] p-4">
-                            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Queue Snapshot</p>
+                            <p className="section-prefix text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Queue Snapshot</p>
                             <p className="mt-2 text-sm font-medium text-[var(--admin-text)]">{awaitingHumanReportsCount} awaiting human</p>
                             <p className="mt-1 text-[var(--admin-text-muted)]">{autoReviewedReportsCount} auto reviewed in this page load</p>
                           </div>
@@ -1325,7 +1322,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       <div className="hud-bracket-br" />
                       <div className="grid gap-4 xl:grid-cols-[auto_auto_1fr] xl:items-end">
                         <div>
-                          <label className="mb-2 block text-xs font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Status Filter</label>
+                          <label className="section-prefix mb-2 block text-xs font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Status Filter</label>
                           <select
                             value={reportStatusFilter}
                             onChange={(e) => setReportStatusFilter(e.target.value as any)}
@@ -1337,7 +1334,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           </select>
                         </div>
                         <div>
-                          <label className="mb-2 block text-xs font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Review Source</label>
+                          <label className="section-prefix mb-2 block text-xs font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Review Source</label>
                           <select
                             value={reportReviewSourceFilter}
                             onChange={(e) => setReportReviewSourceFilter(e.target.value as any)}
@@ -1350,7 +1347,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           </select>
                         </div>
                         <div className="xl:ml-auto xl:text-right">
-                          <label className="mb-2 block text-xs font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Show Limit</label>
+                          <label className="section-prefix mb-2 block text-xs font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Show Limit</label>
                           <select
                             value={reportLimit}
                             onChange={(e) => setReportLimit(e.target.value)}
@@ -1691,7 +1688,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         {/* Search & Filters Grid */}
                         <div className="flex flex-wrap items-end justify-between gap-4 w-full">
                           <div className="flex flex-col gap-2">
-                            <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Status Filter</label>
+                            <label className="section-prefix font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Status Filter</label>
                             <div className="flex items-center gap-2">
                               <button type="button" onClick={() => setBanFilter('active')} className={filterButtonClass(banFilter === 'active', 'rose')}>Active</button>
                               <button type="button" onClick={() => setBanFilter('inactive')} className={filterButtonClass(banFilter === 'inactive')}>Inactive</button>
@@ -1701,7 +1698,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
 
                           <div className="flex items-center gap-3">
                             <div className="flex-1 lg:w-[140px]">
-                              <label className="mb-2 block font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Show Limit</label>
+                              <label className="section-prefix mb-2 block font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Show Limit</label>
                               <select
                                 value={banLimit}
                                 onChange={(e) => setBanLimit(e.target.value)}
@@ -2185,7 +2182,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       <div className="flex flex-col gap-5">
                         <div className="grid gap-4 lg:grid-cols-[1fr_auto_auto] lg:items-end">
                           <div className="flex flex-col gap-2">
-                            <label className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Search Registry</label>
+                            <label className="section-prefix font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Search Registry</label>
                             <div className="relative">
                               <Search className="absolute left-3 top-3 text-[var(--admin-text-muted)]" size={16} />
                               <input
@@ -2199,7 +2196,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           </div>
 
                           <div className="flex-1 lg:w-[140px]">
-                            <label className="mb-2 block font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Show Limit</label>
+                            <label className="section-prefix mb-2 block font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Show Limit</label>
                             <select
                               value={bannedWordLimit}
                               onChange={(e) => setBannedWordLimit(e.target.value)}
