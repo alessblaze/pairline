@@ -1243,7 +1243,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                                 </p>
                               </div>
                             </div>
-                            <div className="flex flex-wrap gap-2">
+                            <div className="flex flex-wrap justify-center lg:justify-start gap-2">
                               <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${autoModerationSettings.enabled ? 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-400' : 'border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] text-[var(--admin-text-soft)]'}`}>
                                 {autoModerationSettings.enabled ? 'Enabled' : 'Disabled'}
                               </span>
@@ -1260,7 +1260,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                             <button
                               type="button"
                               onClick={() => void fetchAutoModerationSettings()}
-                              className="flex h-11 items-center gap-2 rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] px-4 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text)] transition-all hover:bg-[var(--admin-muted-surface-hover)]"
+                              className="flex flex-1 justify-center sm:flex-none h-11 items-center gap-2 rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] px-4 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text)] transition-all hover:bg-[var(--admin-muted-surface-hover)]"
                             >
                               <RefreshCw size={14} />
                               Refresh Settings
@@ -1269,7 +1269,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                               type="button"
                               onClick={() => void updateAutoModerationEnabled(!autoModerationSettings.enabled)}
                               disabled={updatingAutoModerationEnabled}
-                              className={`flex h-11 items-center gap-2 rounded-none px-4 text-[10px] font-bold uppercase tracking-[0.14em] transition-all ${autoModerationSettings.enabled
+                              className={`flex flex-1 justify-center sm:flex-none h-11 items-center gap-2 rounded-none px-4 text-[10px] font-bold uppercase tracking-[0.14em] transition-all ${autoModerationSettings.enabled
                                 ? 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
                                 : 'border border-amber-500/20 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20'
                                 }`}
@@ -1341,7 +1341,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                             <option value="humanReviewed">Human Reviewed</option>
                           </select>
                         </div>
-                        <div>
+                        <div className="xl:ml-auto xl:text-right">
                           <label className="mb-2 block text-xs font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Show Limit</label>
                           <select
                             value={reportLimit}
@@ -1585,7 +1585,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       <button
                         type="button"
                         onClick={fetchReports}
-                        className={`${actionButtonClass} flex-1 min-w-[140px] rounded-none bg-[var(--admin-text)] text-[var(--admin-bg)] hover:opacity-90`}
+                        className={`${actionButtonClass} flex-1 justify-center min-w-[140px] rounded-none bg-[var(--admin-text)] text-[var(--admin-bg)] hover:opacity-90`}
                       >
                         <RefreshCw size={16} />
                         <span className="hidden sm:inline">Refresh Reports</span>
@@ -1596,7 +1596,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         type="button"
                         onClick={toggleSelectAllVisibleReports}
                         disabled={selectableVisibleReports.length === 0}
-                        className={`${actionButtonClass} flex-1 min-w-[140px] rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] text-[var(--admin-text)] hover:bg-[var(--admin-muted-surface-hover)]`}
+                        className={`${actionButtonClass} flex-1 justify-center min-w-[140px] rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] text-[var(--admin-text)] hover:bg-[var(--admin-muted-surface-hover)]`}
                       >
                         {allVisibleReportsSelected ? 'Clear' : 'Select All'}
                       </button>
@@ -1607,7 +1607,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           setSelectedReports(new Set());
                         }}
                         disabled={selectedPendingReportsCount === 0}
-                        className={`${actionButtonClass} flex-1 min-w-[140px] rounded-none bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20`}
+                        className={`${actionButtonClass} flex-1 justify-center min-w-[140px] rounded-none bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20`}
                       >
                         <CheckCircle2 size={16} />
                         Approve ({selectedPendingReportsCount})
@@ -1619,7 +1619,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           setSelectedReports(new Set());
                         }}
                         disabled={selectedPendingReportsCount === 0}
-                        className={`${actionButtonClass} flex-1 min-w-[140px] rounded-none bg-rose-500/10 text-rose-300 hover:bg-rose-500/20`}
+                        className={`${actionButtonClass} flex-1 justify-center min-w-[140px] rounded-none bg-rose-500/10 text-rose-300 hover:bg-rose-500/20`}
                       >
                         <XCircle size={16} />
                         Reject ({selectedPendingReportsCount})
