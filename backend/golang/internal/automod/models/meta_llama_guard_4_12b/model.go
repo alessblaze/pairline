@@ -10,26 +10,31 @@ import (
 
 const modelID = "meta/llama-guard-4-12b"
 
-const mlgTaxonomy = `S1: Illegal activity
-S2: Illegal activity
-S3: Illegal activity
-S4: Sexual (minor)
-S5: Other
-S6: Unauthorized advice
-S7: PII / Privacy
-S8: Copyright / Trademark / Plagiarism
-S9: Guns and illegal weapons
-S10: Hate / identity hate
-S11: Suicide and self harm
-S12: Sexual
-S13: Political / misinformation / conspiracy
-S14: Malware
+// mlgTaxonomy is the official MLCommons hazard taxonomy that Llama Guard 4
+// was fine-tuned on. Using any other labels causes the model to ignore
+// categories it was not trained to recognise.
+const mlgTaxonomy = `S1: Violent Crimes
+S2: Non-Violent Crimes
+S3: Sex-Related Crimes
+S4: Child Sexual Exploitation
+S5: Defamation
+S6: Specialized Advice
+S7: Privacy
+S8: Intellectual Property
+S9: Indiscriminate Weapons
+S10: Hate
+S11: Suicide & Self-Harm
+S12: Sexual Content
+S13: Elections
+S14: Code Interpreter Abuse
 `
 
+// llamaGuardCategoryMap translates the MLCommons codes returned by the model
+// into the canonical categories used by the rest of the moderation system.
 var llamaGuardCategoryMap = map[string]string{
-	"s1":  "illegal activity",
+	"s1":  "violence",
 	"s2":  "illegal activity",
-	"s3":  "illegal activity",
+	"s3":  "sexual",
 	"s4":  "sexual (minor)",
 	"s5":  "other",
 	"s6":  "unauthorized advice",
@@ -64,23 +69,27 @@ func (adapter) BuildPrompt(report storage.Report, peerEvidence string) string {
 	}
 
 	var b strings.Builder
-	b.WriteString("Classify only the reported user's content using the safety taxonomy below. ")
-	b.WriteString("If the content is unsafe, return the violated category codes from the taxonomy. ")
-	b.WriteString("Ignore the reporter's chosen reason and classify only the quoted content.\n")
-	b.WriteString("<BEGIN SAFETY TAXONOMY>\n")
+	b.WriteString("Task: Check if there is unsafe content in 'User' messages in conversations according to our safety policy with the below categories.\n\n")
+	b.WriteString("<BEGIN UNSAFE CONTENT CATEGORIES>\n")
 	b.WriteString(mlgTaxonomy)
-	b.WriteString("<END SAFETY TAXONOMY>\n")
-	b.WriteString("<BEGIN REPORTED USER CONTENT>\n")
+	b.WriteString("<END UNSAFE CONTENT CATEGORIES>\n\n")
+	b.WriteString("<BEGIN CONVERSATION>\n\n")
 	if content != "" {
-		b.WriteString(content)
-		b.WriteString("\n")
+		// Each line of evidence becomes a separate User turn.
+		for _, line := range strings.Split(content, "\n") {
+			text := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "-"))
+			if text == "" {
+				continue
+			}
+			b.WriteString("User: ")
+			b.WriteString(text)
+			b.WriteString("\n\n")
+		}
 	}
-	b.WriteString("<END REPORTED USER CONTENT>\n")
-	b.WriteString("Output only:\n")
-	b.WriteString("safe\n")
-	b.WriteString("or\n")
-	b.WriteString("unsafe\n")
-	b.WriteString("<comma-separated category codes>\n")
+	b.WriteString("<END CONVERSATION>\n\n")
+	b.WriteString("Provide your safety assessment for User in the above conversation:\n")
+	b.WriteString("- First line must read 'safe' or 'unsafe'.\n")
+	b.WriteString("- If unsafe, a second line must include a comma-separated list of violated categories.\n")
 	return b.String()
 }
 

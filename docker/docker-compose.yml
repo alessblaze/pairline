@@ -649,6 +649,18 @@ services:
       ADMIN_HEALTH_PHOENIX_URLS: http://phoenix1:8080/api/health,http://phoenix2:8080/api/health,http://phoenix3:8080/api/health
       ADMIN_HEALTH_GO_URLS: http://golang-admin:8082/health,http://golang-public-1:8081/health,http://golang-public-2:8081/health
       OTEL_COLLECTOR_HEALTH_URL: http://otel-collector:13133/
+      AUTO_MODERATION_ENABLED: "false"
+      # NIM_API_KEY: ""
+      AUTO_MODERATION_NIM_BASE_URL: https://integrate.api.nvidia.com/v1
+      AUTO_MODERATION_MODEL: nvidia/llama-3.1-nemotron-safety-guard-8b-v3
+      # AUTO_MODERATION_MODEL_TYPE: generic-json
+      AUTO_MODERATION_BATCH_SIZE: 10
+      AUTO_MODERATION_BATCH_INTERVAL_SECONDS: 30
+      AUTO_MODERATION_TIMEOUT_SECONDS: 20
+      AUTO_MODERATION_CLAIM_TIMEOUT_SECONDS: 300
+      AUTO_MODERATION_MAX_ATTEMPTS: 3
+      AUTO_MODERATION_TEMPERATURE: 0.5
+      AUTO_MODERATION_MAX_TOKENS: 8192
     networks:
       pairline_cluster:
         ipv4_address: 172.30.0.41

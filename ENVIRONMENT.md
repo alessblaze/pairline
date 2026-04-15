@@ -149,6 +149,22 @@ This file focuses on **what each variable changes in runtime behavior**, not jus
 - **`BAN_SYNC_INTERVAL_SECONDS`** (default: `0`/disabled): if > 0, periodically resyncs active bans from Postgres → Redis.
   - Use this only if you expect Redis to lose state unexpectedly; otherwise rely on startup sync + event-driven updates to reduce DB/Redis load.
 
+### Auto-Moderation API Integration
+- **`AUTO_MODERATION_ENABLED`** (default: `false`): Enables the background worker for LLM-based report evaluations.
+- **`AUTO_MODERATION_NIM_API_KEY`** (or **`NIM_API_KEY`**): The API provider key utilized for executing moderation inferences (OpenAI, DeepSeek, NVIDIA).
+- **`AUTO_MODERATION_NIM_BASE_URL`** (default: `https://integrate.api.nvidia.com/v1`): The base endpoint URL utilized by the native API client interface to dispatch moderation HTTP operations.
+- **`AUTO_MODERATION_MODEL`** (default: `nvidia/llama-3.1-nemotron-safety-guard-8b-v3`): The distinct API target endpoint identification tag (e.g. `gpt-4` or `deepseek-chat`).
+- **`AUTO_MODERATION_MODEL_TYPE`** (default: cascades to `AUTO_MODERATION_MODEL`): Configures the local parser mapping handling prompt injections and safety interpretations. Supported types:
+  - `generic-json` (best for OpenAI, DeepSeek, generic LLMs)
+  - `meta/llama-guard-4-12b`
+  - `nvidia/llama-3.1-nemotron-safety-guard-8b-v3`
+  - `nvidia/llama-3.1-nemotron-safety-guard-multilingual-8b-v1`
+  - `nvidia/llama-3.1-nemoguard-8b-content-safety`
+  - `nvidia/nemotron-content-safety-reasoning-4b`
+- **`AUTO_MODERATION_TEMPERATURE`** (default: `0.5`): Specifies the sampling temperature. Non-reasoning specialized classifiers typically expect `0.0`, while reasoning models require `0.5` or higher.
+- **`AUTO_MODERATION_MAX_TOKENS`** (default: `8192`): Dictates the maximum amount of output tokens the model is permitted to generate. Must be set high (e.g. `8192`) when using reasoning models.
+- **`AUTO_MODERATION_DEBUG`** (default: `false`): When enabled, prints the full prompt, token usage stats, and raw model response to stdout for every moderation assessment. Keep disabled in production.
+
 ### Root admin bootstrap
 - **`ROOT_ADMIN_USERNAME`** (default: `admin`): initial “root” admin username created/ensured at startup.
 - **`ROOT_ADMIN_PASSWORD`** (**required** in practice): initial “root” admin password. Rotate after bootstrapping.

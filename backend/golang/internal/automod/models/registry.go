@@ -9,6 +9,7 @@ import (
 	nvidiallama31nemotronsafetyguard8bv3 "github.com/anish/omegle/backend/golang/internal/automod/models/nvidia_llama_3_1_nemotron_safety_guard_8b_v3"
 	nvidiallama31nemotronsafetyguardmultilingual8bv1 "github.com/anish/omegle/backend/golang/internal/automod/models/nvidia_llama_3_1_nemotron_safety_guard_multilingual_8b_v1"
 	nemotroncontentsafetyreasoning4b "github.com/anish/omegle/backend/golang/internal/automod/models/nvidia_nemotron_content_safety_reasoning_4b"
+	"github.com/anish/omegle/backend/golang/internal/automod/models/generic"
 	"github.com/anish/omegle/backend/golang/internal/automod/models/shared"
 )
 
@@ -20,6 +21,7 @@ var registeredAdapters = []shared.Adapter{
 	nvidiallama31nemoguard8bcontentsafety.New(),
 	nemotroncontentsafetyreasoning4b.New(),
 	metallamaguard412b.New(),
+	generic.New(),
 }
 
 func Resolve(model string) (shared.Adapter, error) {

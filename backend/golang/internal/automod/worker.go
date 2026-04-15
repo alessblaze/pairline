@@ -47,11 +47,15 @@ type Config struct {
 	APIKey         string
 	BaseURL        string
 	Model          string
+	ModelType      string
 	BatchSize      int
 	Interval       time.Duration
 	Timeout        time.Duration
 	ClaimTimeout   time.Duration
 	MaxAttempts    int
+	Temperature    float64
+	MaxTokens      int64
+	DebugLogging   bool
 }
 
 type Worker struct {
@@ -68,6 +72,7 @@ type StatusResponse struct {
 	EnabledDefault  bool   `json:"enabled_default"`
 	Configured      bool   `json:"configured"`
 	Model           string `json:"model"`
+	ModelType       string `json:"model_type"`
 	BatchSize       int    `json:"batch_size"`
 	IntervalSeconds int    `json:"interval_seconds"`
 	TimeoutSeconds  int    `json:"timeout_seconds"`
@@ -422,7 +427,7 @@ func (w *Worker) markFailure(ctx context.Context, reportID string, err error, re
 }
 
 func (w *Worker) assessReport(ctx context.Context, report storage.Report, peerEvidence string) (safetyAssessment, error) {
-	modelAdapter, err := models.Resolve(w.config.Model)
+	modelAdapter, err := models.Resolve(w.config.ModelType)
 	if err != nil {
 		return safetyAssessment{}, err
 	}
@@ -448,8 +453,8 @@ func (w *Worker) assessReport(ctx context.Context, report storage.Report, peerEv
 			openai.UserMessage(prompt),
 		},
 		Model:       openai.ChatModel(w.config.Model),
-		Temperature: openai.Float(0),
-		MaxTokens:   openai.Int(250),
+		Temperature: openai.Float(w.config.Temperature),
+		MaxTokens:   openai.Int(w.config.MaxTokens),
 	})
 	if err != nil {
 		return safetyAssessment{}, fmt.Errorf("nim api %s: %w", baseURL, err)
@@ -458,7 +463,20 @@ func (w *Worker) assessReport(ctx context.Context, report storage.Report, peerEv
 		return safetyAssessment{}, errNIMResponseMissingChoices
 	}
 
-	assessment, err := modelAdapter.ParseAssessment(completion.Choices[0].Message.Content)
+	rawResponse := completion.Choices[0].Message.Content
+	if w.config.DebugLogging {
+		fmt.Printf("\n=== AUTO-MODERATION DEBUG (report %s) ===\n", report.ID)
+		fmt.Printf("--- USAGE ---\nInput: %d | Output: %d | Total: %d tokens\n",
+			completion.Usage.PromptTokens,
+			completion.Usage.CompletionTokens,
+			completion.Usage.TotalTokens,
+		)
+		fmt.Printf("--- PROMPT ---\n%s\n", prompt)
+		fmt.Printf("--- RAW RESPONSE ---\n%s\n", rawResponse)
+		fmt.Printf("=== END DEBUG ===\n\n")
+	}
+
+	assessment, err := modelAdapter.ParseAssessment(rawResponse)
 	if err != nil {
 		return safetyAssessment{}, err
 	}
@@ -498,6 +516,7 @@ func SettingsStatus(ctx context.Context, db *gorm.DB) (StatusResponse, error) {
 		EnabledDefault:  cfg.EnabledDefault,
 		Configured:      strings.TrimSpace(cfg.APIKey) != "",
 		Model:           cfg.Model,
+		ModelType:       cfg.ModelType,
 		BatchSize:       cfg.BatchSize,
 		IntervalSeconds: int(cfg.Interval.Seconds()),
 		TimeoutSeconds:  int(cfg.Timeout.Seconds()),
@@ -607,16 +626,21 @@ func isRetryableAssessmentError(err error) bool {
 }
 
 func loadConfigFromEnv() Config {
+	rawModel := strings.TrimSpace(defaultString(firstNonEmptyEnv("AUTO_MODERATION_MODEL"), defaultModel))
 	return Config{
 		EnabledDefault: parseBoolWithDefault(firstNonEmptyEnv("AUTO_MODERATION_ENABLED"), false),
 		APIKey:         strings.TrimSpace(firstNonEmptyEnv("NIM_API_KEY", "NVIDIA_NIM_API_KEY", "AUTO_MODERATION_NIM_API_KEY")),
 		BaseURL:        strings.TrimSpace(defaultString(firstNonEmptyEnv("AUTO_MODERATION_NIM_BASE_URL"), defaultAPIBaseURL)),
-		Model:          strings.TrimSpace(defaultString(firstNonEmptyEnv("AUTO_MODERATION_MODEL"), defaultModel)),
+		Model:          rawModel,
+		ModelType:      strings.TrimSpace(defaultString(firstNonEmptyEnv("AUTO_MODERATION_MODEL_TYPE"), rawModel)),
 		BatchSize:      boundedInt(firstNonEmptyEnv("AUTO_MODERATION_BATCH_SIZE"), 10, 1, 100),
 		Interval:       time.Duration(boundedInt(firstNonEmptyEnv("AUTO_MODERATION_BATCH_INTERVAL_SECONDS"), 30, 5, 3600)) * time.Second,
 		Timeout:        time.Duration(boundedInt(firstNonEmptyEnv("AUTO_MODERATION_TIMEOUT_SECONDS"), 20, 5, 120)) * time.Second,
 		ClaimTimeout:   time.Duration(boundedInt(firstNonEmptyEnv("AUTO_MODERATION_CLAIM_TIMEOUT_SECONDS"), 300, 30, 3600)) * time.Second,
 		MaxAttempts:    boundedInt(firstNonEmptyEnv("AUTO_MODERATION_MAX_ATTEMPTS"), 3, 1, 10),
+		Temperature:    boundedFloat(firstNonEmptyEnv("AUTO_MODERATION_TEMPERATURE"), 0.5, 0.0, 2.0),
+		MaxTokens:      int64(boundedInt(firstNonEmptyEnv("AUTO_MODERATION_MAX_TOKENS"), 8192, 1, 128000)),
+		DebugLogging:   parseBoolWithDefault(firstNonEmptyEnv("AUTO_MODERATION_DEBUG"), false),
 	}
 }
 
@@ -671,6 +695,23 @@ func boundedInt(raw string, defaultValue, minValue, maxValue int) int {
 		return defaultValue
 	}
 	parsed, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return defaultValue
+	}
+	if parsed < minValue {
+		return minValue
+	}
+	if parsed > maxValue {
+		return maxValue
+	}
+	return parsed
+}
+
+func boundedFloat(raw string, defaultValue, minValue, maxValue float64) float64 {
+	if raw == "" {
+		return defaultValue
+	}
+	parsed, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
 	if err != nil {
 		return defaultValue
 	}
