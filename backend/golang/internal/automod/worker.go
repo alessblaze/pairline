@@ -251,7 +251,7 @@ func (w *Worker) processSingleReport(ctx context.Context, report storage.Report)
 		return w.markFailure(ctx, report.ID, err, false)
 	}
 
-	if dualAdapter, ok := modelAdapter.(shared.DualAssessmentAdapter); ok && (peerMessageCount > 0 || reporterMessageCount > 0 || strings.TrimSpace(report.Description) != "") {
+	if dualAdapter, ok := modelAdapter.(shared.DualAssessmentAdapter); ok && (peerMessageCount > 0 || reporterMessageCount > 0) {
 		messages := dualAdapter.BuildDualMessages(report, peerEvidence, reporterEvidence)
 		raw, err := w.callModelAPIMulti(ctx, report, messages)
 		if err != nil {
@@ -279,7 +279,7 @@ func (w *Worker) processSingleReport(ctx context.Context, report storage.Report)
 		categories = dualAssessment.ReportedUser.Categories
 	} else {
 		// Fallback for models without DualAssessment support (e.g. Llama Guard)
-		if peerMessageCount > 0 || strings.TrimSpace(report.Description) != "" {
+		if peerMessageCount > 0 {
 			assessment, err := w.assessReport(ctx, report, peerEvidence, modelAdapter)
 			if err != nil {
 				return w.markFailure(ctx, report.ID, err, isRetryableAssessmentError(err))

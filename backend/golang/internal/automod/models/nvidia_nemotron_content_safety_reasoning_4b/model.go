@@ -48,9 +48,6 @@ func (adapter) BuildPrompt(report storage.Report, peerEvidence string) string {
 	}
 	b.WriteString("AI assistant:\n")
 	b.WriteString("Report reason: " + shared.SanitizePromptText(report.Reason) + "\n")
-	if description := strings.TrimSpace(report.Description); description != "" {
-		b.WriteString("Reporter description: " + shared.SanitizePromptText(description) + "\n")
-	}
 	b.WriteString("Use the taxonomy to determine if the reported user's content is harmful. Output your answer in the following format:\n")
 	b.WriteString("Prompt harm: <harmful/unharmful>\n")
 	b.WriteString("Response harm: None\n")
@@ -74,7 +71,16 @@ func (adapter) ParseAssessment(raw string) (shared.Assessment, error) {
 	}
 }
 
-func (adapter) BuildDualPrompt(report storage.Report, reportedEvidence, reporterEvidence string) string {
+func (a adapter) BuildDualMessages(report storage.Report, reportedEvidence, reporterEvidence string) []shared.CoreMessage {
+	return []shared.CoreMessage{
+		{
+			Role:    "user",
+			Content: a.buildDualPrompt(report, reportedEvidence, reporterEvidence),
+		},
+	}
+}
+
+func (adapter) buildDualPrompt(_ storage.Report, reportedEvidence, reporterEvidence string) string {
 	var b strings.Builder
 	b.WriteString("You are a classifier for analyzing interactions between humans and LLMs. ")
 	b.WriteString("Given a request from a Human user and a response from an AI assistant, determine 1) whether the human user's context is harmful, and 2) whether the AI assistant's context is harmful.\n")

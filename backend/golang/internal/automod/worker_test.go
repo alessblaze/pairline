@@ -125,10 +125,13 @@ func TestContentSafetyReasoningPromptIncludesTaxonomyAndEvidence(t *testing.T) {
 	}
 
 	prompt := adapter.BuildPrompt(report, "- I will find you")
-	for _, want := range []string{"<BEGIN SAFETY TAXONOMY>", "Report reason: harassment", "Reporter description: peer kept threatening me", "Prompt harm: <harmful/unharmful>"} {
+	for _, want := range []string{"<BEGIN SAFETY TAXONOMY>", "Report reason: harassment", "Prompt harm: <harmful/unharmful>"} {
 		if !contains(prompt, want) {
 			t.Fatalf("BuildPrompt() missing %q", want)
 		}
+	}
+	if contains(prompt, "Reporter description: peer kept threatening me") {
+		t.Fatal("BuildPrompt() should not include reporter description as it biases model classification")
 	}
 }
 

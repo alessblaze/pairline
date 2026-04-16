@@ -155,7 +155,7 @@ This file focuses on **what each variable changes in runtime behavior**, not jus
 - **`AUTO_MODERATION_NIM_BASE_URL`** (default: `https://integrate.api.nvidia.com/v1`): The base endpoint URL utilized by the native API client interface to dispatch moderation HTTP operations.
 - **`AUTO_MODERATION_MODEL`** (default: `nvidia/llama-3.1-nemotron-safety-guard-8b-v3`): The distinct API target endpoint identification tag (e.g. `gpt-4` or `deepseek-chat`).
 - **`AUTO_MODERATION_MODEL_TYPE`** (default: cascades to `AUTO_MODERATION_MODEL`): Configures the local parser mapping handling prompt injections and safety interpretations. Supported types:
-  - `generic-json` (best for OpenAI, DeepSeek, generic LLMs)
+  - `generic-json` (best for StepFun, OpenAI, DeepSeek, Qwen, Claude and other not purpose built LLMs)
   - `meta/llama-guard-4-12b`
   - `nvidia/llama-3.1-nemotron-safety-guard-8b-v3`
   - `nvidia/llama-3.1-nemotron-safety-guard-multilingual-8b-v1`

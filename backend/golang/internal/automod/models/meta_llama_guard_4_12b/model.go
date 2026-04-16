@@ -64,9 +64,6 @@ func (adapter) Matches(model string) bool {
 
 func (adapter) BuildPrompt(report storage.Report, peerEvidence string) string {
 	content := strings.TrimSpace(peerEvidence)
-	if content == "" {
-		content = shared.SanitizePromptText(report.Description)
-	}
 
 	var b strings.Builder
 	b.WriteString("Task: Check if there is unsafe content in 'User' messages in conversations according to our safety policy with the below categories.\n\n")

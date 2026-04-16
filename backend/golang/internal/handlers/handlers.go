@@ -1951,7 +1951,7 @@ func SeedReportsHandlerGin(enqueueAutoModeration func(string)) gin.HandlerFunc {
 				Messages: []chatLogMessage{
 					{ID: uuid.New().String(), Text: "hi how are you?", Sender: "me", Timestamp: now.Add(-2 * time.Minute).UnixMilli()},
 					{ID: uuid.New().String(), Text: "good, u?", Sender: "peer", Timestamp: now.Add(-1 * time.Minute).UnixMilli()},
-					{ID: uuid.New().String(), Text: "i am going to find you and kill you", Sender: "peer", Timestamp: now.UnixMilli()},
+					{ID: uuid.New().String(), Text: "Swurwaje, i am going to find what you hidden, and kill you too", Sender: "peer", Timestamp: now.UnixMilli()},
 				},
 			},
 			{
@@ -1968,8 +1968,8 @@ func SeedReportsHandlerGin(enqueueAutoModeration func(string)) gin.HandlerFunc {
 				Description: "Both parties exchanging vile messages",
 				Messages: []chatLogMessage{
 					{ID: uuid.New().String(), Text: "you are a dirty piece of shitpile", Sender: "me", Timestamp: now.Add(-2 * time.Minute).UnixMilli()},
-					{ID: uuid.New().String(), Text: "and i will stab you", Sender: "peer", Timestamp: now.Add(-1 * time.Minute).UnixMilli()},
-					{ID: uuid.New().String(), Text: "try it loser", Sender: "me", Timestamp: now.UnixMilli()},
+					{ID: uuid.New().String(), Text: "Swurwaje, i will stab you", Sender: "peer", Timestamp: now.Add(-1 * time.Minute).UnixMilli()},
+					{ID: uuid.New().String(), Text: "try it loser, engage", Sender: "me", Timestamp: now.UnixMilli()},
 				},
 			},
 			{
@@ -1977,7 +1977,7 @@ func SeedReportsHandlerGin(enqueueAutoModeration func(string)) gin.HandlerFunc {
 				Description: "Neither party violated terms",
 				Messages: []chatLogMessage{
 					{ID: uuid.New().String(), Text: "how is the weather?", Sender: "me", Timestamp: now.Add(-2 * time.Minute).UnixMilli()},
-					{ID: uuid.New().String(), Text: "pretty good here, sunny", Sender: "peer", Timestamp: now.Add(-1 * time.Minute).UnixMilli()},
+					{ID: uuid.New().String(), Text: "pretty good here, with god's greatness.", Sender: "peer", Timestamp: now.Add(-1 * time.Minute).UnixMilli()},
 					{ID: uuid.New().String(), Text: "nice, enjoy", Sender: "me", Timestamp: now.UnixMilli()},
 				},
 			},

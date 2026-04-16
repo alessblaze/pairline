@@ -29,4 +29,10 @@ func (adapter) ParseAssessment(raw string) (shared.Assessment, error) {
 	return shared.ParseJSONSafetyAssessment(raw)
 }
 
+func (adapter) BuildDualMessages(_ storage.Report, reportedEvidence, reporterEvidence string) []shared.CoreMessage {
+	return shared.BuildNativeDualMessages(reportedEvidence, reporterEvidence)
+}
 
+func (adapter) ParseDualAssessment(raw string) (shared.DualAssessment, error) {
+	return shared.ParseNativeDualAssessment(raw)
+}

@@ -90,9 +90,6 @@ func BuildJSONSafetyPrompt(report storage.Report, peerEvidence string, includeRe
 		if strings.TrimSpace(report.Reason) != "" {
 			b.WriteString("Report reason: " + SanitizePromptText(report.Reason) + "\n")
 		}
-		if description := strings.TrimSpace(report.Description); description != "" {
-			b.WriteString("Reporter description: " + SanitizePromptText(description) + "\n")
-		}
 	}
 	if peerEvidence != "" {
 		b.WriteString("Messages from reported user:\n")
@@ -206,6 +203,72 @@ func ParseDualJSONSafetyAssessment(raw string) (DualAssessment, error) {
 			Categories: taxonomy.CanonicalizeMany(NormalizeCategories(parsed.ReporterCategories)),
 		},
 	}, nil
+}
+
+// BuildNativeDualMessages constructs the native multi-message payload used by
+// Nvidia safety guard models that natively assess user + assistant roles.
+// Reported user evidence is sent as the "user" role and reporter evidence as
+// the "assistant" role. The model responds with {"User Safety": "...", "Response Safety": "..."}.
+func BuildNativeDualMessages(reportedEvidence, reporterEvidence string) []CoreMessage {
+	userContent := reportedEvidence
+	if userContent == "" {
+		userContent = "No messages provided"
+	}
+	assistantContent := reporterEvidence
+	if assistantContent == "" {
+		assistantContent = "No messages provided"
+	}
+	return []CoreMessage{
+		{Role: "user", Content: userContent},
+		{Role: "assistant", Content: assistantContent},
+	}
+}
+
+// ParseNativeDualAssessment parses the native {"User Safety", "Response Safety"}
+// JSON response from Nvidia safety guard models into a DualAssessment.
+func ParseNativeDualAssessment(raw string) (DualAssessment, error) {
+	type nativeResult struct {
+		UserSafety     string `json:"User Safety"`
+		ResponseSafety string `json:"Response Safety"`
+		Categories     string `json:"Safety Categories,omitempty"`
+	}
+
+	jsonBody, err := ExtractJSONObject(raw)
+	if err != nil {
+		return DualAssessment{}, err
+	}
+
+	var parsed nativeResult
+	if err := json.Unmarshal([]byte(jsonBody), &parsed); err != nil {
+		return DualAssessment{}, err
+	}
+
+	userSafety := strings.ToLower(strings.TrimSpace(parsed.UserSafety))
+	responseSafety := strings.ToLower(strings.TrimSpace(parsed.ResponseSafety))
+
+	if userSafety != "safe" && userSafety != "unsafe" {
+		return DualAssessment{}, fmt.Errorf("unexpected user safety value %q", parsed.UserSafety)
+	}
+	if responseSafety != "safe" && responseSafety != "unsafe" {
+		return DualAssessment{}, fmt.Errorf("unexpected response safety value %q", parsed.ResponseSafety)
+	}
+
+	categories := taxonomy.CanonicalizeMany(NormalizeCategories(parsed.Categories))
+
+	var result DualAssessment
+	if userSafety == "unsafe" {
+		result.ReportedUser = Assessment{UserSafety: "unsafe", Categories: categories}
+	} else {
+		result.ReportedUser = Assessment{UserSafety: "safe"}
+	}
+
+	if responseSafety == "unsafe" {
+		result.Reporter = Assessment{UserSafety: "unsafe", Categories: categories}
+	} else {
+		result.Reporter = Assessment{UserSafety: "safe"}
+	}
+
+	return result, nil
 }
 
 func ParsePlaintextSafetyAssessment(raw string) (Assessment, error) {
