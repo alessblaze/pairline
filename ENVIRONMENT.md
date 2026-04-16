@@ -150,8 +150,11 @@ This file focuses on **what each variable changes in runtime behavior**, not jus
   - Use this only if you expect Redis to lose state unexpectedly; otherwise rely on startup sync + event-driven updates to reduce DB/Redis load.
 
 ### Auto-Moderation API Integration
+
+> For full documentation on provider compatibility, supported adapters, dual assessment modes, and how to add new models, see [`MODERATION.md`](MODERATION.md).
+
 - **`AUTO_MODERATION_ENABLED`** (default: `false`): Enables the background worker for LLM-based report evaluations.
-- **`AUTO_MODERATION_NIM_API_KEY`** (or **`NIM_API_KEY`**): The API provider key utilized for executing moderation inferences (OpenAI, DeepSeek, NVIDIA).
+- **`AUTO_MODERATION_NIM_API_KEY`** (or **`NIM_API_KEY`**): API key for the inference provider. Works with any OpenAI-compatible API — not limited to NVIDIA NIM.
 - **`AUTO_MODERATION_NIM_BASE_URL`** (default: `https://integrate.api.nvidia.com/v1`): The base endpoint URL utilized by the native API client interface to dispatch moderation HTTP operations.
 - **`AUTO_MODERATION_MODEL`** (default: `nvidia/llama-3.1-nemotron-safety-guard-8b-v3`): The distinct API target endpoint identification tag (e.g. `gpt-4` or `deepseek-chat`).
 - **`AUTO_MODERATION_MODEL_TYPE`** (default: cascades to `AUTO_MODERATION_MODEL`): Configures the local parser mapping handling prompt injections and safety interpretations. Supported types:
