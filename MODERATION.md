@@ -10,8 +10,12 @@ The system uses the **OpenAI Chat Completions API schema** (`/v1/chat/completion
 |----------|----------|---------------|
 | NVIDIA NIM (cloud) | `https://integrate.api.nvidia.com/v1` | `nvidia/llama-3.1-nemoguard-8b-content-safety` |
 | NVIDIA NIM (self-hosted) | `http://nim.local:8000/v1` | Same as cloud |
-| OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` |
-| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` |
+| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-v3.2` |
+| Mistral | `https://api.mistral.ai/v1` | `mistral-large-latest` |
+| Moonshot (Kimi) | `https://api.moonshot.cn/v1` | `kimi-k2-thinking` |
+| StepFun | `https://api.stepfun.com/v1` | `stepfun-ai/step-3.5-flash` |
+| Groq (for Gemma) | `https://api.groq.com/openai/v1` | `gemma2-9b-it` |
+| Qwen | `https://api.qwen.ai/v1` | `qwen3.5-122b-a10b` |
 | Any OpenAI-compatible | Your endpoint | Your model ID |
 
 Set `AUTO_MODERATION_NIM_BASE_URL` to point at any compatible endpoint, and `AUTO_MODERATION_MODEL` to the model identifier the provider expects. Use `AUTO_MODERATION_MODEL_TYPE` to select the right prompt/parser adapter (see below).
@@ -224,3 +228,17 @@ The platform taxonomy is defined in `backend/golang/internal/automod/taxonomy/ta
 ## Counter-ban behavior
 
 When the system detects that the **reporter** also sent abusive messages, it applies a "counter-ban" — a silent 7-day temporary ban on the reporter's session ID and IP. This prevents abuse of the report system by users who are themselves violating terms. The counter-ban is applied regardless of the decision on the reported user.
+
+## Credits
+
+Obviously myself for now. This was by far the easiest thing to add in this project!
+
+I have extensive experience bringing up ROCm-based cards back in 2022-2024. We maintained our own `torch-xla` fork with AMD card support, which (at least at the time) was rare to see. We worked across TensorFlow, PyTorch, XLA, and various other technologies to integrate AMD APIs. 
+
+In some releases, we also added opportunistic memory allocation. If a model was very large, we offloaded parts of it between system RAM and VRAM. The caveat is that it was slow, so it remained primarily a research and development feature. Why was this special when TensorFlow already had something similar? TensorFlow uses the native CUDA/ROCm allocator, which naïvely splits allocations between RAM and VRAM, drastically impacting performance. An optimal approach should completely exhaust all available VRAM first—leaving just a few hundred megabytes for GNOME or other essential desktop apps—before falling back to system RAM. Achieving this requires extremely fine-grained memory management in C++ and dependable hardware cache coherence.
+
+You can check out [huggingface.co/aless2212](https://huggingface.co/aless2212), where we uploaded various models in ONNX format running on an 8GB card in FP16 precision. This served as a proof-of-concept, especially since CPUs typically encode in FP32 rather than FP16. If needed, we could absolutely build a proper local pipeline here with everything set up from scratch.
+
+However, running local models is simply not worth the infrastructure overhead at our current scale when API tokens are so cheap for this kind of task.
+
+We coded all of that infrastructure back then without the help of LLMs. Today, the main challenge we face is "Prompt Injection." Usually, major LLM providers run every request through dedicated decoder guard models (like Llama-Guard or Nemotron-Content-Safety), ensuring high levels of sanitization. This is another reason why relying on AI providers is much more feasible at a low scale: they add built-in prompt guards or enforce strict schema alignments by default. While jailbreaks certainly still exist—and if a model's fine-tuning can't reject a cleverly crafted prompt, it becomes a vulnerability—the tradeoff is overall highly favorable for reducing the human moderation burden.
