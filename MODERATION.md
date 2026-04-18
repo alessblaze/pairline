@@ -22,6 +22,7 @@ The system uses the **OpenAI Chat Completions API schema** (`/v1/chat/completion
 | Google | `https://generativelanguage.googleapis.com/v1beta/openai/` | `gemini-flash-latest` |
 | Claude | `https://api.anthropic.com/v1` | `claude-sonnet-4-6` |
 | Grok   | `https://api.grok.com/v1` | `grok-4-1-fast-reasoning` |
+| Ernie  | `https://qianfan.baidubce.com/v2` | `ernie-4.5-8k-preview` |
 | Any OpenAI-compatible | Your endpoint | Your model ID |
 
 Set `AUTO_MODERATION_NIM_BASE_URL` to point at any compatible endpoint, and `AUTO_MODERATION_MODEL` to the model identifier the provider expects. Use `AUTO_MODERATION_MODEL_TYPE` to select the right prompt/parser adapter (see below).
