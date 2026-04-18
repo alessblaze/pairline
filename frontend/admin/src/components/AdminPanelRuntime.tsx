@@ -1331,14 +1331,14 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                             <p className="mt-2 text-sm font-medium text-[var(--admin-text)]">{awaitingHumanReportsCount} awaiting human</p>
                             <p className="mt-1 text-[var(--admin-text-muted)]">{autoReviewedReportsCount} auto reviewed in this page load</p>
                             <button
-                                type="button"
-                                onClick={() => void seedTestReports()}
-                                disabled={isSeedingReports}
-                                className="mt-4 flex w-full items-center justify-center gap-2 rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] px-3 py-2 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text)] transition-all hover:bg-[var(--admin-muted-surface-hover)]"
-                              >
-                                {isSeedingReports ? <RefreshCw size={12} className="animate-spin" /> : <Play size={12} />}
-                                {isSeedingReports ? 'Seeding...' : 'Seed Test Cases'}
-                              </button>
+                              type="button"
+                              onClick={() => void seedTestReports()}
+                              disabled={isSeedingReports}
+                              className="mt-4 flex w-full items-center justify-center gap-2 rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] px-3 py-2 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text)] transition-all hover:bg-[var(--admin-muted-surface-hover)]"
+                            >
+                              {isSeedingReports ? <RefreshCw size={12} className="animate-spin" /> : <Play size={12} />}
+                              {isSeedingReports ? 'Seeding...' : 'Seed Test Cases'}
+                            </button>
                           </div>
                         </div>
 
@@ -1616,55 +1616,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       ))
                     )}
 
-                    {/* Floating Toolbar for Actions */}
-                    <motion.div
-                      initial={{ y: 20, opacity: 0 }}
-                      animate={{ y: 0, opacity: 1 }}
-                      className="fixed shadow-[0_0_0_1px_rgba(0,0,0,0.06),0_8px_25px_rgba(0,0,0,0.15)] dark:shadow-[0_0_0_1px_rgba(255,255,255,0.14),0_8px_20px_rgba(0,0,0,0.7),0_0_20px_rgba(255,255,255,0.3)] bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-surface-bg)]/90 backdrop-blur-xl p-2 lg:left-[calc(50%+144px)] flex-wrap justify-center w-[calc(100vw-2rem)] sm:w-max max-w-full md:max-w-[90vw]"
-                    >
-                      <button
-                        type="button"
-                        onClick={fetchReports}
-                        className={`${actionButtonClass} flex-1 justify-center min-w-[140px] rounded-none bg-[var(--admin-text)] text-[var(--admin-bg)] hover:opacity-90`}
-                      >
-                        <RefreshCw size={16} />
-                        <span className="hidden sm:inline">Refresh Reports</span>
-                        <span className="sm:hidden">Refresh</span>
-                      </button>
-                      <div className="h-6 w-px bg-[var(--admin-outline-soft)] mx-1 hidden sm:block"></div>
-                      <button
-                        type="button"
-                        onClick={toggleSelectAllVisibleReports}
-                        disabled={selectableVisibleReports.length === 0}
-                        className={`${actionButtonClass} flex-1 justify-center min-w-[140px] rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] text-[var(--admin-text)] hover:bg-[var(--admin-muted-surface-hover)]`}
-                      >
-                        {allVisibleReportsSelected ? 'Clear' : 'Select All'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          void Promise.all(selectedPendingReportIds.map((id) => updateReportStatus(id, 'approved')));
-                          setSelectedReports(new Set());
-                        }}
-                        disabled={selectedPendingReportsCount === 0}
-                        className={`${actionButtonClass} flex-1 justify-center min-w-[140px] rounded-none bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20`}
-                      >
-                        <CheckCircle2 size={16} />
-                        Approve ({selectedPendingReportsCount})
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          void Promise.all(selectedPendingReportIds.map((id) => updateReportStatus(id, 'rejected')));
-                          setSelectedReports(new Set());
-                        }}
-                        disabled={selectedPendingReportsCount === 0}
-                        className={`${actionButtonClass} flex-1 justify-center min-w-[140px] rounded-none bg-rose-500/10 text-rose-300 hover:bg-rose-500/20`}
-                      >
-                        <XCircle size={16} />
-                        Reject ({selectedPendingReportsCount})
-                      </button>
-                    </motion.div>
+
                   </div>
                 )}
 
@@ -1939,23 +1891,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       )}
                     </div>
 
-                    {/* Floating Toolbar for Ban Search */}
-                    <motion.div
-                      initial={{ y: 20, opacity: 0 }}
-                      animate={{ y: 0, opacity: 1 }}
-                      className="fixed shadow-[0_0_0_1px_rgba(0,0,0,0.06),0_8px_25px_rgba(0,0,0,0.15)] dark:shadow-[0_0_0_1px_rgba(255,255,255,0.14),0_8px_20px_rgba(0,0,0,0.7),0_0_20px_rgba(255,255,255,0.3)] bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-surface-bg)]/90 backdrop-blur-xl p-2 lg:left-[calc(50%+144px)] flex-wrap justify-center w-[calc(100vw-2rem)] sm:w-[500px] max-w-full md:max-w-[90vw]"
-                    >
-                      <div className="relative w-full">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--admin-text-muted)]" size={16} />
-                        <input
-                          type="text"
-                          value={banSearch}
-                          onChange={(e) => setBanSearch(e.target.value)}
-                          className={`${inputClass} pl-10 w-full !mb-0 bg-[var(--admin-input-bg)]`}
-                          placeholder="SEARCH IP, SESSION, REASON, OR ADMIN..."
-                        />
-                      </div>
-                    </motion.div>
+
                   </div>
                 )}
 
@@ -2575,6 +2511,85 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
           </div>
         </main>
       </div>
+
+      {/* Floating Toolbars (Escaping the Parent Transform Container to prevent mounting jiggle) */}
+      <AnimatePresence>
+        {currentTab === 'reports' && (
+          <motion.div
+            initial={{ x: "-50%", y: 20, opacity: 0 }}
+            animate={{ x: "-50%", y: 0, opacity: 1 }}
+            exit={{ x: "-50%", y: 20, opacity: 0 }}
+            transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+            className="fixed shadow-[0_0_0_1px_rgba(0,0,0,0.06),0_8px_25px_rgba(0,0,0,0.15)] dark:shadow-[0_0_0_1px_rgba(255,255,255,0.14),0_8px_20px_rgba(0,0,0,0.7),0_0_20px_rgba(255,255,255,0.3)] bottom-6 left-1/2 z-50 flex items-center gap-2 rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-surface-bg)]/90 backdrop-blur-xl p-2 lg:left-[calc(50%+144px)] flex-wrap justify-center w-[calc(100vw-2rem)] sm:w-max max-w-full md:max-w-[90vw]"
+          >
+            <button
+              type="button"
+              onClick={fetchReports}
+              className={`${actionButtonClass} flex-1 justify-center min-w-[140px] rounded-none bg-[var(--admin-text)] text-[var(--admin-bg)] hover:opacity-90`}
+            >
+              <RefreshCw size={16} />
+              <span className="hidden sm:inline">Refresh Reports</span>
+              <span className="sm:hidden">Refresh</span>
+            </button>
+            <div className="h-6 w-px bg-[var(--admin-outline-soft)] mx-1 hidden sm:block"></div>
+            <button
+              type="button"
+              onClick={toggleSelectAllVisibleReports}
+              disabled={selectableVisibleReports.length === 0}
+              className={`${actionButtonClass} flex-1 justify-center min-w-[140px] rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] text-[var(--admin-text)] hover:bg-[var(--admin-muted-surface-hover)]`}
+            >
+              {allVisibleReportsSelected ? 'Clear' : 'Select All'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void Promise.all(selectedPendingReportIds.map((id) => updateReportStatus(id, 'approved')));
+                setSelectedReports(new Set());
+              }}
+              disabled={selectedPendingReportsCount === 0}
+              className={`${actionButtonClass} flex-1 justify-center min-w-[140px] rounded-none bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20`}
+            >
+              <CheckCircle2 size={16} />
+              Approve ({selectedPendingReportsCount})
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void Promise.all(selectedPendingReportIds.map((id) => updateReportStatus(id, 'rejected')));
+                setSelectedReports(new Set());
+              }}
+              disabled={selectedPendingReportsCount === 0}
+              className={`${actionButtonClass} flex-1 justify-center min-w-[140px] rounded-none bg-rose-500/10 text-rose-300 hover:bg-rose-500/20`}
+            >
+              <XCircle size={16} />
+              Reject ({selectedPendingReportsCount})
+            </button>
+          </motion.div>
+        )}
+        {currentTab === 'bans' && (
+          <motion.div
+            initial={{ x: "-50%", y: 20, opacity: 0 }}
+            animate={{ x: "-50%", y: 0, opacity: 1 }}
+            exit={{ x: "-50%", y: 20, opacity: 0 }}
+            transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+            className="fixed bottom-6 left-1/2 z-50 flex items-center gap-2 rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-surface-bg)]/90 backdrop-blur-xl p-2 lg:left-[calc(50%+144px)] flex-wrap justify-center w-[calc(100vw-2rem)] sm:w-[500px] max-w-full md:max-w-[90vw] shadow-[0_0_0_1px_rgba(0,0,0,0.06),0_8px_25px_rgba(0,0,0,0.15)] dark:shadow-[0_0_0_1px_rgba(255,255,255,0.14),0_8px_20px_rgba(0,0,0,0.7),0_0_20px_rgba(255,255,255,0.3)]"
+          >
+            <div className="relative w-full">
+              <Search
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--admin-text-muted)]"
+                size={16}
+              />
+              <input
+                type="text"
+                value={banSearch}
+                onChange={(e) => setBanSearch(e.target.value)}
+                className={`${inputClass} pl-10 w-full !mb-0 bg-[var(--admin-input-bg)]`}
+                placeholder="SEARCH IP, SESSION, REASON, OR ADMIN..."
+              />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Ban Modal */}
       <AnimatePresence>

@@ -39,12 +39,15 @@ var lookup = buildLookup()
 
 func Render() string {
 	var b strings.Builder
-	for _, category := range categories {
+	for i, category := range categories {
+		if i > 0 {
+			b.WriteString(", ")
+		}
 		b.WriteString(category.Code)
-		b.WriteString(": ")
+		b.WriteString(":")
 		b.WriteString(category.Label)
-		b.WriteString(".\n")
 	}
+	b.WriteString("\n")
 	return b.String()
 }
 
