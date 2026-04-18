@@ -16,6 +16,12 @@ The system uses the **OpenAI Chat Completions API schema** (`/v1/chat/completion
 | StepFun | `https://api.stepfun.com/v1` | `stepfun-ai/step-3.5-flash` |
 | Groq (for Gemma) | `https://api.groq.com/openai/v1` | `gemma2-9b-it` |
 | Qwen | `https://api.qwen.ai/v1` | `qwen3.5-122b-a10b` |
+| Z.ai | `https://api.z.ai/v1` | `z-ai/glm5` |
+| Meta | `https://api.llama.com/v1` | `muse-spark` |
+| OpenAI | `https://api.openai.com/v1` | `openai/gpt-oss-120b` |
+| Google | `https://generativelanguage.googleapis.com/v1beta/openai/` | `gemini-flash-latest` |
+| Claude | `https://api.anthropic.com/v1` | `claude-sonnet-4-6` |
+| Grok   | `https://api.grok.com/v1` | `grok-4-1-fast-reasoning` |
 | Any OpenAI-compatible | Your endpoint | Your model ID |
 
 Set `AUTO_MODERATION_NIM_BASE_URL` to point at any compatible endpoint, and `AUTO_MODERATION_MODEL` to the model identifier the provider expects. Use `AUTO_MODERATION_MODEL_TYPE` to select the right prompt/parser adapter (see below).
