@@ -959,6 +959,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
         setBotName('');
         setBotSlug('');
         setBotDescription('');
+        setBotType('engagement');
         setBotCount('1');
         setBotOpeningMessages('hey');
         setBotReplyMessages('nice\n tell me more');
@@ -966,6 +967,10 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
         setBotClosingMessage('gotta go');
         setBotSupportsText(true);
         setBotSupportsVideo(false);
+        setBotMessageLimit(4);
+        setBotSessionTtl(300);
+        setBotIdleTimeout(45);
+        setBotTriggers([]);
         setBotAIProvider('openai-compatible');
         setBotAIApiUrl('');
         setBotAIApiToken('');
@@ -3080,18 +3085,20 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
       {/* Bot Builder Modal */}
       <AnimatePresence>
         {isBotModalOpen && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] overflow-y-auto bg-[#030d12]/80 backdrop-blur-sm p-4 sm:p-6"
-          >
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
             <motion.div
-              initial={{ scale: 0.95, opacity: 0, y: 10 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.95, opacity: 0, y: 10 }}
-              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-              className="relative mx-auto my-6 sm:my-10 bg-[var(--admin-surface-bg)] border border-[var(--admin-outline-soft)] rounded-none shadow-[0_0_0_1px_rgba(255,255,255,0.05),0_20px_60px_rgba(0,0,0,0.72)] w-[min(920px,calc(100vw-2rem))] sm:w-[min(920px,calc(100vw-3rem))] max-h-[min(84vh,880px)] flex flex-col overflow-hidden"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsBotModalOpen(false)}
+              className="absolute inset-0 bg-[var(--admin-bg)]/90 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ type: 'spring', stiffness: 350, damping: 30 }}
+              className="relative flex flex-col w-full max-w-[920px] max-h-[85vh] rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-surface-bg)] shadow-[0_32px_128px_rgba(0,0,0,0.8)] overflow-hidden"
             >
               <div className="shrink-0 flex items-start justify-between gap-4 p-5 sm:p-6 border-b border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)]">
                 <div className="space-y-1">
@@ -3108,7 +3115,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                 </button>
               </div>
               
-              <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-6 sm:space-y-8">
+              <div className="flex-1 min-h-0 overflow-y-auto p-5 sm:p-6 space-y-6 sm:space-y-8">
                 <section className="space-y-4">
                   <h3 className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] border-b border-[var(--admin-outline-soft)] pb-2 flex items-center gap-2"><Activity size={14}/> General Settings</h3>
                   <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
@@ -3364,7 +3371,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                 </button>
               </div>
             </motion.div>
-          </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
@@ -3404,7 +3411,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
               </div>
 
               {/* Body */}
-              <div className="flex-1 overflow-y-auto px-6 py-6 sm:px-8 space-y-6">
+              <div className="flex-1 min-h-0 overflow-y-auto px-6 py-6 sm:px-8 space-y-6">
                 {/* Target Details */}
                 <div className="rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] px-5 py-4">
                   <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-3">TARGET_IDENTITY_DATA</p>
@@ -3585,7 +3592,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
               </div>
 
               {/* Body */}
-              <div className="flex-1 overflow-y-auto px-6 py-6 sm:px-8" style={{ background: 'var(--admin-transcript-bg)' }}>
+              <div className="flex-1 min-h-0 overflow-y-auto px-6 py-6 sm:px-8" style={{ background: 'var(--admin-transcript-bg)' }}>
                 <div className="space-y-4">
                   {reports.find(r => r.id === expandedReport)?.chat_log.map((msg, idx) => (
                     <div key={idx} className={`flex ${msg.sender === 'me' ? 'justify-end' : msg.sender === 'system' ? 'justify-center' : 'justify-start'}`}>
@@ -3695,7 +3702,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                 </button>
               </div>
 
-              <div className="flex-1 overflow-y-auto px-6 py-6 sm:px-8" style={{ background: 'var(--admin-transcript-bg)' }}>
+              <div className="flex-1 min-h-0 overflow-y-auto px-6 py-6 sm:px-8" style={{ background: 'var(--admin-transcript-bg)' }}>
                 <div className="space-y-4">
                   {(infraHealth?.redis.nodes || []).map((node) => (
                     <div key={node.node_id || node.address} className="detail-panel rounded-none p-5 scanlines">
@@ -3834,7 +3841,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
               </div>
 
               {/* Body */}
-              <div className="flex-1 overflow-y-auto px-6 py-8 sm:px-8" style={{ background: 'var(--admin-transcript-bg)' }}>
+              <div className="flex-1 min-h-0 overflow-y-auto px-6 py-8 sm:px-8" style={{ background: 'var(--admin-transcript-bg)' }}>
                 <div className="detail-panel rounded-none p-6 scanlines">
                   <p className="text-base text-[var(--admin-text)] leading-relaxed break-words whitespace-pre-wrap font-medium">
                     {reports.find(r => r.id === viewingDescription)?.description}
