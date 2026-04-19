@@ -1074,7 +1074,7 @@ export function useVideoChat(wsUrl: string) {
         pendingWebrtcStartRef.current = null;
 
         setPeerId(peerIdMatch || '');
-        setReportPeerId(!isBotMatch && message.reportable !== false ? (peerIdMatch || null) : null);
+        setReportPeerId((message.reportable !== false || isBotMatch) ? (peerIdMatch || null) : null);
         setStatus('connected');
         setIsVideoConnecting(videoEnabled);
         setShowReconnectMessage(false);
@@ -1100,7 +1100,7 @@ export function useVideoChat(wsUrl: string) {
         systemMessages.push({
           id: crypto.randomUUID(),
           text: isBotMatch
-            ? `You are talking to a random stranger. Their camera is currently off.`
+            ? `You are talking to a random stranger. Video is unavailable right now.`
             : `You are talking to a random stranger.`,
           sender: 'system',
           timestamp: Date.now()

@@ -924,7 +924,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
     if (!canManageBots) return false;
     const matchModes = [
       ...(botSupportsText ? ['text'] : []),
-      ...(botSupportsVideo && botType === 'engagement' ? ['video'] : []),
+      ...(botSupportsVideo ? ['video'] : []),
     ];
     const openingMessages = parseConversationLines(botOpeningMessages);
     const replyMessages = parseConversationLines(botReplyMessages);
@@ -3232,13 +3232,15 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       Text Matching {botSupportsText ? 'ON' : 'OFF'}
                     </button>
                     <button
-                      type="button" onClick={() => { if (botType === 'engagement') setBotSupportsVideo((current) => !current); }}
-                      disabled={botType !== 'engagement'}
+                      type="button" onClick={() => setBotSupportsVideo((current) => !current)}
                       className={`${actionButtonClass} w-full border ${botSupportsVideo ? 'bg-amber-500/20 text-amber-300 border-amber-500/30' : 'bg-[var(--admin-muted-surface)] text-[var(--admin-text)] border-[var(--admin-outline-soft)]'}`}
                     >
                       Video Matching {botSupportsVideo ? 'ON' : 'OFF'}
                     </button>
                   </div>
+                  <p className="text-[11px] leading-5 text-[var(--admin-text-soft)]">
+                    Video matching lets bots appear in the video queue, but bot chats still stay text-only. WebRTC stays off and reporting stays disabled for bot matches.
+                  </p>
                 </section>
 
                 <section className="space-y-4">

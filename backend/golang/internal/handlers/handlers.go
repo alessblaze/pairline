@@ -441,6 +441,22 @@ func CreateReportHandlerGin(redisClient redis.UniversalClient, enqueueAutoModera
 			return
 		}
 
+		reportedSessionIsBot, err := sessionIsBotForReport(ctx, redisClient, req.ReportedSessionID)
+		if err != nil {
+			span.RecordError(err)
+		}
+		if reportedSessionIsBot {
+			observability.RecordBusinessEvent(
+				c.Request.Context(),
+				"report.bot_acknowledged",
+				attribute.Bool("report.chat_log_present", len(req.ChatLog) > 0),
+			)
+			c.JSON(http.StatusOK, gin.H{
+				"status": "created",
+			})
+			return
+		}
+
 		reporterRoute, reporterRouteErr := appredis.ResolveSessionRouteForReport(ctx, redisClient, req.ReporterSessionID)
 		reportedRoute, reportedRouteErr := appredis.ResolveSessionRouteForReport(ctx, redisClient, req.ReportedSessionID)
 
@@ -1567,6 +1583,32 @@ func sessionCanReportPeer(ctx context.Context, redisClient redis.UniversalClient
 	}
 
 	return false
+}
+
+func sessionIsBotForReport(ctx context.Context, redisClient redis.UniversalClient, sessionID string) (bool, error) {
+	ctx, span := startChildSpanFromContext(ctx, "moderation.report_session_kind", hashedAttribute("session.ref", sessionID))
+	defer span.End()
+
+	route, err := appredis.ResolveSessionRouteForReport(ctx, redisClient, sessionID)
+	if err != nil {
+		span.RecordError(err)
+		return false, err
+	}
+
+	rawSession, err := redisClient.Get(ctx, appredis.SessionDataKey(sessionID, route)).Result()
+	if err != nil {
+		span.RecordError(err)
+		return false, err
+	}
+
+	var sessionData map[string]any
+	if err := json.Unmarshal([]byte(rawSession), &sessionData); err != nil {
+		span.RecordError(err)
+		return false, err
+	}
+
+	sessionKind, _ := sessionData["session_kind"].(string)
+	return strings.EqualFold(strings.TrimSpace(sessionKind), "bot"), nil
 }
 
 func normalizeChatLog(raw json.RawMessage) (string, error) {
