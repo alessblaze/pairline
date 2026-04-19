@@ -74,6 +74,7 @@ import {
 } from 'lucide-react';
 import type {
   AdminAccount,
+  AIBotConfig,
   AdminRole,
   AutoModerationSettings,
   Ban,
@@ -85,6 +86,7 @@ import type {
   InfraHealthResponse,
   LoginResponse,
   Report,
+  ScriptJSON,
 } from '../types';
 
 interface AdminPanelRuntimeProps extends AdminPanelProps {
@@ -97,8 +99,21 @@ const parseConversationLines = (value: string) =>
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
 
-const readScriptLines = (script: Record<string, unknown>, key: string) =>
-  Array.isArray(script[key]) ? (script[key] as unknown[]).filter((value): value is string => typeof value === 'string') : [];
+const readScriptLines = (script: ScriptJSON | Record<string, unknown>, key: string) => {
+  const scriptRecord = script as Record<string, unknown>;
+  return Array.isArray(scriptRecord[key]) ? (scriptRecord[key] as unknown[]).filter((value): value is string => typeof value === 'string') : [];
+};
+
+const readAIBotConfig = (config: Record<string, unknown> | AIBotConfig): AIBotConfig => ({
+  enabled: typeof config.enabled === 'boolean' ? config.enabled : true,
+  provider: typeof config.provider === 'string' ? config.provider : 'openai-compatible',
+  api_url: typeof config.api_url === 'string' ? config.api_url : '',
+  api_token: typeof config.api_token === 'string' ? config.api_token : '',
+  model: typeof config.model === 'string' ? config.model : '',
+  system_prompt: typeof config.system_prompt === 'string' ? config.system_prompt : '',
+  temperature: typeof config.temperature === 'number' ? config.temperature : 0.7,
+  max_tokens: typeof config.max_tokens === 'number' ? config.max_tokens : 300,
+});
 
 export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelRuntimeProps) {
   const navigate = useNavigate();
@@ -145,6 +160,13 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
   const [botSessionTtl, setBotSessionTtl] = useState(300);
   const [botIdleTimeout, setBotIdleTimeout] = useState(45);
   const [botTriggers, setBotTriggers] = useState<{ regex: string; reply: string }[]>([]);
+  const [botAIProvider, setBotAIProvider] = useState('openai-compatible');
+  const [botAIApiUrl, setBotAIApiUrl] = useState('');
+  const [botAIApiToken, setBotAIApiToken] = useState('');
+  const [botAIModel, setBotAIModel] = useState('');
+  const [botAISystemPrompt, setBotAISystemPrompt] = useState('You are a friendly anonymous chat partner. Keep replies short, natural, and safe for a general audience.');
+  const [botAITemperature, setBotAITemperature] = useState('0.7');
+  const [botAIMaxTokens, setBotAIMaxTokens] = useState('300');
   const [currentTab, setCurrentTab] = useState<'reports' | 'bans' | 'bannedWords' | 'bots' | 'accounts' | 'infra'>(__mockState?.currentTab ?? 'reports');
   const mainContentRef = useRef<HTMLElement>(null);
 
@@ -156,7 +178,6 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
 
   useEffect(() => {
     if (botType === 'ai') {
-      setBotCount('1');
       setBotSupportsVideo(false);
     }
   }, [botType]);
@@ -872,7 +893,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
   };
 
   const createBotDefinition = async () => {
-    if (!canManageBots) return;
+    if (!canManageBots) return false;
     const matchModes = [
       ...(botSupportsText ? ['text'] : []),
       ...(botSupportsVideo && botType === 'engagement' ? ['video'] : []),
@@ -884,12 +905,17 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
 
     if (matchModes.length === 0) {
       alert('Select at least one conversation mode.');
-      return;
+      return false;
     }
 
     if (botType === 'engagement' && openingMessages.length === 0 && replyMessages.length === 0 && !fallbackMessage && !closingMessage) {
       alert('Add at least one conversation line for the engagement bot.');
-      return;
+      return false;
+    }
+
+    if (botType === 'ai' && (!botAIApiUrl.trim() || !botAIApiToken.trim() || !botAIModel.trim())) {
+      alert('AI bots require an API URL, API token, and model name.');
+      return false;
     }
 
     try {
@@ -914,7 +940,18 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                 triggers: botTriggers.filter(t => t.regex.trim() && t.reply.trim()),
               }
             : {},
-          ai_config_json: botType === 'ai' ? { provider: 'openai', enabled: true } : {},
+          ai_config_json: botType === 'ai'
+            ? {
+                provider: botAIProvider.trim() || 'openai-compatible',
+                enabled: true,
+                api_url: botAIApiUrl.trim(),
+                api_token: botAIApiToken.trim(),
+                model: botAIModel.trim(),
+                system_prompt: botAISystemPrompt.trim(),
+                temperature: Number(botAITemperature) || 0,
+                max_tokens: Number(botAIMaxTokens) || 0,
+              }
+            : {},
         }),
       });
       if (response.status === 401) return logout();
@@ -929,8 +966,15 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
         setBotClosingMessage('gotta go');
         setBotSupportsText(true);
         setBotSupportsVideo(false);
+        setBotAIProvider('openai-compatible');
+        setBotAIApiUrl('');
+        setBotAIApiToken('');
+        setBotAIModel('');
+        setBotAISystemPrompt('You are a friendly anonymous chat partner. Keep replies short, natural, and safe for a general audience.');
+        setBotAITemperature('0.7');
+        setBotAIMaxTokens('300');
         void fetchBotDefinitions();
-        return;
+        return true;
       }
       const data = await response.json().catch(() => ({}));
       alert(data.error || 'Failed to create bot definition');
@@ -938,6 +982,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
       console.error('Failed to create bot definition:', error);
       alert('Failed to create bot definition');
     }
+    return false;
   };
 
   const setBotActiveState = async (id: string, nextActive: boolean) => {
@@ -2755,6 +2800,14 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                                     Openers {readScriptLines(bot.script_json, 'opening_messages').length} • Replies {readScriptLines(bot.script_json, 'reply_messages').length}
                                   </p>
                                 )}
+                                {bot.bot_type === 'ai' && (() => {
+                                  const aiConfig = readAIBotConfig(bot.ai_config_json);
+                                  return (
+                                    <p className="text-[11px] text-[var(--admin-text-muted)] break-all">
+                                      Provider {aiConfig.provider || 'openai-compatible'} • Model {aiConfig.model || 'unconfigured'} • Endpoint {aiConfig.api_url || 'missing'}
+                                    </p>
+                                  );
+                                })()}
                               </div>
                               {canManageBots && (
                                 <div className="flex items-center gap-2">
@@ -3031,29 +3084,34 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center bg-[#030d12]/80 backdrop-blur-sm p-4"
+            className="fixed inset-0 z-[100] overflow-y-auto bg-[#030d12]/80 backdrop-blur-sm p-4 sm:p-6"
           >
             <motion.div
               initial={{ scale: 0.95, opacity: 0, y: 10 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.95, opacity: 0, y: 10 }}
               transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-              className="bg-[var(--admin-surface-bg)] border border-[var(--admin-outline-soft)] rounded-none shadow-[0_0_0_1px_rgba(255,255,255,0.05),0_8px_30px_rgba(0,0,0,0.8)] w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden"
+              className="relative mx-auto my-6 sm:my-10 bg-[var(--admin-surface-bg)] border border-[var(--admin-outline-soft)] rounded-none shadow-[0_0_0_1px_rgba(255,255,255,0.05),0_20px_60px_rgba(0,0,0,0.72)] w-[min(920px,calc(100vw-2rem))] sm:w-[min(920px,calc(100vw-3rem))] max-h-[min(84vh,880px)] flex flex-col overflow-hidden"
             >
-              <div className="flex items-center justify-between p-6 border-b border-[var(--admin-outline-soft)]">
-                <h2 className="text-xl font-bold text-[var(--admin-text)] font-heading uppercase tracking-widest flex items-center gap-2">
-                  <Bot size={20} className="text-cyan-400" />
-                  Bot Builder
-                </h2>
-                <button onClick={() => setIsBotModalOpen(false)} className="text-[var(--admin-text-muted)] hover:text-rose-400 transition-colors">
+              <div className="shrink-0 flex items-start justify-between gap-4 p-5 sm:p-6 border-b border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)]">
+                <div className="space-y-1">
+                  <h2 className="text-lg sm:text-xl font-bold text-[var(--admin-text)] font-heading uppercase tracking-widest flex items-center gap-2">
+                    <Bot size={20} className="text-cyan-400" />
+                    Bot Builder
+                  </h2>
+                  <p className="text-xs text-[var(--admin-text-soft)] max-w-2xl">
+                    Configure scripted engagement bots or OpenAI-compatible AI bots from one place. AI bot settings sync through Redis for Phoenix workers to pick up live.
+                  </p>
+                </div>
+                <button onClick={() => setIsBotModalOpen(false)} className="shrink-0 text-[var(--admin-text-muted)] hover:text-rose-400 transition-colors">
                   <X size={24} />
                 </button>
               </div>
               
-              <div className="flex-1 overflow-y-auto p-6 space-y-8">
-                <section>
-                  <h3 className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-4 border-b border-[var(--admin-outline-soft)] pb-2 flex items-center gap-2"><Activity size={14}/> General Settings</h3>
-                  <div className="grid gap-4 lg:grid-cols-2">
+              <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-6 sm:space-y-8">
+                <section className="space-y-4">
+                  <h3 className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] border-b border-[var(--admin-outline-soft)] pb-2 flex items-center gap-2"><Activity size={14}/> General Settings</h3>
+                  <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
                     <div>
                       <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Bot Name</label>
                       <input value={botName} onChange={(e) => setBotName(e.target.value)} className={inputClass} placeholder="e.g. Sales Bot" />
@@ -3073,35 +3131,35 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Description</label>
                       <input value={botDescription} onChange={(e) => setBotDescription(e.target.value)} className={inputClass} placeholder="Internal description" />
                     </div>
-                    <div>
+                    <div className="xl:col-span-2">
                       <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Pool Size (Concurrent Instances)</label>
                       <input
                         type="number" min="1" max="10000"
                         value={botCount} onChange={(e) => setBotCount(e.target.value)}
-                        disabled={botType !== 'engagement'} className={inputClass}
+                        className={inputClass}
                       />
                     </div>
                   </div>
-                  <div className="grid gap-4 lg:grid-cols-2 mt-4">
+                  <div className="grid gap-3 sm:grid-cols-2">
                     <button
                       type="button" onClick={() => setBotSupportsText((current) => !current)}
-                      className={`${actionButtonClass} ${botSupportsText ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'bg-[var(--admin-muted-surface)] text-[var(--admin-text)]'}`}
+                      className={`${actionButtonClass} w-full border ${botSupportsText ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30' : 'bg-[var(--admin-muted-surface)] text-[var(--admin-text)] border-[var(--admin-outline-soft)]'}`}
                     >
                       Text Matching {botSupportsText ? 'ON' : 'OFF'}
                     </button>
                     <button
                       type="button" onClick={() => { if (botType === 'engagement') setBotSupportsVideo((current) => !current); }}
                       disabled={botType !== 'engagement'}
-                      className={`${actionButtonClass} ${botSupportsVideo ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'bg-[var(--admin-muted-surface)] text-[var(--admin-text)]'}`}
+                      className={`${actionButtonClass} w-full border ${botSupportsVideo ? 'bg-amber-500/20 text-amber-300 border-amber-500/30' : 'bg-[var(--admin-muted-surface)] text-[var(--admin-text)] border-[var(--admin-outline-soft)]'}`}
                     >
                       Video Matching {botSupportsVideo ? 'ON' : 'OFF'}
                     </button>
                   </div>
                 </section>
 
-                <section>
-                  <h3 className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-4 border-b border-[var(--admin-outline-soft)] pb-2 flex items-center gap-2"><ShieldAlert size={14}/> Flow & Limits</h3>
-                  <div className="grid gap-4 lg:grid-cols-3">
+                <section className="space-y-4">
+                  <h3 className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] border-b border-[var(--admin-outline-soft)] pb-2 flex items-center gap-2"><ShieldAlert size={14}/> Flow & Limits</h3>
+                  <div className="grid gap-4 md:grid-cols-3">
                     <div>
                       <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Message Limit</label>
                       <input type="number" min="1" value={botMessageLimit} onChange={(e) => setBotMessageLimit(Number(e.target.value) || 4)} className={inputClass} />
@@ -3118,9 +3176,9 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                 </section>
 
                 {botType === 'engagement' && (
-                  <section>
-                    <h3 className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-4 border-b border-[var(--admin-outline-soft)] pb-2 flex items-center gap-2"><MessageSquare size={14}/> Script Builder</h3>
-                    <div className="grid gap-6 lg:grid-cols-2 mb-8">
+                  <section className="space-y-4">
+                    <h3 className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] border-b border-[var(--admin-outline-soft)] pb-2 flex items-center gap-2"><MessageSquare size={14}/> Script Builder</h3>
+                    <div className="grid gap-6 lg:grid-cols-2">
                       <div>
                         <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Opening Messages (One per line)</label>
                         <textarea
@@ -3145,7 +3203,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       </div>
                     </div>
 
-                    <div className="bg-[var(--admin-muted-surface)] border border-[var(--admin-outline-soft)] rounded-none p-5">
+                    <div className="bg-[var(--admin-muted-surface)] border border-[var(--admin-outline-soft)] rounded-none p-4 sm:p-5">
                       <div className="flex items-center justify-between mb-4">
                         <div className="flex flex-col">
                           <h4 className="text-[10px] font-bold uppercase tracking-widest text-cyan-400">Regex Triggers</h4>
@@ -3168,7 +3226,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       ) : (
                         <div className="space-y-3">
                           {botTriggers.map((t, i) => (
-                            <div key={i} className="flex items-start gap-2 bg-[var(--admin-bg)] p-2 border border-[var(--admin-outline-soft)]">
+                            <div key={i} className="flex flex-col xl:flex-row items-stretch xl:items-start gap-2 bg-[var(--admin-bg)] p-3 border border-[var(--admin-outline-soft)]">
                               <input 
                                 value={t.regex} 
                                 onChange={(e) => {
@@ -3191,7 +3249,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                               />
                               <button 
                                 onClick={() => setBotTriggers(botTriggers.filter((_, idx) => idx !== i))}
-                                className="p-2.5 text-rose-400 bg-rose-500/10 rounded-none hover:bg-rose-500/20 border border-rose-500/20 transition-colors"
+                                className="h-11 xl:h-auto xl:w-12 shrink-0 p-2.5 text-rose-400 bg-rose-500/10 rounded-none hover:bg-rose-500/20 border border-rose-500/20 transition-colors"
                               >
                                 <Trash2 size={14} />
                               </button>
@@ -3202,18 +3260,104 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                     </div>
                   </section>
                 )}
+
+                {botType === 'ai' && (
+                  <section className="space-y-4">
+                    <h3 className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] border-b border-[var(--admin-outline-soft)] pb-2 flex items-center gap-2"><Sparkles size={14}/> AI Provider</h3>
+                    <div className="rounded-none border border-cyan-500/20 bg-cyan-500/5 p-4 space-y-4">
+                      <p className="text-xs leading-6 text-[var(--admin-text-soft)]">
+                        Use any OpenAI-compatible endpoint here. The admin panel stores this config, Redis carries the active snapshot, and Phoenix workers use it at runtime.
+                      </p>
+                      <div className="grid gap-4 lg:grid-cols-2">
+                        <div>
+                          <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Provider Label</label>
+                          <input
+                            value={botAIProvider}
+                            onChange={(e) => setBotAIProvider(e.target.value)}
+                            className={inputClass}
+                            placeholder="openai-compatible"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Model Name</label>
+                          <input
+                            value={botAIModel}
+                            onChange={(e) => setBotAIModel(e.target.value)}
+                            className={inputClass}
+                            placeholder="gpt-4o-mini"
+                          />
+                        </div>
+                        <div className="lg:col-span-2">
+                          <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">OpenAI-Compatible API URL</label>
+                          <input
+                            value={botAIApiUrl}
+                            onChange={(e) => setBotAIApiUrl(e.target.value)}
+                            className={inputClass}
+                            placeholder="https://api.openai.com/v1/chat/completions"
+                          />
+                        </div>
+                      <div className="lg:col-span-2">
+                        <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">API Token</label>
+                        <input
+                          value={botAIApiToken}
+                          onChange={(e) => setBotAIApiToken(e.target.value)}
+                          className={inputClass}
+                          type="text"
+                          placeholder="sk-..."
+                        />
+                      </div>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div>
+                        <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Temperature</label>
+                        <input
+                          type="number"
+                          min="0"
+                          max="2"
+                          step="0.1"
+                          value={botAITemperature}
+                          onChange={(e) => setBotAITemperature(e.target.value)}
+                          className={inputClass}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Max Output Tokens</label>
+                        <input
+                          type="number"
+                          min="1"
+                          max="16000"
+                          value={botAIMaxTokens}
+                          onChange={(e) => setBotAIMaxTokens(e.target.value)}
+                          className={inputClass}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">System Prompt</label>
+                      <textarea
+                        value={botAISystemPrompt}
+                        onChange={(e) => setBotAISystemPrompt(e.target.value)}
+                        className={`${inputClass} min-h-32`}
+                        placeholder="Define the bot's tone, persona, and safety instructions."
+                      />
+                    </div>
+                  </section>
+                )}
               </div>
               
-              <div className="p-6 border-t border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] flex justify-end gap-3 shrink-0">
-                <button onClick={() => setIsBotModalOpen(false)} className={`${actionButtonClass} bg-[var(--admin-surface-bg)] text-[var(--admin-text)] hover:opacity-80`}>
+              <div className="p-4 sm:p-6 border-t border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] flex flex-col-reverse sm:flex-row sm:justify-end gap-3 shrink-0">
+                <button onClick={() => setIsBotModalOpen(false)} className={`${actionButtonClass} w-full sm:w-auto bg-[var(--admin-surface-bg)] text-[var(--admin-text)] hover:opacity-80 border border-[var(--admin-outline-soft)]`}>
                   Cancel
                 </button>
                 <button 
-                  onClick={() => {
-                    void createBotDefinition();
-                    setIsBotModalOpen(false);
+                  onClick={async () => {
+                    const created = await createBotDefinition();
+                    if (created) setIsBotModalOpen(false);
                   }} 
-                  className={`${actionButtonClass} bg-cyan-500 text-[#04131b] hover:opacity-90`}
+                  className={`${actionButtonClass} w-full sm:w-auto bg-cyan-500 text-[#04131b] hover:opacity-90`}
                 >
                   <CheckCircle2 size={16} />
                   Save Definition

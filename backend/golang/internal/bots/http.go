@@ -227,6 +227,7 @@ func ListDefinitionsHandler(c *gin.Context) {
 	db := storage.NewDatabase()
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
+	role, _ := getContextString(c, "role")
 
 	query := db.GetDB().WithContext(ctx).Model(&Definition{})
 	if searchQuery != "" {
@@ -249,6 +250,10 @@ func ListDefinitionsHandler(c *gin.Context) {
 		return
 	}
 
+	for idx := range definitions {
+		definitions[idx] = sanitizeDefinitionForRole(definitions[idx], role)
+	}
+
 	c.JSON(http.StatusOK, gin.H{"bots": definitions})
 }
 
@@ -265,6 +270,7 @@ func GetDefinitionHandler(c *gin.Context) {
 	db := storage.NewDatabase()
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
+	role, _ := getContextString(c, "role")
 
 	var definition Definition
 	if err := db.GetDB().WithContext(ctx).Where("id = ?", id).First(&definition).Error; err != nil {
@@ -276,7 +282,7 @@ func GetDefinitionHandler(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, definition)
+	c.JSON(http.StatusOK, sanitizeDefinitionForRole(definition, role))
 }
 
 func CreateDefinitionHandler(c *gin.Context, sync SnapshotSyncer) {
@@ -311,6 +317,12 @@ func CreateDefinitionHandler(c *gin.Context, sync SnapshotSyncer) {
 		return
 	}
 
+	normalizedAIConfig, err := normalizeDefinitionAIConfig(req.BotType, req.AIConfigJSON)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	username, ok := getContextString(c, "username")
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
@@ -329,7 +341,7 @@ func CreateDefinitionHandler(c *gin.Context, sync SnapshotSyncer) {
 		TrafficWeight:     100,
 		TargetingJSON:     defaultJSONObject(req.TargetingJSON),
 		ScriptJSON:        defaultJSONObject(req.ScriptJSON),
-		AIConfigJSON:      defaultJSONObject(req.AIConfigJSON),
+		AIConfigJSON:      normalizedAIConfig,
 		MessageLimit:      20,
 		SessionTTLSeconds: 300,
 		IdleTimeoutSecs:   45,
@@ -347,10 +359,6 @@ func CreateDefinitionHandler(c *gin.Context, sync SnapshotSyncer) {
 			return
 		}
 		definition.BotCount = *req.BotCount
-	}
-	if definition.BotType != "engagement" && definition.BotCount != 1 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "bot_count is only configurable for engagement bots"})
-		return
 	}
 	if req.TrafficWeight != nil {
 		if *req.TrafficWeight < 1 || *req.TrafficWeight > 100000 {
@@ -491,10 +499,6 @@ func UpdateDefinitionHandler(c *gin.Context, sync SnapshotSyncer) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		if definition.BotType != "engagement" && *req.BotCount != 1 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "bot_count is only configurable for engagement bots"})
-			return
-		}
 		updates["bot_count"] = *req.BotCount
 	}
 	if req.TrafficWeight != nil {
@@ -511,7 +515,12 @@ func UpdateDefinitionHandler(c *gin.Context, sync SnapshotSyncer) {
 		updates["script_json"] = defaultJSONObject(req.ScriptJSON)
 	}
 	if req.AIConfigJSON != nil {
-		updates["ai_config_json"] = defaultJSONObject(req.AIConfigJSON)
+		normalizedAIConfig, err := normalizeDefinitionAIConfig(definition.BotType, req.AIConfigJSON)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		updates["ai_config_json"] = normalizedAIConfig
 	}
 	if req.MessageLimit != nil {
 		if *req.MessageLimit < 1 || *req.MessageLimit > 200 {

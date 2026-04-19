@@ -51,6 +51,7 @@ defmodule OmeglePhoenix.MixProject do
       {:eredis_cluster, "~> 0.9"},
       {:castore, "~> 1.0"},
       {:finch, "~> 0.17"},
+      {:langchain, "~> 0.8.0"},
       {:uniq, "~> 0.6"},
       {:gettext, "~> 0.23"},
       {:opentelemetry_api, "~> 1.5"},

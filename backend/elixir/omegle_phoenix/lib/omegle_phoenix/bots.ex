@@ -1,45 +1,76 @@
 defmodule OmeglePhoenix.Bots do
   @moduledoc false
 
+  alias OmeglePhoenix.Bots.AIWorker
   alias OmeglePhoenix.Bots.ScriptWorker
 
   @snapshot_key "bots:definitions:snapshot"
-  @active_run_key_prefix "bots:engagement:active_runs:"
+  @active_run_key_prefix "bots:active_runs:definition:"
+  @global_active_run_key "bots:active_runs:global"
   @reserve_slot_script """
-  local current = tonumber(redis.call('GET', KEYS[1]) or '0')
-  local limit = tonumber(ARGV[1] or '0')
-  local ttl = tonumber(ARGV[2] or '0')
+  local global_current = tonumber(redis.call('GET', KEYS[1]) or '0')
+  local definition_current = tonumber(redis.call('GET', KEYS[2]) or '0')
+  local global_limit = tonumber(ARGV[1] or '0')
+  local definition_limit = tonumber(ARGV[2] or '0')
+  local ttl = tonumber(ARGV[3] or '0')
 
-  if limit <= 0 then
-    return 0
+  if definition_limit <= 0 then
+    return -1
   end
 
-  if current >= limit then
-    return 0
+  if global_limit <= 0 then
+    return -2
   end
 
-  current = redis.call('INCR', KEYS[1])
+  if definition_current >= definition_limit then
+    return -1
+  end
 
-  if current == 1 and ttl > 0 then
+  if global_current >= global_limit then
+    return -2
+  end
+
+  global_current = redis.call('INCR', KEYS[1])
+
+  if global_current == 1 and ttl > 0 then
     redis.call('EXPIRE', KEYS[1], ttl)
   end
 
-  if current > limit then
+  if global_current > global_limit then
     redis.call('DECR', KEYS[1])
-    return 0
+    return -2
   end
 
-  return current
+  definition_current = redis.call('INCR', KEYS[2])
+
+  if definition_current == 1 and ttl > 0 then
+    redis.call('EXPIRE', KEYS[2], ttl)
+  end
+
+  if definition_current > definition_limit then
+    redis.call('DECR', KEYS[2])
+    redis.call('DECR', KEYS[1])
+    return -1
+  end
+
+  return definition_current
   """
   @release_slot_script """
-  local current = tonumber(redis.call('GET', KEYS[1]) or '0')
+  local global_current = tonumber(redis.call('GET', KEYS[1]) or '0')
+  local definition_current = tonumber(redis.call('GET', KEYS[2]) or '0')
 
-  if current <= 1 then
+  if global_current <= 1 then
     redis.call('DEL', KEYS[1])
+  else
+    redis.call('DECR', KEYS[1])
+  end
+
+  if definition_current <= 1 then
+    redis.call('DEL', KEYS[2])
     return 0
   end
 
-  return redis.call('DECR', KEYS[1])
+  return redis.call('DECR', KEYS[2])
   """
 
   def maybe_assign_waiting_session(session) when is_map(session) do
@@ -55,6 +86,7 @@ defmodule OmeglePhoenix.Bots do
           enabled = bots_enabled?(snapshot)
           rollout = rollout_allows?(snapshot, session.id)
           defs = matching_definitions(snapshot, session)
+          settings = Map.get(snapshot, "settings", %{})
 
           Logger.debug(
             "Bots.maybe_assign: enabled=#{inspect(enabled)} rollout=#{inspect(rollout)} " <>
@@ -64,7 +96,7 @@ defmodule OmeglePhoenix.Bots do
           )
 
           if enabled and rollout and is_list(defs) and defs != [] do
-            case try_start_worker(defs, session) do
+            case try_start_worker(defs, session, settings) do
               {:ok, _definition, _pid} ->
                 Logger.info("Bots.maybe_assign: matched session #{inspect(session.id)} to bot")
                 :matched
@@ -111,9 +143,7 @@ defmodule OmeglePhoenix.Bots do
   end
 
   defp bots_enabled?(%{"settings" => settings}) when is_map(settings) do
-    Map.get(settings, "enabled", true) and
-      Map.get(settings, "engagement_enabled", true) and
-      not Map.get(settings, "emergency_stop", false)
+    Map.get(settings, "enabled", true) and not Map.get(settings, "emergency_stop", false)
   end
 
   defp bots_enabled?(_snapshot), do: false
@@ -141,7 +171,8 @@ defmodule OmeglePhoenix.Bots do
         case OmeglePhoenix.Redis.command([
                "EVAL",
                @release_slot_script,
-               "1",
+               "2",
+               @global_active_run_key,
                active_run_key(definition_id)
              ]) do
           {:ok, _value} -> :ok
@@ -151,14 +182,20 @@ defmodule OmeglePhoenix.Bots do
     end
   end
 
-  defp matching_definitions(%{"definitions" => definitions}, session)
-       when is_list(definitions) and is_map(session) do
+  defp matching_definitions(%{"definitions" => definitions, "settings" => settings}, session)
+       when is_list(definitions) and is_map(session) and is_map(settings) do
     mode = session.preferences |> Map.get("mode", "text")
+    engagement_enabled = Map.get(settings, "engagement_enabled", true)
+    ai_enabled = Map.get(settings, "ai_enabled", true)
 
     definitions
     |> Enum.filter(fn
       %{"bot_type" => "engagement", "is_active" => true} = definition ->
-        mode_allowed?(definition, mode) and definition_bot_count(definition) > 0
+        engagement_enabled and mode_allowed?(definition, mode) and
+          definition_bot_count(definition) > 0
+
+      %{"bot_type" => "ai", "is_active" => true} = definition ->
+        ai_enabled and mode_allowed?(definition, mode) and ai_definition_configured?(definition)
 
       _ ->
         false
@@ -174,66 +211,88 @@ defmodule OmeglePhoenix.Bots do
 
   defp mode_allowed?(_definition, _mode), do: false
 
-  defp try_start_worker([], _session), do: {:error, :no_matching_definition}
-
-  defp try_start_worker([definition | rest], session) do
-    case reserve_definition_slot(definition) do
-      :ok ->
-        child_spec = {ScriptWorker, session: session, definition: definition}
-
-        case DynamicSupervisor.start_child(OmeglePhoenix.Bots.Supervisor, child_spec) do
-          {:ok, pid} -> {:ok, definition, pid}
-          {:error, {:already_started, pid}} -> {:ok, definition, pid}
-          {:error, _reason} -> release_and_continue(definition, rest, session)
-          :ignore -> release_and_continue(definition, rest, session)
-        end
-
-      :full ->
-        try_start_worker(rest, session)
-
-      {:error, _reason} ->
-        try_start_worker(rest, session)
-    end
-  end
-
-  defp release_and_continue(definition, rest, session) do
-    _ = release_definition_slot(definition)
-    try_start_worker(rest, session)
-  end
-
-  defp reserve_definition_slot(definition) do
+  def reserve_definition_slot(definition, settings \\ %{}) do
     case definition_id(definition) do
       nil ->
         {:error, :missing_definition_id}
 
       definition_id ->
-        result = OmeglePhoenix.Redis.command([
-               "EVAL",
-               @reserve_slot_script,
-               "1",
-               active_run_key(definition_id),
-               Integer.to_string(definition_bot_count(definition)),
-               Integer.to_string(slot_ttl_seconds(definition))
-             ])
+        result =
+          OmeglePhoenix.Redis.command([
+            "EVAL",
+            @reserve_slot_script,
+            "2",
+            @global_active_run_key,
+            active_run_key(definition_id),
+            Integer.to_string(max_concurrent_runs(settings)),
+            Integer.to_string(definition_bot_count(definition)),
+            Integer.to_string(slot_ttl_seconds(definition))
+          ])
 
         case result do
-          {:ok, count} when is_integer(count) and count > 0 -> :ok
+          {:ok, count} when is_integer(count) and count > 0 ->
+            :ok
+
           {:ok, count} when is_binary(count) ->
             case Integer.parse(count) do
               {n, ""} when n > 0 -> :ok
-              _ -> :full
+              {-1, ""} -> :definition_full
+              {-2, ""} -> :global_full
+              _ -> :definition_full
             end
-          {:ok, 0} -> :full
-          {:error, reason} -> {:error, reason}
-          _other -> :full
+
+          {:ok, -1} ->
+            :definition_full
+
+          {:ok, -2} ->
+            :global_full
+
+          {:ok, 0} ->
+            :definition_full
+
+          {:error, reason} ->
+            {:error, reason}
+
+          _other ->
+            :definition_full
         end
     end
+  end
+
+  defp try_start_worker([], _session, _settings), do: {:error, :no_matching_definition}
+
+  defp try_start_worker([definition | rest], session, settings) do
+    case reserve_definition_slot(definition, settings) do
+      :ok ->
+        child_spec = worker_child_spec(definition, session)
+
+        case DynamicSupervisor.start_child(OmeglePhoenix.Bots.Supervisor, child_spec) do
+          {:ok, pid} -> {:ok, definition, pid}
+          {:error, {:already_started, pid}} -> {:ok, definition, pid}
+          {:error, _reason} -> release_and_continue(definition, rest, session, settings)
+          :ignore -> release_and_continue(definition, rest, session, settings)
+        end
+
+      :definition_full ->
+        try_start_worker(rest, session, settings)
+
+      :global_full ->
+        {:error, :global_capacity_reached}
+
+      {:error, _reason} ->
+        try_start_worker(rest, session, settings)
+    end
+  end
+
+  defp release_and_continue(definition, rest, session, settings) do
+    _ = release_definition_slot(definition)
+    try_start_worker(rest, session, settings)
   end
 
   defp active_run_key(definition_id), do: @active_run_key_prefix <> definition_id
 
   defp definition_priority(definition) do
-    {definition_traffic_weight(definition), definition_bot_count(definition)}
+    {definition_traffic_weight(definition), definition_capacity(definition)}
   end
 
   defp definition_traffic_weight(definition) do
@@ -247,6 +306,16 @@ defmodule OmeglePhoenix.Bots do
     |> Map.get("bot_count", 1)
     |> normalize_positive_integer(1)
   end
+
+  defp max_concurrent_runs(settings) when is_map(settings) do
+    settings
+    |> Map.get("max_concurrent_runs", 100)
+    |> normalize_positive_integer(100)
+  end
+
+  defp max_concurrent_runs(_settings), do: 100
+
+  defp definition_capacity(definition), do: definition_bot_count(definition)
 
   defp slot_ttl_seconds(definition) do
     ttl =
@@ -262,6 +331,26 @@ defmodule OmeglePhoenix.Bots do
       value when is_binary(value) and value != "" -> value
       _ -> nil
     end
+  end
+
+  defp ai_definition_configured?(%{"ai_config_json" => ai_config}) when is_map(ai_config) do
+    enabled = Map.get(ai_config, "enabled", true)
+    endpoint = Map.get(ai_config, "api_url") || Map.get(ai_config, "endpoint")
+    token = Map.get(ai_config, "api_token") || Map.get(ai_config, "api_key")
+    model = Map.get(ai_config, "model")
+
+    enabled and is_binary(endpoint) and endpoint != "" and is_binary(token) and token != "" and
+      is_binary(model) and model != ""
+  end
+
+  defp ai_definition_configured?(_definition), do: false
+
+  defp worker_child_spec(%{"bot_type" => "ai"} = definition, session) do
+    {AIWorker, session: session, definition: definition}
+  end
+
+  defp worker_child_spec(definition, session) do
+    {ScriptWorker, session: session, definition: definition}
   end
 
   defp normalize_positive_integer(value, _default) when is_integer(value) and value > 0, do: value

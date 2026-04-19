@@ -129,6 +129,17 @@ export interface ScriptJSON {
   triggers?: ScriptTrigger[];
 }
 
+export interface AIBotConfig {
+  enabled?: boolean;
+  provider?: string;
+  api_url?: string;
+  api_token?: string;
+  model?: string;
+  system_prompt?: string;
+  temperature?: number;
+  max_tokens?: number;
+}
+
 export interface BotDefinition {
   id: string;
   name: string;
@@ -141,7 +152,7 @@ export interface BotDefinition {
   traffic_weight: number;
   targeting_json: Record<string, unknown>;
   script_json: ScriptJSON | Record<string, unknown>;
-  ai_config_json: Record<string, unknown>;
+  ai_config_json: AIBotConfig | Record<string, unknown>;
   message_limit: number;
   session_ttl_seconds: number;
   idle_timeout_seconds: number;
