@@ -43,6 +43,7 @@ import {
 } from './admin-panel/utils';
 import {
   Shield,
+  ShieldAlert,
   AlertTriangle,
   Ban as BanIcon,
   Users,
@@ -76,6 +77,8 @@ import type {
   AdminRole,
   AutoModerationSettings,
   Ban,
+  BotDefinition,
+  BotSettings,
   BannedWord,
   BannedWordsSettings,
   CreateBanRequest,
@@ -87,6 +90,15 @@ import type {
 interface AdminPanelRuntimeProps extends AdminPanelProps {
   __mockState?: AdminPanelMockState;
 }
+
+const parseConversationLines = (value: string) =>
+  value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+const readScriptLines = (script: Record<string, unknown>, key: string) =>
+  Array.isArray(script[key]) ? (script[key] as unknown[]).filter((value): value is string => typeof value === 'string') : [];
 
 export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelRuntimeProps) {
   const navigate = useNavigate();
@@ -115,7 +127,25 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
     __mockState?.autoModerationSettings ?? null
   );
   const [updatingAutoModerationEnabled, setUpdatingAutoModerationEnabled] = useState(false);
-  const [currentTab, setCurrentTab] = useState<'reports' | 'bans' | 'bannedWords' | 'accounts' | 'infra'>(__mockState?.currentTab ?? 'reports');
+  const [botSettings, setBotSettings] = useState<BotSettings | null>(null);
+  const [botDefinitions, setBotDefinitions] = useState<BotDefinition[]>([]);
+  const [botName, setBotName] = useState('');
+  const [botSlug, setBotSlug] = useState('');
+  const [botDescription, setBotDescription] = useState('');
+  const [botType, setBotType] = useState<'engagement' | 'ai'>('engagement');
+  const [botCount, setBotCount] = useState('1');
+  const [botOpeningMessages, setBotOpeningMessages] = useState('hey');
+  const [botReplyMessages, setBotReplyMessages] = useState('nice\n tell me more');
+  const [botFallbackMessage, setBotFallbackMessage] = useState('tell me more');
+  const [botClosingMessage, setBotClosingMessage] = useState('gotta go');
+  const [botSupportsText, setBotSupportsText] = useState(true);
+  const [botSupportsVideo, setBotSupportsVideo] = useState(false);
+  const [isBotModalOpen, setIsBotModalOpen] = useState(false);
+  const [botMessageLimit, setBotMessageLimit] = useState(4);
+  const [botSessionTtl, setBotSessionTtl] = useState(300);
+  const [botIdleTimeout, setBotIdleTimeout] = useState(45);
+  const [botTriggers, setBotTriggers] = useState<{ regex: string; reply: string }[]>([]);
+  const [currentTab, setCurrentTab] = useState<'reports' | 'bans' | 'bannedWords' | 'bots' | 'accounts' | 'infra'>(__mockState?.currentTab ?? 'reports');
   const mainContentRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -123,6 +153,13 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
       mainContentRef.current.scrollTo(0, 0);
     }
   }, [currentTab]);
+
+  useEffect(() => {
+    if (botType === 'ai') {
+      setBotCount('1');
+      setBotSupportsVideo(false);
+    }
+  }, [botType]);
 
   const [reportStatusFilter, setReportStatusFilter] = useState<'pending' | 'decided' | 'all'>(__mockState?.reportStatusFilter ?? 'pending');
   const [reportReviewSourceFilter, setReportReviewSourceFilter] = useState<'all' | 'awaitingHuman' | 'autoReviewed' | 'humanReviewed'>(
@@ -170,6 +207,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
   const canManageBans = role === 'admin' || role === 'root';
   const canManageBannedWords = role === 'moderator' || role === 'admin' || role === 'root';
   const canManageAutoModeration = role === 'moderator' || role === 'admin' || role === 'root';
+  const canViewBots = role === 'moderator' || role === 'admin' || role === 'root';
+  const canManageBots = role === 'admin' || role === 'root';
   const canManageAccounts = role === 'admin' || role === 'root';
   const canViewInfraHealth = role === 'root';
   const deferredBanSearch = useDeferredValue(banSearch);
@@ -471,6 +510,34 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
       }
     } catch (error) {
       console.error('Failed to fetch admin accounts:', error);
+    }
+  };
+
+  const fetchBotSettings = async () => {
+    if (!canViewBots) return;
+    try {
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/bots/settings`);
+      if (response.status === 401) return logout();
+      if (response.ok) {
+        const data: BotSettings = await response.json();
+        setBotSettings(data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch bot settings:', error);
+    }
+  };
+
+  const fetchBotDefinitions = async () => {
+    if (!canViewBots) return;
+    try {
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/bots?limit=100`);
+      if (response.status === 401) return logout();
+      if (response.ok) {
+        const data = await response.json();
+        setBotDefinitions(data.bots || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch bot definitions:', error);
     }
   };
 
@@ -783,6 +850,135 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
     }
   };
 
+  const updateBotSettings = async (updates: Partial<BotSettings>) => {
+    if (!canManageBots) return;
+    try {
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/bots/settings`, {
+        method: 'PUT',
+        body: JSON.stringify(updates),
+      });
+      if (response.status === 401) return logout();
+      if (response.ok) {
+        const data: BotSettings = await response.json();
+        setBotSettings(data);
+        return;
+      }
+      const data = await response.json().catch(() => ({}));
+      alert(data.error || 'Failed to update bot settings');
+    } catch (error) {
+      console.error('Failed to update bot settings:', error);
+      alert('Failed to update bot settings');
+    }
+  };
+
+  const createBotDefinition = async () => {
+    if (!canManageBots) return;
+    const matchModes = [
+      ...(botSupportsText ? ['text'] : []),
+      ...(botSupportsVideo && botType === 'engagement' ? ['video'] : []),
+    ];
+    const openingMessages = parseConversationLines(botOpeningMessages);
+    const replyMessages = parseConversationLines(botReplyMessages);
+    const fallbackMessage = botFallbackMessage.trim();
+    const closingMessage = botClosingMessage.trim();
+
+    if (matchModes.length === 0) {
+      alert('Select at least one conversation mode.');
+      return;
+    }
+
+    if (botType === 'engagement' && openingMessages.length === 0 && replyMessages.length === 0 && !fallbackMessage && !closingMessage) {
+      alert('Add at least one conversation line for the engagement bot.');
+      return;
+    }
+
+    try {
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/bots`, {
+        method: 'POST',
+        body: JSON.stringify({
+          name: botName.trim(),
+          slug: botSlug.trim(),
+          bot_type: botType,
+          description: botDescription.trim(),
+          match_modes: matchModes,
+          bot_count: botType === 'engagement' ? Math.max(1, Number(botCount) || 1) : 1,
+          message_limit: botMessageLimit,
+          session_ttl_seconds: botSessionTtl,
+          idle_timeout_seconds: botIdleTimeout,
+          script_json: botType === 'engagement'
+            ? {
+                opening_messages: openingMessages,
+                reply_messages: replyMessages,
+                fallback_message: fallbackMessage,
+                closing_message: closingMessage,
+                triggers: botTriggers.filter(t => t.regex.trim() && t.reply.trim()),
+              }
+            : {},
+          ai_config_json: botType === 'ai' ? { provider: 'openai', enabled: true } : {},
+        }),
+      });
+      if (response.status === 401) return logout();
+      if (response.ok) {
+        setBotName('');
+        setBotSlug('');
+        setBotDescription('');
+        setBotCount('1');
+        setBotOpeningMessages('hey');
+        setBotReplyMessages('nice\n tell me more');
+        setBotFallbackMessage('tell me more');
+        setBotClosingMessage('gotta go');
+        setBotSupportsText(true);
+        setBotSupportsVideo(false);
+        void fetchBotDefinitions();
+        return;
+      }
+      const data = await response.json().catch(() => ({}));
+      alert(data.error || 'Failed to create bot definition');
+    } catch (error) {
+      console.error('Failed to create bot definition:', error);
+      alert('Failed to create bot definition');
+    }
+  };
+
+  const setBotActiveState = async (id: string, nextActive: boolean) => {
+    if (!canManageBots) return;
+    try {
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/bots/${id}/${nextActive ? 'activate' : 'deactivate'}`, {
+        method: 'POST',
+      });
+      if (response.status === 401) return logout();
+      if (response.ok) {
+        void fetchBotDefinitions();
+        return;
+      }
+      const data = await response.json().catch(() => ({}));
+      alert(data.error || 'Failed to update bot status');
+    } catch (error) {
+      console.error('Failed to update bot status:', error);
+      alert('Failed to update bot status');
+    }
+  };
+
+  const deleteBotDefinition = async (id: string, name: string) => {
+    if (!canManageBots) return;
+    if (!window.confirm(`Delete bot definition "${name}"? This cannot be undone.`)) return;
+    try {
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/bots/${id}`, {
+        method: 'DELETE',
+      });
+      if (response.status === 401) return logout();
+      if (response.ok) {
+        void fetchBotDefinitions();
+        return;
+      }
+      const data = await response.json().catch(() => ({}));
+      alert(data.error || 'Failed to delete bot definition');
+    } catch (error) {
+      console.error('Failed to delete bot definition:', error);
+      alert('Failed to delete bot definition');
+    }
+  };
+
   const closeBanModal = () => {
     if (submittingBan) return;
     setBanModal((current) => ({ ...current, open: false }));
@@ -878,6 +1074,11 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
     void fetchInfraHealth();
   });
 
+  const syncBots = useEffectEvent(() => {
+    void fetchBotSettings();
+    void fetchBotDefinitions();
+  });
+
   // Effects for data sync
   useEffect(() => {
     setAccountPage(1);
@@ -893,6 +1094,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
   useEffect(() => { if (authReady && isAuthenticated && canManageBannedWords && !__mockState) syncBannedWords(); }, [authReady, isAuthenticated, canManageBannedWords, bannedWordLimit, deferredBannedWordSearch, __mockState]);
   useEffect(() => { if (authReady && isAuthenticated && canManageAccounts && !__mockState) syncAccounts(); }, [authReady, isAuthenticated, canManageAccounts, accountPage, accountLimit, deferredAccountSearch, __mockState]);
   useEffect(() => { if (authReady && isAuthenticated && canViewInfraHealth && !__mockState) syncInfraHealth(); }, [authReady, isAuthenticated, canViewInfraHealth, __mockState]);
+  useEffect(() => { if (authReady && isAuthenticated && canViewBots && !__mockState) syncBots(); }, [authReady, isAuthenticated, canViewBots, __mockState]);
 
   if (!authReady) {
     return <AuthLoadingScreen />;
@@ -1010,6 +1212,18 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                     Banned Words
                   </button>
                 )}
+                {canViewBots && (
+                  <button
+                    onClick={() => {
+                      setCurrentTab('bots');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={tabButtonClass(currentTab === 'bots')}
+                  >
+                    <Bot size={18} />
+                    Bots
+                  </button>
+                )}
                 {canViewInfraHealth && (
                   <button
                     onClick={() => {
@@ -1101,6 +1315,12 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                   Banned Words
                 </button>
               )}
+              {canViewBots && (
+                <button onClick={() => setCurrentTab('bots')} className={tabButtonClass(currentTab === 'bots')}>
+                  <Bot size={18} />
+                  Bots
+                </button>
+              )}
               {canViewInfraHealth && (
                 <button onClick={() => setCurrentTab('infra')} className={tabButtonClass(currentTab === 'infra')}>
                   <Server size={18} />
@@ -1186,6 +1406,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       ? 'Ban Registry'
                       : currentTab === 'bannedWords'
                         ? 'Banned Words'
+                        : currentTab === 'bots'
+                          ? 'Bots'
                         : currentTab === 'infra'
                           ? 'Infra Health'
                           : 'Admin Accounts'}
@@ -1197,6 +1419,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       ? 'Manage active and historical user bans.'
                       : currentTab === 'bannedWords'
                         ? 'Block delivery of messages containing restricted words or phrases.'
+                        : currentTab === 'bots'
+                          ? 'Control scripted bot rollouts, emergency stop state, and active definitions.'
                         : currentTab === 'infra'
                           ? 'Inspect cluster topology, service health, data stores, and observability lanes.'
                           : 'Manage moderation team access.'}
@@ -1223,7 +1447,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-danger-rose/10 text-danger-rose border border-danger-rose/20 shadow-[inset_0_0_20px_rgba(244,63,94,0.05)]">
                           <Activity size={20} />
                           <div className="hud-bracket hud-bracket-tl" />
-                          <div className="hud-bracket-br" />
+                          <div className="hud-bracket hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
                           <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-[var(--admin-text-muted)] mb-0.5">Pending Reports</p>
@@ -1234,7 +1458,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-success-emerald/10 text-success-emerald border border-success-emerald/20 shadow-[inset_0_0_20px_rgba(52,211,153,0.05)]">
                           <CheckCircle2 size={20} />
                           <div className="hud-bracket hud-bracket-tl" />
-                          <div className="hud-bracket-br" />
+                          <div className="hud-bracket hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
                           <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-[var(--admin-text-muted)] mb-0.5">Approved Actions</p>
@@ -1245,7 +1469,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-amber-500/10 text-amber-400 border border-amber-500/20 shadow-[inset_0_0_20px_rgba(245,158,11,0.05)]">
                           <XCircle size={20} />
                           <div className="hud-bracket hud-bracket-tl" />
-                          <div className="hud-bracket-br" />
+                          <div className="hud-bracket hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
                           <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-[var(--admin-text-muted)] mb-0.5">Rejected Actions</p>
@@ -1257,9 +1481,9 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                     {canManageAutoModeration && autoModerationSettings && (
                       <div className={`${surfaceCardClass} space-y-5 p-5`}>
                         <div className="hud-bracket hud-bracket-tl" />
-                        <div className="hud-bracket-tr" />
-                        <div className="hud-bracket-bl" />
-                        <div className="hud-bracket-br" />
+                        <div className="hud-bracket hud-bracket-tr" />
+                        <div className="hud-bracket hud-bracket-bl" />
+                        <div className="hud-bracket hud-bracket-br" />
                         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                           <div className="space-y-2">
                             <div className="flex items-center">
@@ -1352,9 +1576,9 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
 
                     <div className={`${surfaceCardClass} p-5`}>
                       <div className="hud-bracket hud-bracket-tl" />
-                      <div className="hud-bracket-tr" />
-                      <div className="hud-bracket-bl" />
-                      <div className="hud-bracket-br" />
+                      <div className="hud-bracket hud-bracket-tr" />
+                      <div className="hud-bracket hud-bracket-bl" />
+                      <div className="hud-bracket hud-bracket-br" />
                       <div className="grid gap-4 xl:grid-cols-[auto_auto_1fr] xl:items-end">
                         <div>
                           <label className="section-prefix mb-2 block text-xs font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Status Filter</label>
@@ -1424,9 +1648,9 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       visibleReports.map((report) => (
                         <div key={report.id} className="surface-card rounded-none overflow-hidden p-0 transition-all duration-300 hover:border-[var(--admin-outline-strong)]">
                           <div className="hud-bracket hud-bracket-tl" />
-                          <div className="hud-bracket-tr" />
-                          <div className="hud-bracket-bl" />
-                          <div className="hud-bracket-br" />
+                          <div className="hud-bracket hud-bracket-tr" />
+                          <div className="hud-bracket hud-bracket-bl" />
+                          <div className="hud-bracket hud-bracket-br" />
 
                           <div className="flex flex-col lg:grid lg:grid-cols-[56px_1fr_320px_200px] lg:items-stretch overflow-hidden">
                             {/* Checkbox Column */}
@@ -1628,9 +1852,9 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-rose-500/10 text-rose-400 border border-rose-500/20 shadow-[inset_0_0_20px_rgba(244,63,94,0.05)]">
                           <BanIcon size={20} />
                           <div className="hud-bracket hud-bracket-tl" />
-                          <div className="hud-bracket-tr" />
-                          <div className="hud-bracket-bl" />
-                          <div className="hud-bracket-br" />
+                          <div className="hud-bracket hud-bracket-tr" />
+                          <div className="hud-bracket hud-bracket-bl" />
+                          <div className="hud-bracket hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
                           <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-1">Active Bans</p>
@@ -1641,9 +1865,9 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-[var(--admin-muted-surface)] text-[var(--admin-text-soft)] border border-[var(--admin-outline-soft)]">
                           <Clock size={20} />
                           <div className="hud-bracket hud-bracket-tl" />
-                          <div className="hud-bracket-tr" />
-                          <div className="hud-bracket-bl" />
-                          <div className="hud-bracket-br" />
+                          <div className="hud-bracket hud-bracket-tr" />
+                          <div className="hud-bracket hud-bracket-bl" />
+                          <div className="hud-bracket hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
                           <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-1">Inactive Bans</p>
@@ -1654,9 +1878,9 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[inset_0_0_20px_rgba(34,211,238,0.05)]">
                           <Globe size={20} />
                           <div className="hud-bracket hud-bracket-tl" />
-                          <div className="hud-bracket-tr" />
-                          <div className="hud-bracket-bl" />
-                          <div className="hud-bracket-br" />
+                          <div className="hud-bracket hud-bracket-tr" />
+                          <div className="hud-bracket hud-bracket-bl" />
+                          <div className="hud-bracket hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
                           <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-1">Total Bans</p>
@@ -1667,9 +1891,9 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                     {/* Ban Controls Panel */}
                     <div className="surface-card rounded-none p-5">
                       <div className="hud-bracket hud-bracket-tl" />
-                      <div className="hud-bracket-tr" />
-                      <div className="hud-bracket-bl" />
-                      <div className="hud-bracket-br" />
+                      <div className="hud-bracket hud-bracket-tr" />
+                      <div className="hud-bracket hud-bracket-bl" />
+                      <div className="hud-bracket hud-bracket-br" />
 
                       <div className="flex flex-col gap-5">
                         {/* Search & Filters Grid */}
@@ -1717,9 +1941,9 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                     {canCreateBans && (
                       <div className="surface-card rounded-none p-5">
                         <div className="hud-bracket hud-bracket-tl" />
-                        <div className="hud-bracket-tr" />
-                        <div className="hud-bracket-bl" />
-                        <div className="hud-bracket-br" />
+                        <div className="hud-bracket hud-bracket-tr" />
+                        <div className="hud-bracket hud-bracket-bl" />
+                        <div className="hud-bracket hud-bracket-br" />
 
                         <div className="flex items-center gap-3 mb-6">
                           <h3 className="section-prefix font-heading text-sm font-bold uppercase tracking-[0.14em] text-[var(--admin-text)]">Manual Enforcement</h3>
@@ -1792,9 +2016,9 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       {bans.length === 0 ? (
                         <div className="surface-card rounded-none flex flex-col items-center justify-center px-8 py-16 text-center">
                           <div className="hud-bracket hud-bracket-tl" />
-                          <div className="hud-bracket-tr" />
-                          <div className="hud-bracket-bl" />
-                          <div className="hud-bracket-br" />
+                          <div className="hud-bracket hud-bracket-tr" />
+                          <div className="hud-bracket hud-bracket-bl" />
+                          <div className="hud-bracket hud-bracket-br" />
 
                           <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-none border border-[var(--admin-outline-strong)] bg-[var(--admin-muted-surface)]">
                             <BanIcon size={28} className="text-[var(--admin-text-muted)]" />
@@ -1814,9 +2038,9 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                               className="surface-card group rounded-none p-0 overflow-hidden transition-all duration-300 hover:border-[var(--admin-outline-strong)] hover:translate-y-[-1px] hover:shadow-[0_8px_32px_rgba(0,0,0,0.4)]"
                             >
                               <div className="hud-bracket hud-bracket-tl" />
-                              <div className="hud-bracket-tr" />
-                              <div className="hud-bracket-bl" />
-                              <div className="hud-bracket-br" />
+                              <div className="hud-bracket hud-bracket-tr" />
+                              <div className="hud-bracket hud-bracket-bl" />
+                              <div className="hud-bracket hud-bracket-br" />
 
                               <div className="flex flex-col md:grid md:grid-cols-[4px_1fr_120px] md:items-stretch h-full">
                                 {/* Status Stripe */}
@@ -1902,7 +2126,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-success-emerald/10 text-success-emerald border border-success-emerald/20 shadow-[inset_0_0_20px_rgba(52,211,153,0.05)]">
                           <CheckCircle2 size={20} />
                           <div className="hud-bracket hud-bracket-tl" />
-                          <div className="hud-bracket-br" />
+                          <div className="hud-bracket hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
                           <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-[var(--admin-text-muted)] mb-0.5">Healthy Services</p>
@@ -1913,7 +2137,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-amber-500/10 text-amber-400 border border-amber-500/20 shadow-[inset_0_0_20px_rgba(245,158,11,0.05)]">
                           <AlertTriangle size={20} />
                           <div className="hud-bracket hud-bracket-tl" />
-                          <div className="hud-bracket-br" />
+                          <div className="hud-bracket hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
                           <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-[var(--admin-text-muted)] mb-0.5">Degraded Services</p>
@@ -1924,7 +2148,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-electric-cyan/10 text-electric-cyan border border-electric-cyan/20 shadow-[inset_0_0_20px_rgba(34,211,238,0.05)]">
                           <Network size={20} />
                           <div className="hud-bracket hud-bracket-tl" />
-                          <div className="hud-bracket-br" />
+                          <div className="hud-bracket hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
                           <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-[var(--admin-text-muted)] mb-0.5">Phoenix Nodes</p>
@@ -1935,7 +2159,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-electric-cyan/10 text-electric-cyan border border-electric-cyan/20 shadow-[inset_0_0_20px_rgba(34,211,238,0.05)]">
                           <Database size={20} />
                           <div className="hud-bracket hud-bracket-tl" />
-                          <div className="hud-bracket-br" />
+                          <div className="hud-bracket hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
                           <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-[var(--admin-text-muted)] mb-0.5">Redis Reachable</p>
@@ -2096,9 +2320,9 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[inset_0_0_20px_rgba(34,211,238,0.05)]">
                           <MessageSquare size={20} />
                           <div className="hud-bracket hud-bracket-tl" />
-                          <div className="hud-bracket-tr" />
-                          <div className="hud-bracket-bl" />
-                          <div className="hud-bracket-br" />
+                          <div className="hud-bracket hud-bracket-tr" />
+                          <div className="hud-bracket hud-bracket-bl" />
+                          <div className="hud-bracket hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
                           <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-1">Registry Size</p>
@@ -2109,9 +2333,9 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-[var(--admin-muted-surface)] text-[var(--admin-text-soft)] border border-[var(--admin-outline-soft)]">
                           <Eye size={20} />
                           <div className="hud-bracket hud-bracket-tl" />
-                          <div className="hud-bracket-tr" />
-                          <div className="hud-bracket-bl" />
-                          <div className="hud-bracket-br" />
+                          <div className="hud-bracket hud-bracket-tr" />
+                          <div className="hud-bracket hud-bracket-bl" />
+                          <div className="hud-bracket hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
                           <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-1">Visible Results</p>
@@ -2122,9 +2346,9 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-[inset_0_0_20px_rgba(16,185,129,0.05)]">
                           <Search size={20} />
                           <div className="hud-bracket hud-bracket-tl" />
-                          <div className="hud-bracket-tr" />
-                          <div className="hud-bracket-bl" />
-                          <div className="hud-bracket-br" />
+                          <div className="hud-bracket hud-bracket-tr" />
+                          <div className="hud-bracket hud-bracket-bl" />
+                          <div className="hud-bracket hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
                           <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-1">Display Limit</p>
@@ -2146,9 +2370,9 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                     {/* Search Controls Panel */}
                     <div className="surface-card rounded-none p-5">
                       <div className="hud-bracket hud-bracket-tl" />
-                      <div className="hud-bracket-tr" />
-                      <div className="hud-bracket-bl" />
-                      <div className="hud-bracket-br" />
+                      <div className="hud-bracket hud-bracket-tr" />
+                      <div className="hud-bracket hud-bracket-bl" />
+                      <div className="hud-bracket hud-bracket-br" />
 
                       <div className="flex flex-col gap-5">
                         <div className="grid gap-4 lg:grid-cols-[1fr_auto_auto] lg:items-end">
@@ -2197,7 +2421,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
 
                     <div className="surface-card rounded-none p-5">
                       <div className="hud-bracket hud-bracket-tl" />
-                      <div className="hud-bracket-tr" />
+                      <div className="hud-bracket hud-bracket-tr" />
                       <div className="hud-bracket hud-bracket-bl" />
                       <div className="hud-bracket hud-bracket-br" />
 
@@ -2226,9 +2450,9 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                     {/* Add Word Panel */}
                     <div className="surface-card rounded-none p-5">
                       <div className="hud-bracket hud-bracket-tl" />
-                      <div className="hud-bracket-tr" />
-                      <div className="hud-bracket-bl" />
-                      <div className="hud-bracket-br" />
+                      <div className="hud-bracket hud-bracket-tr" />
+                      <div className="hud-bracket hud-bracket-bl" />
+                      <div className="hud-bracket hud-bracket-br" />
 
                       <div className="flex items-center gap-3 mb-6">
                         <h3 className="section-prefix font-heading text-sm font-bold uppercase tracking-[0.14em] text-[var(--admin-text)]">Add Phrase</h3>
@@ -2270,9 +2494,9 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       {bannedWords.length === 0 ? (
                         <div className="surface-card rounded-none flex flex-col items-center justify-center px-8 py-16 text-center">
                           <div className="hud-bracket hud-bracket-tl" />
-                          <div className="hud-bracket-tr" />
-                          <div className="hud-bracket-bl" />
-                          <div className="hud-bracket-br" />
+                          <div className="hud-bracket hud-bracket-tr" />
+                          <div className="hud-bracket hud-bracket-bl" />
+                          <div className="hud-bracket hud-bracket-br" />
 
                           <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-none border border-[var(--admin-outline-strong)] bg-[var(--admin-muted-surface)]">
                             <MessageSquare size={28} className="text-[var(--admin-text-muted)]" />
@@ -2292,9 +2516,9 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                               className="surface-card group rounded-none p-0 overflow-hidden transition-all duration-300 hover:border-[var(--admin-outline-strong)] hover:translate-y-[-1px] hover:shadow-[0_8px_32px_rgba(0,0,0,0.4)]"
                             >
                               <div className="hud-bracket hud-bracket-tl" />
-                              <div className="hud-bracket-tr" />
-                              <div className="hud-bracket-bl" />
-                              <div className="hud-bracket-br" />
+                              <div className="hud-bracket hud-bracket-tr" />
+                              <div className="hud-bracket hud-bracket-bl" />
+                              <div className="hud-bracket hud-bracket-br" />
 
                               <div className="flex flex-col md:grid md:grid-cols-[4px_1fr_120px] md:items-stretch h-full">
                                 {/* Status Stripe */}
@@ -2347,6 +2571,214 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                             </motion.div>
                           ))}
                         </AnimatePresence>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {currentTab === 'bots' && canViewBots && (
+                  <div className="space-y-6">
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                      <div className={metricCardClass('active')}>
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                          <Bot size={20} />
+                        </div>
+                        <div className="flex flex-col">
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-1">Definitions</p>
+                          <p className="font-heading text-2xl font-bold text-[var(--admin-text)] tracking-tight">{botDefinitions.length}</p>
+                        </div>
+                      </div>
+                      <div className={metricCardClass(botSettings?.enabled ? 'approved' : 'inactive')}>
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                          <Play size={20} />
+                        </div>
+                        <div className="flex flex-col">
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-1">Bots Enabled</p>
+                          <p className="font-heading text-2xl font-bold text-[var(--admin-text)] tracking-tight">{botSettings?.enabled ? 'YES' : 'NO'}</p>
+                        </div>
+                      </div>
+                      <div className={metricCardClass(botSettings?.engagement_enabled ? 'approved' : 'inactive')}>
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                          <MessageSquare size={20} />
+                        </div>
+                        <div className="flex flex-col">
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-1">Engagement</p>
+                          <p className="font-heading text-2xl font-bold text-[var(--admin-text)] tracking-tight">{botSettings?.engagement_enabled ? 'ON' : 'OFF'}</p>
+                        </div>
+                      </div>
+                      <div className={metricCardClass(botSettings?.emergency_stop ? 'pending' : 'approved')}>
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                          <Sparkles size={20} />
+                        </div>
+                        <div className="flex flex-col">
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-1">Emergency Stop</p>
+                          <p className="font-heading text-2xl font-bold text-[var(--admin-text)] tracking-tight">{botSettings?.emergency_stop ? 'ACTIVE' : 'CLEAR'}</p>
+                        </div>
+                      </div>
+                      <div className={metricCardClass((botSettings?.rollout_percent ?? 0) > 0 ? 'approved' : 'inactive')}>
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                          <Activity size={20} />
+                        </div>
+                        <div className="flex flex-col">
+                          <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-1">Rollout %</p>
+                          <p className="font-heading text-2xl font-bold text-[var(--admin-text)] tracking-tight">{botSettings?.rollout_percent ?? 0}%</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className={`${surfaceCardClass} p-6 space-y-4`}>
+                      <div className="flex items-center justify-between gap-4 flex-wrap">
+                        <h3 className="text-lg font-bold text-[var(--admin-text)]">Runtime Controls</h3>
+                        <button
+                          onClick={() => {
+                            void fetchBotSettings();
+                            void fetchBotDefinitions();
+                          }}
+                          className={`${actionButtonClass} bg-[var(--admin-text)] text-[var(--admin-bg)]`}
+                        >
+                          <RefreshCw size={16} />
+                          Refresh Bots
+                        </button>
+                      </div>
+
+                      <div className="grid gap-4 lg:grid-cols-2">
+                        <button
+                          type="button"
+                          onClick={() => void updateBotSettings({ enabled: !(botSettings?.enabled ?? true) })}
+                          disabled={!canManageBots}
+                          className={`${actionButtonClass} ${botSettings?.enabled ? 'bg-emerald-500 text-[#04110c]' : 'bg-[var(--admin-muted-surface)] text-[var(--admin-text)]'}`}
+                        >
+                          <Bot size={16} />
+                          {botSettings?.enabled ? 'Disable All Bots' : 'Enable All Bots'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void updateBotSettings({ emergency_stop: !(botSettings?.emergency_stop ?? false) })}
+                          disabled={!canManageBots}
+                          className={`${actionButtonClass} ${botSettings?.emergency_stop ? 'bg-rose-500 text-white' : 'bg-amber-500 text-[#150b00]'}`}
+                        >
+                          <AlertTriangle size={16} />
+                          {botSettings?.emergency_stop ? 'Clear Emergency Stop' : 'Trigger Emergency Stop'}
+                        </button>
+                      </div>
+
+                      <div className="grid gap-4 lg:grid-cols-2">
+                        <button
+                          type="button"
+                          onClick={() => void updateBotSettings({ engagement_enabled: !(botSettings?.engagement_enabled ?? true) })}
+                          disabled={!canManageBots}
+                          className={`${actionButtonClass} bg-[var(--admin-muted-surface)] text-[var(--admin-text)]`}
+                        >
+                          <MessageSquare size={16} />
+                          {botSettings?.engagement_enabled ? 'Disable Engagement Bots' : 'Enable Engagement Bots'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void updateBotSettings({ ai_enabled: !(botSettings?.ai_enabled ?? true) })}
+                          disabled={!canManageBots}
+                          className={`${actionButtonClass} bg-[var(--admin-muted-surface)] text-[var(--admin-text)]`}
+                        >
+                          <Sparkles size={16} />
+                          {botSettings?.ai_enabled ? 'Disable AI Bots' : 'Enable AI Bots'}
+                        </button>
+                      </div>
+
+                      <div className="grid gap-4 lg:grid-cols-2">
+                        <div>
+                          <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Rollout Percent</label>
+                          <div className="flex items-center gap-3">
+                            <input
+                              type="range"
+                              min={0}
+                              max={100}
+                              value={botSettings?.rollout_percent ?? 0}
+                              onChange={(e) => void updateBotSettings({ rollout_percent: Number(e.target.value) })}
+                              disabled={!canManageBots}
+                              className="flex-1 accent-cyan-500"
+                            />
+                            <span className="w-12 text-right text-sm font-bold text-[var(--admin-text)] tabular-nums">{botSettings?.rollout_percent ?? 0}%</span>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Max Concurrent Runs</label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={100000}
+                            value={botSettings?.max_concurrent_runs ?? 100}
+                            onChange={(e) => {
+                              const val = Number(e.target.value);
+                              if (val >= 1 && val <= 100000) void updateBotSettings({ max_concurrent_runs: val });
+                            }}
+                            disabled={!canManageBots}
+                            className={inputClass}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {canManageBots && (
+                      <div className={`${surfaceCardClass} p-6 space-y-4`}>
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-lg font-bold text-[var(--admin-text)]">Conversation Types</h3>
+                          <button onClick={() => setIsBotModalOpen(true)} className={`${actionButtonClass} bg-cyan-400 text-[#04131b] hover:bg-cyan-300`}>
+                            <Plus size={16} />
+                            Add Bot Definition
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="space-y-4">
+                      {botDefinitions.length === 0 ? (
+                        <div className="rounded-none border border-dashed border-[var(--admin-outline-strong)] py-20 text-center">
+                          <p className="text-[var(--admin-text-muted)]">No bot definitions created yet.</p>
+                        </div>
+                      ) : (
+                        botDefinitions.map((bot) => (
+                          <div key={bot.id} className={`${surfaceCardClass} p-6`}>
+                            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-3 flex-wrap">
+                                  <h4 className="font-bold text-[var(--admin-text)]">{bot.name}</h4>
+                                  <span className="text-[10px] font-bold uppercase tracking-widest text-cyan-400">{bot.bot_type}</span>
+                                  <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider ${bot.is_active ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
+                                    {bot.is_active ? 'Active' : 'Inactive'}
+                                  </span>
+                                </div>
+                                <p className="text-xs text-[var(--admin-text-soft)]">{bot.description || bot.slug}</p>
+                                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">
+                                  Modes {bot.match_modes_json.join(', ')} • Pool {bot.bot_count} • Messages {bot.message_limit} • TTL {bot.session_ttl_seconds}s • Idle {bot.idle_timeout_seconds}s
+                                </p>
+                                {bot.bot_type === 'engagement' && (
+                                  <p className="text-[11px] text-[var(--admin-text-muted)]">
+                                    Openers {readScriptLines(bot.script_json, 'opening_messages').length} • Replies {readScriptLines(bot.script_json, 'reply_messages').length}
+                                  </p>
+                                )}
+                              </div>
+                              {canManageBots && (
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => void setBotActiveState(bot.id, !bot.is_active)}
+                                    className={`${actionButtonClass} ${bot.is_active ? 'bg-rose-500 text-white' : 'bg-emerald-500 text-[#04110c]'}`}
+                                  >
+                                    {bot.is_active ? <XCircle size={16} /> : <CheckCircle2 size={16} />}
+                                    {bot.is_active ? 'Deactivate' : 'Activate'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void deleteBotDefinition(bot.id, bot.name)}
+                                    className={`${actionButtonClass} bg-rose-500/20 text-rose-400 hover:bg-rose-500/30`}
+                                    title="Delete bot definition"
+                                  >
+                                    <Trash2 size={16} />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))
                       )}
                     </div>
                   </div>
@@ -2509,8 +2941,9 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
               </motion.div>
             </AnimatePresence>
           </div>
-        </main>
-      </div>
+        {/* Bot Modal moved to the end of the file alongside other modals */}
+      </main>
+    </div>
 
       {/* Floating Toolbars (Escaping the Parent Transform Container to prevent mounting jiggle) */}
       <AnimatePresence>
@@ -2587,6 +3020,206 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                 placeholder="SEARCH IP, SESSION, REASON, OR ADMIN..."
               />
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Bot Builder Modal */}
+      <AnimatePresence>
+        {isBotModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-[#030d12]/80 backdrop-blur-sm p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 10 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 10 }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              className="bg-[var(--admin-surface-bg)] border border-[var(--admin-outline-soft)] rounded-none shadow-[0_0_0_1px_rgba(255,255,255,0.05),0_8px_30px_rgba(0,0,0,0.8)] w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden"
+            >
+              <div className="flex items-center justify-between p-6 border-b border-[var(--admin-outline-soft)]">
+                <h2 className="text-xl font-bold text-[var(--admin-text)] font-heading uppercase tracking-widest flex items-center gap-2">
+                  <Bot size={20} className="text-cyan-400" />
+                  Bot Builder
+                </h2>
+                <button onClick={() => setIsBotModalOpen(false)} className="text-[var(--admin-text-muted)] hover:text-rose-400 transition-colors">
+                  <X size={24} />
+                </button>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto p-6 space-y-8">
+                <section>
+                  <h3 className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-4 border-b border-[var(--admin-outline-soft)] pb-2 flex items-center gap-2"><Activity size={14}/> General Settings</h3>
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    <div>
+                      <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Bot Name</label>
+                      <input value={botName} onChange={(e) => setBotName(e.target.value)} className={inputClass} placeholder="e.g. Sales Bot" />
+                    </div>
+                    <div>
+                      <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Bot Slug</label>
+                      <input value={botSlug} onChange={(e) => setBotSlug(e.target.value)} className={inputClass} placeholder="e.g. sales_bot" />
+                    </div>
+                    <div>
+                      <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Bot Type</label>
+                      <select value={botType} onChange={(e) => setBotType(e.target.value as 'engagement' | 'ai')} className={compactSelectClass}>
+                        <option value="engagement">Engagement</option>
+                        <option value="ai">AI</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Description</label>
+                      <input value={botDescription} onChange={(e) => setBotDescription(e.target.value)} className={inputClass} placeholder="Internal description" />
+                    </div>
+                    <div>
+                      <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Pool Size (Concurrent Instances)</label>
+                      <input
+                        type="number" min="1" max="10000"
+                        value={botCount} onChange={(e) => setBotCount(e.target.value)}
+                        disabled={botType !== 'engagement'} className={inputClass}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid gap-4 lg:grid-cols-2 mt-4">
+                    <button
+                      type="button" onClick={() => setBotSupportsText((current) => !current)}
+                      className={`${actionButtonClass} ${botSupportsText ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'bg-[var(--admin-muted-surface)] text-[var(--admin-text)]'}`}
+                    >
+                      Text Matching {botSupportsText ? 'ON' : 'OFF'}
+                    </button>
+                    <button
+                      type="button" onClick={() => { if (botType === 'engagement') setBotSupportsVideo((current) => !current); }}
+                      disabled={botType !== 'engagement'}
+                      className={`${actionButtonClass} ${botSupportsVideo ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'bg-[var(--admin-muted-surface)] text-[var(--admin-text)]'}`}
+                    >
+                      Video Matching {botSupportsVideo ? 'ON' : 'OFF'}
+                    </button>
+                  </div>
+                </section>
+
+                <section>
+                  <h3 className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-4 border-b border-[var(--admin-outline-soft)] pb-2 flex items-center gap-2"><ShieldAlert size={14}/> Flow & Limits</h3>
+                  <div className="grid gap-4 lg:grid-cols-3">
+                    <div>
+                      <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Message Limit</label>
+                      <input type="number" min="1" value={botMessageLimit} onChange={(e) => setBotMessageLimit(Number(e.target.value) || 4)} className={inputClass} />
+                    </div>
+                    <div>
+                      <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Session TTL (s)</label>
+                      <input type="number" min="10" value={botSessionTtl} onChange={(e) => setBotSessionTtl(Number(e.target.value) || 300)} className={inputClass} />
+                    </div>
+                    <div>
+                      <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Idle Timeout (s)</label>
+                      <input type="number" min="5" value={botIdleTimeout} onChange={(e) => setBotIdleTimeout(Number(e.target.value) || 45)} className={inputClass} />
+                    </div>
+                  </div>
+                </section>
+
+                {botType === 'engagement' && (
+                  <section>
+                    <h3 className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-4 border-b border-[var(--admin-outline-soft)] pb-2 flex items-center gap-2"><MessageSquare size={14}/> Script Builder</h3>
+                    <div className="grid gap-6 lg:grid-cols-2 mb-8">
+                      <div>
+                        <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Opening Messages (One per line)</label>
+                        <textarea
+                          value={botOpeningMessages} onChange={(e) => setBotOpeningMessages(e.target.value)}
+                          className={`${inputClass} min-h-28`} placeholder="Hey there! How are you?"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Sequential Replies (One per line)</label>
+                        <textarea
+                          value={botReplyMessages} onChange={(e) => setBotReplyMessages(e.target.value)}
+                          className={`${inputClass} min-h-28`} placeholder="I'm good!"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Fallback Message</label>
+                        <input value={botFallbackMessage} onChange={(e) => setBotFallbackMessage(e.target.value)} className={inputClass} placeholder="Are you still there?" />
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Closing Message</label>
+                        <input value={botClosingMessage} onChange={(e) => setBotClosingMessage(e.target.value)} className={inputClass} placeholder="Gotta run, bye!" />
+                      </div>
+                    </div>
+
+                    <div className="bg-[var(--admin-muted-surface)] border border-[var(--admin-outline-soft)] rounded-none p-5">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex flex-col">
+                          <h4 className="text-[10px] font-bold uppercase tracking-widest text-cyan-400">Regex Triggers</h4>
+                          <span className="text-[10px] text-[var(--admin-text-soft)]">Triggers evaluate human messages to decide the bot's next reply.</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setBotTriggers([...botTriggers, { regex: '', reply: '' }])}
+                          className="text-[10px] font-bold uppercase tracking-wider bg-cyan-500/10 text-cyan-400 px-3 py-1.5 rounded-none border border-cyan-500/20 hover:bg-cyan-500/20 transition-colors whitespace-nowrap"
+                        >
+                          + Add Trigger
+                        </button>
+                      </div>
+                      
+                      {botTriggers.length === 0 ? (
+                        <div className="border border-dashed border-[var(--admin-outline-soft)] py-6 text-center">
+                          <p className="text-[10px] uppercase font-bold tracking-widest text-[var(--admin-text-muted)]">No regex triggers added.</p>
+                          <p className="text-[10px] text-[var(--admin-text-soft)] mt-1">Bot will rely entirely on the Sequential Replies list.</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {botTriggers.map((t, i) => (
+                            <div key={i} className="flex items-start gap-2 bg-[var(--admin-bg)] p-2 border border-[var(--admin-outline-soft)]">
+                              <input 
+                                value={t.regex} 
+                                onChange={(e) => {
+                                  const n = [...botTriggers];
+                                  n[i].regex = e.target.value;
+                                  setBotTriggers(n);
+                                }} 
+                                placeholder="Regex (e.g. (?i)hello)" 
+                                className={`${inputClass} font-mono text-[11px] flex-1 !mb-0`} 
+                              />
+                              <input 
+                                value={t.reply} 
+                                onChange={(e) => {
+                                  const n = [...botTriggers];
+                                  n[i].reply = e.target.value;
+                                  setBotTriggers(n);
+                                }} 
+                                placeholder="Reply" 
+                                className={`${inputClass} flex-1 !mb-0 text-[11px]`} 
+                              />
+                              <button 
+                                onClick={() => setBotTriggers(botTriggers.filter((_, idx) => idx !== i))}
+                                className="p-2.5 text-rose-400 bg-rose-500/10 rounded-none hover:bg-rose-500/20 border border-rose-500/20 transition-colors"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </section>
+                )}
+              </div>
+              
+              <div className="p-6 border-t border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] flex justify-end gap-3 shrink-0">
+                <button onClick={() => setIsBotModalOpen(false)} className={`${actionButtonClass} bg-[var(--admin-surface-bg)] text-[var(--admin-text)] hover:opacity-80`}>
+                  Cancel
+                </button>
+                <button 
+                  onClick={() => {
+                    void createBotDefinition();
+                    setIsBotModalOpen(false);
+                  }} 
+                  className={`${actionButtonClass} bg-cyan-500 text-[#04131b] hover:opacity-90`}
+                >
+                  <CheckCircle2 size={16} />
+                  Save Definition
+                </button>
+              </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>

@@ -29,6 +29,7 @@ defmodule OmeglePhoenix.Application do
       {Finch, name: OmeglePhoenixFinch, pools: %{default: [size: 10]}},
       {Phoenix.PubSub, name: OmeglePhoenix.PubSub},
       {Task.Supervisor, name: OmeglePhoenix.TaskSupervisor},
+      OmeglePhoenix.Bots.Supervisor,
       OmeglePhoenix.Redis,
       OmeglePhoenix.ClusterConnector,
       OmeglePhoenix.Metrics,

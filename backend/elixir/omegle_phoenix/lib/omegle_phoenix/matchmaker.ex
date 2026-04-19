@@ -440,21 +440,29 @@ defmodule OmeglePhoenix.Matchmaker do
             Enum.each(expired_sessions, fn session_id ->
               case OmeglePhoenix.SessionManager.get_session(session_id) do
                 {:ok, session} when session.status == :waiting ->
-                  with :ok <- leave_queue(session_id),
-                       {:ok, _updated_session} <-
-                         OmeglePhoenix.SessionManager.update_session(session_id, %{
-                           status: :disconnecting
-                         }) do
-                    OmeglePhoenix.Router.notify_timeout(session_id)
+                  case OmeglePhoenix.Bots.maybe_assign_waiting_session(session) do
+                    :matched ->
+                      :telemetry.execute([:omegle_phoenix, :matchmaking, :bot_assigned], %{count: 1}, %{
+                        session_id: session_id
+                      })
 
-                    :telemetry.execute([:omegle_phoenix, :matchmaking, :timeout], %{count: 1}, %{
-                      session_id: session_id
-                    })
-                  else
-                    {:error, reason} ->
-                      Logger.warning(
-                        "Failed to time out matchmaking session #{session_id}: #{inspect(reason)}"
-                      )
+                    _ ->
+                      with :ok <- leave_queue(session_id),
+                           {:ok, _updated_session} <-
+                             OmeglePhoenix.SessionManager.update_session(session_id, %{
+                               status: :disconnecting
+                             }) do
+                        OmeglePhoenix.Router.notify_timeout(session_id)
+
+                        :telemetry.execute([:omegle_phoenix, :matchmaking, :timeout], %{count: 1}, %{
+                          session_id: session_id
+                        })
+                      else
+                        {:error, reason} ->
+                          Logger.warning(
+                            "Failed to time out matchmaking session #{session_id}: #{inspect(reason)}"
+                          )
+                      end
                   end
 
                 {:error, reason} ->
@@ -685,6 +693,10 @@ defmodule OmeglePhoenix.Matchmaker do
               not pairable_session?(session2) ->
                 {:retry, :session2_removed}
 
+              bot_session?(session1) and bot_session?(session2) ->
+                _ = OmeglePhoenix.Bots.disconnect_bot_collision(session1, session2)
+                {:retry, :bot_collision}
+
               true ->
                 case banned_pair_result(session1, session2) do
                   nil ->
@@ -716,7 +728,8 @@ defmodule OmeglePhoenix.Matchmaker do
                           common_interests,
                           match_generation,
                           updated_route2,
-                          owner_node2
+                          owner_node2,
+                          match_partner_meta(updated_session2, updated_session1)
                         )
 
                         OmeglePhoenix.Router.notify_match(
@@ -725,7 +738,8 @@ defmodule OmeglePhoenix.Matchmaker do
                           common_interests,
                           match_generation,
                           updated_route1,
-                          owner_node1
+                          owner_node1,
+                          match_partner_meta(updated_session1, updated_session2)
                         )
 
                         :telemetry.execute(
@@ -805,6 +819,28 @@ defmodule OmeglePhoenix.Matchmaker do
 
   defp pairable_session?(session) do
     session.status == :waiting and is_nil(session.partner_id)
+  end
+
+  defp match_partner_meta(partner_session, current_session) do
+    %{
+      session_kind: session_kind_string(partner_session),
+      bot_type: bot_type_value(partner_session),
+      reportable: Map.get(partner_session, :session_kind) != :bot,
+      video_enabled:
+        Map.get(current_session.preferences, "mode", "text") == "video" and
+          Map.get(partner_session, :session_kind) != :bot and
+          Map.get(current_session, :session_kind) != :bot
+    }
+  end
+
+  defp session_kind_string(%{session_kind: :bot}), do: "bot"
+  defp session_kind_string(_session), do: "human"
+
+  defp bot_type_value(%{session_kind: :bot}), do: "engagement"
+  defp bot_type_value(_session), do: nil
+
+  defp bot_session?(session) do
+    Map.get(session, :session_kind) == :bot
   end
 
   defp maybe_run_pairing_test_hook(stage, session1, session2) do

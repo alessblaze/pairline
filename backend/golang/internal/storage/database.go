@@ -168,7 +168,14 @@ func NewDatabase() *Database {
 			panic(fmt.Errorf("ping database: %w", err))
 		}
 
-		if err := db.AutoMigrate(&AdminAccount{}, &Report{}, &Ban{}, &BannedWord{}, &AdminSetting{}, &AdminActivityLog{}); err != nil {
+		if err := db.AutoMigrate(
+			&AdminAccount{},
+			&Report{},
+			&Ban{},
+			&BannedWord{},
+			&AdminSetting{},
+			&AdminActivityLog{},
+		); err != nil {
 			panic(fmt.Errorf("auto migrate database: %w", err))
 		}
 

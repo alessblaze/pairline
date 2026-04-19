@@ -153,6 +153,15 @@ defmodule OmeglePhoenixWeb.RoomChannel do
              if session && session.partner_id do
                reset_match(session_id, session.partner_id, "partner skipped")
 
+               # Reset our status to waiting so we can be matched again
+               # since reset_match now sets both parties to :disconnecting.
+               {:ok, _updated_session} =
+                 OmeglePhoenix.SessionManager.update_session(session_id, %{
+                   status: :waiting,
+                   signaling_ready: false,
+                   webrtc_started: false
+                 })
+
                case OmeglePhoenix.Matchmaker.join_queue(session_id, session.preferences) do
                  :ok ->
                    :telemetry.execute([:omegle_phoenix, :room, :skipped], %{count: 1}, %{
@@ -692,10 +701,20 @@ defmodule OmeglePhoenixWeb.RoomChannel do
 
   def handle_info(
         {:router_match, partner_session_id, common_interests, match_generation, partner_route,
-         partner_owner_node},
+         partner_owner_node, partner_meta},
         socket
       ) do
-    push(socket, "match", %{peer_id: partner_session_id, common_interests: common_interests})
+    partner_kind = normalize_partner_kind(partner_meta)
+    video_enabled = partner_video_enabled(socket, partner_kind, partner_meta)
+
+    push(socket, "match", %{
+      peer_id: partner_session_id,
+      common_interests: common_interests,
+      partner_session_kind: partner_kind,
+      partner_bot_type: normalize_partner_bot_type(partner_meta),
+      reportable: partner_kind != "bot",
+      video_enabled: video_enabled
+    })
 
     {:noreply,
      socket
@@ -807,6 +826,8 @@ defmodule OmeglePhoenixWeb.RoomChannel do
             case OmeglePhoenix.SessionManager.get_session(updated_session.partner_id) do
               {:ok, partner_session}
               when partner_session.signaling_ready == true and
+                     updated_session.session_kind != :bot and
+                     partner_session.session_kind != :bot and
                      updated_session.webrtc_started != true and
                      partner_session.webrtc_started != true ->
                 # Combine signaling_ready + webrtc_started into a single
@@ -990,6 +1011,36 @@ defmodule OmeglePhoenixWeb.RoomChannel do
       {:retry_webrtc_ready, session_id, partner_id, generation, attempt},
       delay_ms
     )
+  end
+
+  defp normalize_partner_kind(%{session_kind: "bot"}), do: "bot"
+  defp normalize_partner_kind(%{"session_kind" => "bot"}), do: "bot"
+  defp normalize_partner_kind(_partner_meta), do: "human"
+
+  defp normalize_partner_bot_type(%{bot_type: bot_type}) when is_binary(bot_type) and bot_type != "",
+    do: bot_type
+
+  defp normalize_partner_bot_type(%{"bot_type" => bot_type})
+       when is_binary(bot_type) and bot_type != "",
+       do: bot_type
+
+  defp normalize_partner_bot_type(_partner_meta), do: nil
+
+  defp partner_video_enabled(socket, "bot", _partner_meta) do
+    socket.assigns[:mode] == "video" and false
+  end
+
+  defp partner_video_enabled(socket, _partner_kind, %{video_enabled: value}) when is_boolean(value) do
+    socket.assigns[:mode] == "video" and value
+  end
+
+  defp partner_video_enabled(socket, _partner_kind, %{"video_enabled" => value})
+       when is_boolean(value) do
+    socket.assigns[:mode] == "video" and value
+  end
+
+  defp partner_video_enabled(socket, _partner_kind, _partner_meta) do
+    socket.assigns[:mode] == "video"
   end
 
   defp create_and_queue_session(socket, client_ip, preferences, connected_type) do

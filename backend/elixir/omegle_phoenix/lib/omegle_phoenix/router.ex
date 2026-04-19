@@ -106,7 +106,8 @@ defmodule OmeglePhoenix.Router do
         common_interests \\ [],
         match_generation \\ nil,
         route_hint \\ nil,
-        owner_hint \\ nil
+        owner_hint \\ nil,
+        partner_meta \\ %{}
       ) do
     Tracer.with_span "router.notify_match", %{kind: :internal} do
       Tracing.annotate_internal("router.notify_match")
@@ -120,7 +121,7 @@ defmodule OmeglePhoenix.Router do
       route(
         session_id,
         {:router_match, partner_session_id, common_interests, match_generation, route_hint,
-         owner_hint}
+         owner_hint, partner_meta}
       )
     end
   end

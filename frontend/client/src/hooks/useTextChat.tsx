@@ -112,8 +112,9 @@ export function useTextChat(wsUrl: string) {
         beginNewChatEpoch();
         const peerIdMatch = message.peer_id;
         const common = (message as any).common_interests || [];
+        const isBotMatch = message.partner_session_kind === 'bot';
         setPeerId(peerIdMatch || '');
-        setReportPeerId(peerIdMatch || null);
+        setReportPeerId(!isBotMatch && message.reportable !== false ? (peerIdMatch || null) : null);
         setStatus('connected');
         setReconnectMessageVisible(false);
         setPeerTyping(false);
@@ -123,21 +124,22 @@ export function useTextChat(wsUrl: string) {
           peerTypingTimeoutRef.current = null;
         }
 
+        const systemMessages: ChatMessage[] = [];
         if (common.length > 0) {
-          setMessages([{
+          systemMessages.push({
             id: crypto.randomUUID(),
             text: `You both like: ${common.join(', ')}`,
             sender: 'system',
             timestamp: Date.now()
-          }]);
-        } else {
-          setMessages([{
-            id: crypto.randomUUID(),
-            text: `You are talking to a random stranger.`,
-            sender: 'system',
-            timestamp: Date.now()
-          }]);
+          });
         }
+        systemMessages.push({
+          id: crypto.randomUUID(),
+          text: `You are talking to a random stranger.`,
+          sender: 'system',
+          timestamp: Date.now()
+        });
+        setMessages(systemMessages);
         break;
 
       case 'message':

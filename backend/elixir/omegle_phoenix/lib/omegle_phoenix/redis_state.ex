@@ -198,7 +198,7 @@ defmodule OmeglePhoenix.RedisState do
     return "partner_changed"
   end
   session["partner_id"] = cjson.null
-  session["status"] = "waiting"
+  session["status"] = "disconnecting"
   session["signaling_ready"] = false
   session["webrtc_started"] = false
   session["last_activity"] = tonumber(ARGV[2])

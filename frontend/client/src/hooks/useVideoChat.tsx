@@ -1050,6 +1050,8 @@ export function useVideoChat(wsUrl: string) {
         beginNewChatEpoch();
         const peerIdMatch = message.peer_id;
         const common = (message as any).common_interests || [];
+        const isBotMatch = message.partner_session_kind === 'bot';
+        const videoEnabled = message.video_enabled !== false && !isBotMatch;
         if (import.meta.env.VITE_WEBSOCKET_DEBUG === 'true') {
           console.log('Matched with peer:', peerIdMatch);
         }
@@ -1072,9 +1074,9 @@ export function useVideoChat(wsUrl: string) {
         pendingWebrtcStartRef.current = null;
 
         setPeerId(peerIdMatch || '');
-        setReportPeerId(peerIdMatch || null);
+        setReportPeerId(!isBotMatch && message.reportable !== false ? (peerIdMatch || null) : null);
         setStatus('connected');
-        setIsVideoConnecting(true);
+        setIsVideoConnecting(videoEnabled);
         setShowReconnectMessage(false);
         setPeerTyping(false);
         signalingReadySentRef.current = false;
@@ -1086,20 +1088,28 @@ export function useVideoChat(wsUrl: string) {
           peerTypingTimeoutRef.current = null;
         }
 
+        const systemMessages: ChatMessage[] = [];
         if (common.length > 0) {
-          setMessages([{
+          systemMessages.push({
             id: crypto.randomUUID(),
             text: `You both like: ${common.join(', ')}`,
             sender: 'system',
             timestamp: Date.now()
-          }]);
-        } else {
-          setMessages([{
-            id: crypto.randomUUID(),
-            text: `You are talking to a random stranger.`,
-            sender: 'system',
-            timestamp: Date.now()
-          }]);
+          });
+        }
+        systemMessages.push({
+          id: crypto.randomUUID(),
+          text: isBotMatch
+            ? `You are talking to a random stranger. Their camera is currently off.`
+            : `You are talking to a random stranger.`,
+          sender: 'system',
+          timestamp: Date.now()
+        });
+        setMessages(systemMessages);
+
+        if (!videoEnabled) {
+          resetWebRTCTransport('bot-text-only-match');
+          break;
         }
 
         // If the Go WS is already open, signal ready immediately.

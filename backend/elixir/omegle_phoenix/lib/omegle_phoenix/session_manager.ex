@@ -24,6 +24,7 @@ defmodule OmeglePhoenix.SessionManager do
     :id,
     :token,
     :ip,
+    :session_kind,
     :redis_shard,
     :match_generation,
     :status,
@@ -271,11 +272,20 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   def create_session(session_id, ip, preferences) do
+    create_session(session_id, ip, preferences, session_kind: :human)
+  end
+
+  def create_bot_session(session_id, preferences) do
+    create_session(session_id, "bot", preferences, session_kind: :bot)
+  end
+
+  def create_session(session_id, ip, preferences, opts) do
     Tracer.with_span "session_manager.create_session", %{kind: :internal} do
       Tracing.annotate_internal("session_manager.create_session")
       session_token = generate_session_token()
       now = System.system_time(:second)
       normalized_preferences = normalize_preferences(preferences)
+      session_kind = normalize_session_kind(Keyword.get(opts, :session_kind, :human))
 
       redis_shard =
         OmeglePhoenix.RedisKeys.initial_shard(
@@ -295,6 +305,7 @@ defmodule OmeglePhoenix.SessionManager do
         id: session_id,
         token: session_token,
         ip: ip,
+        session_kind: session_kind,
         redis_shard: redis_shard,
         match_generation: nil,
         status: :waiting,
@@ -587,7 +598,7 @@ defmodule OmeglePhoenix.SessionManager do
           session1
           | match_generation: nil,
             partner_id: nil,
-            status: :waiting,
+            status: :disconnecting,
             signaling_ready: false,
             webrtc_started: false
         })
@@ -597,7 +608,7 @@ defmodule OmeglePhoenix.SessionManager do
           session2
           | match_generation: nil,
             partner_id: nil,
-            status: :waiting,
+            status: :disconnecting,
             signaling_ready: false,
             webrtc_started: false
         })
@@ -829,6 +840,7 @@ defmodule OmeglePhoenix.SessionManager do
   defp deserialize_field(:status, nil), do: :waiting
   defp deserialize_field(:redis_shard, value), do: parse_redis_shard(value)
   defp deserialize_field(:status, value), do: normalize_status(value)
+  defp deserialize_field(:session_kind, value), do: normalize_session_kind(value)
   defp deserialize_field(:signaling_ready, value), do: truthy?(value)
   defp deserialize_field(:webrtc_started, value), do: truthy?(value)
   defp deserialize_field(:ban_status, value), do: truthy?(value)
@@ -884,6 +896,10 @@ defmodule OmeglePhoenix.SessionManager do
   end
 
   defp normalize_status(_value), do: :waiting
+
+  defp normalize_session_kind(:bot), do: :bot
+  defp normalize_session_kind("bot"), do: :bot
+  defp normalize_session_kind(_value), do: :human
 
   defp normalize_mode(mode, _default) when mode in ["lobby", "text", "video"], do: mode
   defp normalize_mode(_mode, default), do: default

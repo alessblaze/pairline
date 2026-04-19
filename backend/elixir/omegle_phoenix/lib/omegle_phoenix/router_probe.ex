@@ -45,14 +45,14 @@ defmodule OmeglePhoenix.RouterProbe do
         loop(session_id, notify_pid)
 
       {:router_match, partner_session_id, common_interests, match_generation, route_hint,
-       owner_hint} =
+       owner_hint, partner_meta} =
           message ->
         _ = message
 
         send(
           notify_pid,
           {:router_probe_match, session_id, partner_session_id, common_interests,
-           match_generation, route_hint, owner_hint, node()}
+           match_generation, route_hint, owner_hint, partner_meta, node()}
         )
 
         loop(session_id, notify_pid)

@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/anish/omegle/backend/golang/internal/automod"
+	"github.com/anish/omegle/backend/golang/internal/bots"
 	"github.com/anish/omegle/backend/golang/internal/handlers"
 	"github.com/anish/omegle/backend/golang/internal/middleware"
 	"github.com/anish/omegle/backend/golang/internal/observability"
@@ -106,6 +107,10 @@ func newServer(enablePublic, enableAdmin bool, serviceName string) *Server {
 	}
 	s.backgroundCtx, s.stopBackground = context.WithCancel(context.Background())
 
+	if err := bots.AutoMigrate(db.GetDB()); err != nil {
+		log.Fatalf("Failed to migrate bot models: %v", err)
+	}
+
 	traceShutdown, err := observability.InitTracing(context.Background(), serviceName)
 	if err != nil {
 		log.Printf("Failed to initialize tracing for %s: %v", serviceName, err)
@@ -141,6 +146,7 @@ func newServer(enablePublic, enableAdmin bool, serviceName string) *Server {
 		s.syncActiveBansToRedis()
 		s.syncBannedWordsConfigToRedis()
 		s.syncBannedWordsToRedis()
+		s.syncBotsToRedis()
 		s.startBanSyncLoop()
 		s.autoModerator = automod.NewWorker(s.db.GetDB(), s.redis)
 		if s.autoModerator != nil {
@@ -219,6 +225,20 @@ func (s *Server) syncActiveBansToRedis() {
 
 	if err := s.reconcileBanKeys(ctx, bans); err != nil {
 		log.Printf("Failed reconciling Redis bans: %v", err)
+	}
+}
+
+func (s *Server) syncBotsToRedis() {
+	if s == nil || s.redis == nil || s.db == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	syncer := bots.NewRedisSnapshotSyncer(s.redis)
+	if err := syncer.Sync(ctx, s.db.GetDB(), "system"); err != nil {
+		log.Printf("Failed to sync bots snapshot to Redis: %v", err)
 	}
 }
 
@@ -590,6 +610,9 @@ func (s *Server) setupRoutes() {
 				moderation.GET("/banned-words", handlers.GetBannedWordsHandlerGin)
 				moderation.GET("/banned-words/settings", handlers.GetBannedWordsSettingsHandlerGin)
 				moderation.GET("/auto-moderation/settings", handlers.GetAutoModerationSettingsHandlerGin)
+				moderation.GET("/bots/settings", bots.GetSettingsHandler)
+				moderation.GET("/bots", bots.ListDefinitionsHandler)
+				moderation.GET("/bots/:id", bots.GetDefinitionHandler)
 
 				enforcement := adminAuth.Group("")
 				enforcement.Use(s.RoleAuthMiddleware([]string{"moderator", "admin", "root"}))
@@ -605,7 +628,26 @@ func (s *Server) setupRoutes() {
 				adminOnlyEnforcement.GET("/accounts", handlers.ListAdminAccountsHandlerGin)
 				adminOnlyEnforcement.POST("/accounts", handlers.CreateAdminHandlerGin)
 				adminOnlyEnforcement.DELETE("/accounts/:username", handlers.DeleteAdminHandlerGin)
-				
+				botSyncer := bots.NewRedisSnapshotSyncer(s.redis)
+				adminOnlyEnforcement.PUT("/bots/settings", func(c *gin.Context) {
+					bots.UpdateSettingsHandler(c, botSyncer)
+				})
+				adminOnlyEnforcement.POST("/bots", func(c *gin.Context) {
+					bots.CreateDefinitionHandler(c, botSyncer)
+				})
+				adminOnlyEnforcement.PUT("/bots/:id", func(c *gin.Context) {
+					bots.UpdateDefinitionHandler(c, botSyncer)
+				})
+				adminOnlyEnforcement.POST("/bots/:id/activate", func(c *gin.Context) {
+					bots.ActivateDefinitionHandler(c, botSyncer)
+				})
+				adminOnlyEnforcement.POST("/bots/:id/deactivate", func(c *gin.Context) {
+					bots.DeactivateDefinitionHandler(c, botSyncer)
+				})
+				adminOnlyEnforcement.DELETE("/bots/:id", func(c *gin.Context) {
+					bots.DeleteDefinitionHandler(c, botSyncer)
+				})
+
 				var enqueueAutoModeration func(string)
 				if s.autoModerator != nil {
 					enqueueAutoModeration = s.autoModerator.Enqueue

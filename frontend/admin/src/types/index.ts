@@ -107,6 +107,51 @@ export interface AdminAccount {
   is_active: boolean;
 }
 
+export interface BotSettings {
+  enabled: boolean;
+  engagement_enabled: boolean;
+  ai_enabled: boolean;
+  rollout_percent: number;
+  max_concurrent_runs: number;
+  emergency_stop: boolean;
+}
+
+export interface ScriptTrigger {
+  regex: string;
+  reply: string;
+}
+
+export interface ScriptJSON {
+  opening_messages?: string[];
+  reply_messages?: string[];
+  fallback_message?: string;
+  closing_message?: string;
+  triggers?: ScriptTrigger[];
+}
+
+export interface BotDefinition {
+  id: string;
+  name: string;
+  slug: string;
+  bot_type: 'engagement' | 'ai';
+  is_active: boolean;
+  description: string;
+  match_modes_json: string[];
+  bot_count: number;
+  traffic_weight: number;
+  targeting_json: Record<string, unknown>;
+  script_json: ScriptJSON | Record<string, unknown>;
+  ai_config_json: Record<string, unknown>;
+  message_limit: number;
+  session_ttl_seconds: number;
+  idle_timeout_seconds: number;
+  disconnect_reason: string;
+  created_by_username: string;
+  updated_by_username: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface InfraSummary {
   healthy_services: number;
   degraded_services: number;

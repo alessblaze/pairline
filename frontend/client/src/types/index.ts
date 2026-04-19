@@ -19,6 +19,10 @@ export interface Message {
   type: 'offer' | 'answer' | 'ice' | 'message' | 'match' | 'disconnect' | 'disconnected' | 'error' | 'banned' | 'timeout' | 'stopped' | 'typing' | 'pong' | 'connected' | 'searching' | 'skipped' | 'webrtc_ready' | 'webrtc_start' | 'system';
   data?: any;
   peer_id?: string;
+  partner_session_kind?: 'human' | 'bot';
+  partner_bot_type?: string;
+  video_enabled?: boolean;
+  reportable?: boolean;
   session_id?: string;
   session_token?: string;
 }
