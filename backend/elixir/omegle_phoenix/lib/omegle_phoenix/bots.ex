@@ -5,8 +5,11 @@ defmodule OmeglePhoenix.Bots do
   alias OmeglePhoenix.Bots.ScriptWorker
 
   @snapshot_key "bots:definitions:snapshot"
-  @active_run_key_prefix "bots:active_runs:definition:"
-  @global_active_run_key "bots:active_runs:global"
+  # Keep both keys in the same Redis Cluster hash slot so the Lua scripts can
+  # atomically reserve and release shared/global capacity.
+  @active_run_hash_tag "{bot-active-runs}"
+  @active_run_key_prefix "bots:active_runs:" <> @active_run_hash_tag <> ":definition:"
+  @global_active_run_key "bots:active_runs:" <> @active_run_hash_tag <> ":global"
   @reserve_slot_script """
   local global_current = tonumber(redis.call('GET', KEYS[1]) or '0')
   local definition_current = tonumber(redis.call('GET', KEYS[2]) or '0')

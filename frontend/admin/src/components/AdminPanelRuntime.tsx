@@ -927,7 +927,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
           bot_type: botType,
           description: botDescription.trim(),
           match_modes: matchModes,
-          bot_count: botType === 'engagement' ? Math.max(1, Number(botCount) || 1) : 1,
+          bot_count: Math.max(1, Number(botCount) || 1),
           message_limit: botMessageLimit,
           session_ttl_seconds: botSessionTtl,
           idle_timeout_seconds: botIdleTimeout,

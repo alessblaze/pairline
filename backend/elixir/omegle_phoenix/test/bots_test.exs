@@ -30,8 +30,8 @@ else
           "EVAL",
           _script,
           "2",
-          "bots:active_runs:global",
-          "bots:active_runs:definition:def-1",
+          "bots:active_runs:{bot-active-runs}:global",
+          "bots:active_runs:{bot-active-runs}:definition:def-1",
           "7",
           "3",
           "360"
@@ -54,8 +54,8 @@ else
           "EVAL",
           _script,
           "2",
-          "bots:active_runs:global",
-          "bots:active_runs:definition:def-2",
+          "bots:active_runs:{bot-active-runs}:global",
+          "bots:active_runs:{bot-active-runs}:definition:def-2",
           "5",
           "2",
           "180"
@@ -74,7 +74,13 @@ else
 
       EredisClusterStub.put(:q, fn
         :omegle_phoenix_redis_cluster,
-        ["EVAL", _script, "2", "bots:active_runs:global", "bots:active_runs:definition:def-3"] ->
+        [
+          "EVAL",
+          _script,
+          "2",
+          "bots:active_runs:{bot-active-runs}:global",
+          "bots:active_runs:{bot-active-runs}:definition:def-3"
+        ] ->
           send(parent, :release_called)
           {:ok, 0}
       end)
