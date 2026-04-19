@@ -203,7 +203,7 @@ defmodule OmeglePhoenix.Bots do
       _ ->
         false
     end)
-    |> Enum.sort_by(&definition_priority/1, :desc)
+    |> Enum.sort_by(&definition_priority(&1, settings), :desc)
   end
 
   defp matching_definitions(_snapshot, _session), do: []
@@ -294,8 +294,12 @@ defmodule OmeglePhoenix.Bots do
 
   defp active_run_key(definition_id), do: @active_run_key_prefix <> definition_id
 
-  defp definition_priority(definition) do
-    {definition_traffic_weight(definition), definition_capacity(definition)}
+  defp definition_priority(definition, settings) do
+    {
+      bot_type_priority(definition, settings),
+      definition_traffic_weight(definition),
+      definition_capacity(definition)
+    }
   end
 
   defp definition_traffic_weight(definition) do
@@ -309,6 +313,20 @@ defmodule OmeglePhoenix.Bots do
     |> Map.get("bot_count", 1)
     |> normalize_positive_integer(1)
   end
+
+  defp bot_type_priority(%{"bot_type" => "engagement"}, settings) when is_map(settings) do
+    settings
+    |> Map.get("engagement_priority", 100)
+    |> normalize_non_negative_integer(100)
+  end
+
+  defp bot_type_priority(%{"bot_type" => "ai"}, settings) when is_map(settings) do
+    settings
+    |> Map.get("ai_priority", 100)
+    |> normalize_non_negative_integer(100)
+  end
+
+  defp bot_type_priority(_definition, _settings), do: 100
 
   defp max_concurrent_runs(settings) when is_map(settings) do
     settings
@@ -366,4 +384,17 @@ defmodule OmeglePhoenix.Bots do
   end
 
   defp normalize_positive_integer(_value, default), do: default
+
+  defp normalize_non_negative_integer(value, _default)
+       when is_integer(value) and value >= 0,
+       do: value
+
+  defp normalize_non_negative_integer(value, default) when is_binary(value) do
+    case Integer.parse(value) do
+      {parsed, ""} when parsed >= 0 -> parsed
+      _ -> default
+    end
+  end
+
+  defp normalize_non_negative_integer(_value, default), do: default
 end

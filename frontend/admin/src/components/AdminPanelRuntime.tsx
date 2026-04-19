@@ -115,6 +115,34 @@ const readAIBotConfig = (config: Record<string, unknown> | AIBotConfig): AIBotCo
   max_tokens: typeof config.max_tokens === 'number' ? config.max_tokens : 300,
 });
 
+type BotSelectionMode = 'balanced' | 'prefer_engagement' | 'strong_engagement' | 'prefer_ai' | 'strong_ai' | 'custom';
+
+const botPriorityPresets: Array<{
+  value: Exclude<BotSelectionMode, 'custom'>;
+  label: string;
+  engagementPriority: number;
+  aiPriority: number;
+}> = [
+  { value: 'balanced', label: 'Balanced', engagementPriority: 100, aiPriority: 100 },
+  { value: 'prefer_engagement', label: 'Prefer Engagement', engagementPriority: 200, aiPriority: 100 },
+  { value: 'strong_engagement', label: 'Strong Engagement', engagementPriority: 400, aiPriority: 100 },
+  { value: 'prefer_ai', label: 'Prefer AI', engagementPriority: 100, aiPriority: 200 },
+  { value: 'strong_ai', label: 'Strong AI', engagementPriority: 100, aiPriority: 400 },
+];
+
+const getBotSelectionMode = (settings: BotSettings | null): BotSelectionMode => {
+  const engagementPriority = settings?.engagement_priority ?? 100;
+  const aiPriority = settings?.ai_priority ?? 100;
+
+  const matchedPreset = botPriorityPresets.find(
+    (preset) =>
+      preset.engagementPriority === engagementPriority &&
+      preset.aiPriority === aiPriority,
+  );
+
+  return matchedPreset?.value ?? 'custom';
+};
+
 export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelRuntimeProps) {
   const navigate = useNavigate();
   const { isDark, toggleTheme } = useTheme();
@@ -2691,6 +2719,12 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         </button>
                       </div>
 
+                      <div className="rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] px-4 py-3">
+                        <p className="text-[11px] leading-5 text-[var(--admin-text-soft)]">
+                          Match selection order: dropdown preference first, then each definition&apos;s traffic weight, then pool size.
+                        </p>
+                      </div>
+
                       <div className="grid gap-4 lg:grid-cols-2">
                         <button
                           type="button"
@@ -2763,6 +2797,49 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                             disabled={!canManageBots}
                             className={inputClass}
                           />
+                        </div>
+                      </div>
+
+                      <div className="grid gap-4 lg:grid-cols-2">
+                        <div>
+                          <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Bot Selection Mode</label>
+                          <select
+                            value={getBotSelectionMode(botSettings)}
+                            onChange={(e) => {
+                              const selectedPreset = botPriorityPresets.find((preset) => preset.value === e.target.value);
+                              if (!selectedPreset) return;
+                              void updateBotSettings({
+                                engagement_priority: selectedPreset.engagementPriority,
+                                ai_priority: selectedPreset.aiPriority,
+                              });
+                            }}
+                            disabled={!canManageBots}
+                            className={compactSelectClass}
+                          >
+                            {botPriorityPresets.map((preset) => (
+                              <option key={preset.value} value={preset.value}>
+                                {preset.label}
+                              </option>
+                            ))}
+                            <option value="custom" disabled>
+                              Custom
+                            </option>
+                          </select>
+                          <p className="text-[11px] text-[var(--admin-text-soft)]">
+                            Choose whether matchmaking should stay balanced or prefer engagement bots or AI bots first.
+                          </p>
+                        </div>
+                        <div className="rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] px-4 py-3">
+                          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Current Priority Values</p>
+                          <p className="mt-2 text-sm text-[var(--admin-text)]">
+                            Engagement: <span className="font-mono">{botSettings?.engagement_priority ?? 100}</span>
+                          </p>
+                          <p className="mt-1 text-sm text-[var(--admin-text)]">
+                            AI: <span className="font-mono">{botSettings?.ai_priority ?? 100}</span>
+                          </p>
+                          <p className="mt-2 text-[11px] leading-5 text-[var(--admin-text-soft)]">
+                            Custom appears if the saved backend values do not match one of the preset modes.
+                          </p>
                         </div>
                       </div>
                     </div>

@@ -21,15 +21,19 @@ import (
 )
 
 const (
-	SettingEnabledKey           = "bots.enabled"
-	SettingEngagementEnabledKey = "bots.engagement.enabled"
-	SettingAIEnabledKey         = "bots.ai.enabled"
-	SettingRolloutPercentKey    = "bots.match.rollout_percent"
-	SettingMaxConcurrentKey     = "bots.max_concurrent_runs"
-	SettingEmergencyStopKey     = "bots.emergency_stop"
+	SettingEnabledKey            = "bots.enabled"
+	SettingEngagementEnabledKey  = "bots.engagement.enabled"
+	SettingAIEnabledKey          = "bots.ai.enabled"
+	SettingRolloutPercentKey     = "bots.match.rollout_percent"
+	SettingMaxConcurrentKey      = "bots.max_concurrent_runs"
+	SettingEngagementPriorityKey = "bots.engagement.priority"
+	SettingAIPriorityKey         = "bots.ai.priority"
+	SettingEmergencyStopKey      = "bots.emergency_stop"
 
-	defaultRolloutPercent    = 0
-	defaultMaxConcurrentRuns = 100
+	defaultRolloutPercent     = 0
+	defaultMaxConcurrentRuns  = 100
+	defaultEngagementPriority = 100
+	defaultAIPriority         = 100
 )
 
 var slugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{2,62}$`)
@@ -40,6 +44,8 @@ type SettingsResponse struct {
 	AIEnabled           bool `json:"ai_enabled"`
 	RolloutPercent      int  `json:"rollout_percent"`
 	MaxConcurrentRuns   int  `json:"max_concurrent_runs"`
+	EngagementPriority  int  `json:"engagement_priority"`
+	AIPriority          int  `json:"ai_priority"`
 	EmergencyStop       bool `json:"emergency_stop"`
 	EnabledConfigured   bool `json:"enabled_configured"`
 	AIConfigured        bool `json:"ai_configured"`
@@ -70,12 +76,14 @@ func UpdateSettingsHandler(c *gin.Context, sync SnapshotSyncer) {
 	defer span.End()
 
 	var req struct {
-		Enabled           *bool `json:"enabled"`
-		EngagementEnabled *bool `json:"engagement_enabled"`
-		AIEnabled         *bool `json:"ai_enabled"`
-		RolloutPercent    *int  `json:"rollout_percent"`
-		MaxConcurrentRuns *int  `json:"max_concurrent_runs"`
-		EmergencyStop     *bool `json:"emergency_stop"`
+		Enabled            *bool `json:"enabled"`
+		EngagementEnabled  *bool `json:"engagement_enabled"`
+		AIEnabled          *bool `json:"ai_enabled"`
+		RolloutPercent     *int  `json:"rollout_percent"`
+		MaxConcurrentRuns  *int  `json:"max_concurrent_runs"`
+		EngagementPriority *int  `json:"engagement_priority"`
+		AIPriority         *int  `json:"ai_priority"`
+		EmergencyStop      *bool `json:"emergency_stop"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -89,6 +97,8 @@ func UpdateSettingsHandler(c *gin.Context, sync SnapshotSyncer) {
 		req.AIEnabled == nil &&
 		req.RolloutPercent == nil &&
 		req.MaxConcurrentRuns == nil &&
+		req.EngagementPriority == nil &&
+		req.AIPriority == nil &&
 		req.EmergencyStop == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "No bot settings were provided"})
 		return
@@ -104,6 +114,16 @@ func UpdateSettingsHandler(c *gin.Context, sync SnapshotSyncer) {
 		return
 	}
 
+	if req.EngagementPriority != nil && (*req.EngagementPriority < 0 || *req.EngagementPriority > 100000) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "engagement_priority must be between 0 and 100000"})
+		return
+	}
+
+	if req.AIPriority != nil && (*req.AIPriority < 0 || *req.AIPriority > 100000) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ai_priority must be between 0 and 100000"})
+		return
+	}
+
 	username, ok := getContextString(c, "username")
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
@@ -115,7 +135,7 @@ func UpdateSettingsHandler(c *gin.Context, sync SnapshotSyncer) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 
-	updates := make([]storage.AdminSetting, 0, 6)
+	updates := make([]storage.AdminSetting, 0, 8)
 	if req.Enabled != nil {
 		updates = append(updates, storage.AdminSetting{
 			Key:               SettingEnabledKey,
@@ -148,6 +168,20 @@ func UpdateSettingsHandler(c *gin.Context, sync SnapshotSyncer) {
 		updates = append(updates, storage.AdminSetting{
 			Key:               SettingMaxConcurrentKey,
 			Value:             strconv.Itoa(*req.MaxConcurrentRuns),
+			UpdatedByUsername: username,
+		})
+	}
+	if req.EngagementPriority != nil {
+		updates = append(updates, storage.AdminSetting{
+			Key:               SettingEngagementPriorityKey,
+			Value:             strconv.Itoa(*req.EngagementPriority),
+			UpdatedByUsername: username,
+		})
+	}
+	if req.AIPriority != nil {
+		updates = append(updates, storage.AdminSetting{
+			Key:               SettingAIPriorityKey,
+			Value:             strconv.Itoa(*req.AIPriority),
 			UpdatedByUsername: username,
 		})
 	}
@@ -679,6 +713,8 @@ func LoadSettings(ctx context.Context, db *gorm.DB) (SettingsResponse, error) {
 		SettingAIEnabledKey,
 		SettingRolloutPercentKey,
 		SettingMaxConcurrentKey,
+		SettingEngagementPriorityKey,
+		SettingAIPriorityKey,
 		SettingEmergencyStopKey,
 	)
 	if err != nil {
@@ -695,6 +731,8 @@ func LoadSettings(ctx context.Context, db *gorm.DB) (SettingsResponse, error) {
 		AIEnabled:           parseBoolSetting(aiValue, true),
 		RolloutPercent:      parseConfiguredInt(values[SettingRolloutPercentKey], defaultRolloutPercent),
 		MaxConcurrentRuns:   parseConfiguredInt(values[SettingMaxConcurrentKey], defaultMaxConcurrentRuns),
+		EngagementPriority:  parseConfiguredInt(values[SettingEngagementPriorityKey], defaultEngagementPriority),
+		AIPriority:          parseConfiguredInt(values[SettingAIPriorityKey], defaultAIPriority),
 		EmergencyStop:       parseBoolSetting(emergencyValue, false),
 		EnabledConfigured:   enabledConfigured,
 		AIConfigured:        aiConfigured,

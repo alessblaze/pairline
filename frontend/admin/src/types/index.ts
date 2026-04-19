@@ -113,6 +113,8 @@ export interface BotSettings {
   ai_enabled: boolean;
   rollout_percent: number;
   max_concurrent_runs: number;
+  engagement_priority: number;
+  ai_priority: number;
   emergency_stop: boolean;
 }
 
