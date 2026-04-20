@@ -70,7 +70,8 @@ import {
   X,
   Bot,
   Sparkles,
-  Play
+  Play,
+  Pencil
 } from 'lucide-react';
 import type {
   AdminAccount,
@@ -104,6 +105,22 @@ const readScriptLines = (script: ScriptJSON | Record<string, unknown>, key: stri
   return Array.isArray(scriptRecord[key]) ? (scriptRecord[key] as unknown[]).filter((value): value is string => typeof value === 'string') : [];
 };
 
+const readScriptString = (script: ScriptJSON | Record<string, unknown>, key: string) => {
+  const scriptRecord = script as Record<string, unknown>;
+  return typeof scriptRecord[key] === 'string' ? (scriptRecord[key] as string) : '';
+};
+
+const readScriptTriggers = (script: ScriptJSON | Record<string, unknown>) => {
+  const scriptRecord = script as Record<string, unknown>;
+  if (!Array.isArray(scriptRecord.triggers)) return [];
+  return (scriptRecord.triggers as unknown[]).flatMap((trigger) => {
+    if (!trigger || typeof trigger !== 'object') return [];
+    const triggerRecord = trigger as Record<string, unknown>;
+    if (typeof triggerRecord.regex !== 'string' || typeof triggerRecord.reply !== 'string') return [];
+    return [{ regex: triggerRecord.regex, reply: triggerRecord.reply }];
+  });
+};
+
 const readAIBotConfig = (config: Record<string, unknown> | AIBotConfig): AIBotConfig => ({
   enabled: typeof config.enabled === 'boolean' ? config.enabled : true,
   provider: typeof config.provider === 'string' ? config.provider : 'openai-compatible',
@@ -114,6 +131,8 @@ const readAIBotConfig = (config: Record<string, unknown> | AIBotConfig): AIBotCo
   temperature: typeof config.temperature === 'number' ? config.temperature : 0.7,
   max_tokens: typeof config.max_tokens === 'number' ? config.max_tokens : 300,
 });
+
+const defaultBotAISystemPrompt = 'You are a friendly anonymous chat partner. Keep replies short, natural, and safe for a general audience.';
 
 type BotSelectionMode = 'balanced' | 'prefer_engagement' | 'strong_engagement' | 'prefer_ai' | 'strong_ai' | 'custom';
 
@@ -172,6 +191,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
   const [updatingAutoModerationEnabled, setUpdatingAutoModerationEnabled] = useState(false);
   const [botSettings, setBotSettings] = useState<BotSettings | null>(null);
   const [botDefinitions, setBotDefinitions] = useState<BotDefinition[]>([]);
+  const [editingBotId, setEditingBotId] = useState<string | null>(null);
   const [botName, setBotName] = useState('');
   const [botSlug, setBotSlug] = useState('');
   const [botDescription, setBotDescription] = useState('');
@@ -193,7 +213,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
   const [botAIApiUrl, setBotAIApiUrl] = useState('');
   const [botAIApiToken, setBotAIApiToken] = useState('');
   const [botAIModel, setBotAIModel] = useState('');
-  const [botAISystemPrompt, setBotAISystemPrompt] = useState('You are a friendly anonymous chat partner. Keep replies short, natural, and safe for a general audience.');
+  const [botAISystemPrompt, setBotAISystemPrompt] = useState(defaultBotAISystemPrompt);
   const [botAITemperature, setBotAITemperature] = useState('0.7');
   const [botAIMaxTokens, setBotAIMaxTokens] = useState('300');
   const [currentTab, setCurrentTab] = useState<'reports' | 'bans' | 'bannedWords' | 'bots' | 'accounts' | 'infra'>(__mockState?.currentTab ?? 'reports');
@@ -915,8 +935,73 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
     }
   };
 
-  const createBotDefinition = async () => {
-    if (!canManageBots) return false;
+  const resetBotForm = () => {
+    setEditingBotId(null);
+    setBotName('');
+    setBotSlug('');
+    setBotDescription('');
+    setBotType('engagement');
+    setBotCount('1');
+    setBotTrafficWeight('100');
+    setBotOpeningMessages('hey');
+    setBotReplyMessages('nice\n tell me more');
+    setBotFallbackMessage('tell me more');
+    setBotClosingMessage('gotta go');
+    setBotSupportsText(true);
+    setBotSupportsVideo(false);
+    setBotMessageLimit(4);
+    setBotSessionTtl(300);
+    setBotIdleTimeout(45);
+    setBotTriggers([]);
+    setBotAIProvider('openai-compatible');
+    setBotAIApiUrl('');
+    setBotAIApiToken('');
+    setBotAIModel('');
+    setBotAISystemPrompt(defaultBotAISystemPrompt);
+    setBotAITemperature('0.7');
+    setBotAIMaxTokens('300');
+  };
+
+  const openCreateBotModal = () => {
+    resetBotForm();
+    setIsBotModalOpen(true);
+  };
+
+  const closeBotModal = () => {
+    setIsBotModalOpen(false);
+    setEditingBotId(null);
+  };
+
+  const openEditBotModal = (bot: BotDefinition) => {
+    const aiConfig = readAIBotConfig(bot.ai_config_json);
+    setEditingBotId(bot.id);
+    setBotName(bot.name);
+    setBotSlug(bot.slug);
+    setBotDescription(bot.description ?? '');
+    setBotType(bot.bot_type);
+    setBotCount(String(bot.bot_count));
+    setBotTrafficWeight(String(bot.traffic_weight));
+    setBotOpeningMessages(readScriptLines(bot.script_json, 'opening_messages').join('\n'));
+    setBotReplyMessages(readScriptLines(bot.script_json, 'reply_messages').join('\n'));
+    setBotFallbackMessage(readScriptString(bot.script_json, 'fallback_message'));
+    setBotClosingMessage(readScriptString(bot.script_json, 'closing_message'));
+    setBotSupportsText(bot.match_modes_json.includes('text'));
+    setBotSupportsVideo(bot.match_modes_json.includes('video'));
+    setBotMessageLimit(bot.message_limit);
+    setBotSessionTtl(bot.session_ttl_seconds);
+    setBotIdleTimeout(bot.idle_timeout_seconds);
+    setBotTriggers(readScriptTriggers(bot.script_json));
+    setBotAIProvider(aiConfig.provider || 'openai-compatible');
+    setBotAIApiUrl(aiConfig.api_url || '');
+    setBotAIApiToken(aiConfig.api_token || '');
+    setBotAIModel(aiConfig.model || '');
+    setBotAISystemPrompt(aiConfig.system_prompt || defaultBotAISystemPrompt);
+    setBotAITemperature(String(aiConfig.temperature ?? 0.7));
+    setBotAIMaxTokens(String(aiConfig.max_tokens ?? 300));
+    setIsBotModalOpen(true);
+  };
+
+  const buildBotDefinitionPayload = () => {
     const matchModes = [
       ...(botSupportsText ? ['text'] : []),
       ...(botSupportsVideo ? ['video'] : []),
@@ -928,81 +1013,67 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
 
     if (matchModes.length === 0) {
       alert('Select at least one conversation mode.');
-      return false;
+      return null;
     }
 
     if (botType === 'engagement' && openingMessages.length === 0 && replyMessages.length === 0 && !fallbackMessage && !closingMessage) {
       alert('Add at least one conversation line for the engagement bot.');
-      return false;
+      return null;
     }
 
     if (botType === 'ai' && (!botAIApiUrl.trim() || !botAIApiToken.trim() || !botAIModel.trim())) {
       alert('AI bots require an API URL, API token, and model name.');
-      return false;
+      return null;
     }
+
+    return {
+      name: botName.trim(),
+      slug: botSlug.trim(),
+      bot_type: botType,
+      description: botDescription.trim(),
+      match_modes: matchModes,
+      bot_count: Math.max(1, Number(botCount) || 1),
+      traffic_weight: Math.max(1, Number(botTrafficWeight) || 100),
+      message_limit: botMessageLimit,
+      session_ttl_seconds: botSessionTtl,
+      idle_timeout_seconds: botIdleTimeout,
+      script_json: botType === 'engagement'
+        ? {
+            opening_messages: openingMessages,
+            reply_messages: replyMessages,
+            fallback_message: fallbackMessage,
+            closing_message: closingMessage,
+            triggers: botTriggers.filter((trigger) => trigger.regex.trim() && trigger.reply.trim()),
+          }
+        : {},
+      ai_config_json: botType === 'ai'
+        ? {
+            provider: botAIProvider.trim() || 'openai-compatible',
+            enabled: true,
+            api_url: botAIApiUrl.trim(),
+            api_token: botAIApiToken.trim(),
+            model: botAIModel.trim(),
+            system_prompt: botAISystemPrompt.trim(),
+            temperature: Number(botAITemperature) || 0,
+            max_tokens: Number(botAIMaxTokens) || 0,
+          }
+        : {},
+    };
+  };
+
+  const createBotDefinition = async () => {
+    if (!canManageBots) return false;
+    const payload = buildBotDefinitionPayload();
+    if (!payload) return false;
 
     try {
       const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/bots`, {
         method: 'POST',
-        body: JSON.stringify({
-          name: botName.trim(),
-          slug: botSlug.trim(),
-          bot_type: botType,
-          description: botDescription.trim(),
-          match_modes: matchModes,
-          bot_count: Math.max(1, Number(botCount) || 1),
-          traffic_weight: Math.max(1, Number(botTrafficWeight) || 100),
-          message_limit: botMessageLimit,
-          session_ttl_seconds: botSessionTtl,
-          idle_timeout_seconds: botIdleTimeout,
-          script_json: botType === 'engagement'
-            ? {
-                opening_messages: openingMessages,
-                reply_messages: replyMessages,
-                fallback_message: fallbackMessage,
-                closing_message: closingMessage,
-                triggers: botTriggers.filter(t => t.regex.trim() && t.reply.trim()),
-              }
-            : {},
-          ai_config_json: botType === 'ai'
-            ? {
-                provider: botAIProvider.trim() || 'openai-compatible',
-                enabled: true,
-                api_url: botAIApiUrl.trim(),
-                api_token: botAIApiToken.trim(),
-                model: botAIModel.trim(),
-                system_prompt: botAISystemPrompt.trim(),
-                temperature: Number(botAITemperature) || 0,
-                max_tokens: Number(botAIMaxTokens) || 0,
-              }
-            : {},
-        }),
+        body: JSON.stringify(payload),
       });
       if (response.status === 401) return logout();
       if (response.ok) {
-        setBotName('');
-        setBotSlug('');
-        setBotDescription('');
-        setBotType('engagement');
-        setBotCount('1');
-        setBotTrafficWeight('100');
-        setBotOpeningMessages('hey');
-        setBotReplyMessages('nice\n tell me more');
-        setBotFallbackMessage('tell me more');
-        setBotClosingMessage('gotta go');
-        setBotSupportsText(true);
-        setBotSupportsVideo(false);
-        setBotMessageLimit(4);
-        setBotSessionTtl(300);
-        setBotIdleTimeout(45);
-        setBotTriggers([]);
-        setBotAIProvider('openai-compatible');
-        setBotAIApiUrl('');
-        setBotAIApiToken('');
-        setBotAIModel('');
-        setBotAISystemPrompt('You are a friendly anonymous chat partner. Keep replies short, natural, and safe for a general audience.');
-        setBotAITemperature('0.7');
-        setBotAIMaxTokens('300');
+        resetBotForm();
         void fetchBotDefinitions();
         return true;
       }
@@ -1011,6 +1082,31 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
     } catch (error) {
       console.error('Failed to create bot definition:', error);
       alert('Failed to create bot definition');
+    }
+    return false;
+  };
+
+  const updateBotDefinition = async (id: string) => {
+    if (!canManageBots) return false;
+    const payload = buildBotDefinitionPayload();
+    if (!payload) return false;
+
+    try {
+      const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/bots/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      });
+      if (response.status === 401) return logout();
+      if (response.ok) {
+        resetBotForm();
+        void fetchBotDefinitions();
+        return true;
+      }
+      const data = await response.json().catch(() => ({}));
+      alert(data.error || 'Failed to update bot definition');
+    } catch (error) {
+      console.error('Failed to update bot definition:', error);
+      alert('Failed to update bot definition');
     }
     return false;
   };
@@ -2845,7 +2941,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       <div className={`${surfaceCardClass} p-6 space-y-4`}>
                         <div className="flex items-center justify-between">
                           <h3 className="text-lg font-bold text-[var(--admin-text)]">Conversation Types</h3>
-                          <button onClick={() => setIsBotModalOpen(true)} className={`${actionButtonClass} bg-cyan-400 text-[#04131b] hover:bg-cyan-300`}>
+                          <button onClick={openCreateBotModal} className={`${actionButtonClass} bg-cyan-400 text-[#04131b] hover:bg-cyan-300`}>
                             <Plus size={16} />
                             Add Bot Definition
                           </button>
@@ -2890,6 +2986,14 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                               </div>
                               {canManageBots && (
                                 <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => openEditBotModal(bot)}
+                                    className={`${actionButtonClass} bg-[var(--admin-muted-surface)] text-[var(--admin-text)] hover:bg-[var(--admin-muted-surface-hover)]`}
+                                  >
+                                    <Pencil size={16} />
+                                    Edit
+                                  </button>
                                   <button
                                     type="button"
                                     onClick={() => void setBotActiveState(bot.id, !bot.is_active)}
@@ -3164,7 +3268,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => setIsBotModalOpen(false)}
+              onClick={closeBotModal}
               className="absolute inset-0 bg-[var(--admin-bg)]/90 backdrop-blur-sm"
             />
             <motion.div
@@ -3178,13 +3282,15 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                 <div className="space-y-1">
                   <h2 className="text-lg sm:text-xl font-bold text-[var(--admin-text)] font-heading uppercase tracking-widest flex items-center gap-2">
                     <Bot size={20} className="text-cyan-400" />
-                    Bot Builder
+                    {editingBotId ? 'Edit Bot Definition' : 'Bot Builder'}
                   </h2>
                   <p className="text-xs text-[var(--admin-text-soft)] max-w-2xl">
-                    Configure scripted engagement bots or OpenAI-compatible AI bots from one place. AI bot settings sync through Redis for Phoenix workers to pick up live.
+                    {editingBotId
+                      ? 'Update the saved bot definition here. Bot type stays locked during edits because the current backend update path treats it as immutable.'
+                      : 'Configure scripted engagement bots or OpenAI-compatible AI bots from one place. AI bot settings sync through Redis for Phoenix workers to pick up live.'}
                   </p>
                 </div>
-                <button onClick={() => setIsBotModalOpen(false)} className="shrink-0 text-[var(--admin-text-muted)] hover:text-rose-400 transition-colors">
+                <button onClick={closeBotModal} className="shrink-0 text-[var(--admin-text-muted)] hover:text-rose-400 transition-colors">
                   <X size={24} />
                 </button>
               </div>
@@ -3203,10 +3309,20 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                     </div>
                     <div>
                       <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Bot Type</label>
-                      <select value={botType} onChange={(e) => setBotType(e.target.value as 'engagement' | 'ai')} className={compactSelectClass}>
+                      <select
+                        value={botType}
+                        onChange={(e) => setBotType(e.target.value as 'engagement' | 'ai')}
+                        className={compactSelectClass}
+                        disabled={editingBotId !== null}
+                      >
                         <option value="engagement">Engagement</option>
                         <option value="ai">AI</option>
                       </select>
+                      {editingBotId && (
+                        <p className="mt-2 text-[10px] text-[var(--admin-text-soft)]">
+                          Bot type can’t be changed from the current edit API.
+                        </p>
+                      )}
                     </div>
                     <div>
                       <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Description</label>
@@ -3443,18 +3559,18 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
               </div>
               
               <div className="p-4 sm:p-6 border-t border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] flex flex-col-reverse sm:flex-row sm:justify-end gap-3 shrink-0">
-                <button onClick={() => setIsBotModalOpen(false)} className={`${actionButtonClass} w-full sm:w-auto bg-[var(--admin-surface-bg)] text-[var(--admin-text)] hover:opacity-80 border border-[var(--admin-outline-soft)]`}>
+                <button onClick={closeBotModal} className={`${actionButtonClass} w-full sm:w-auto bg-[var(--admin-surface-bg)] text-[var(--admin-text)] hover:opacity-80 border border-[var(--admin-outline-soft)]`}>
                   Cancel
                 </button>
                 <button 
                   onClick={async () => {
-                    const created = await createBotDefinition();
-                    if (created) setIsBotModalOpen(false);
+                    const saved = editingBotId ? await updateBotDefinition(editingBotId) : await createBotDefinition();
+                    if (saved) setIsBotModalOpen(false);
                   }} 
                   className={`${actionButtonClass} w-full sm:w-auto bg-cyan-500 text-[#04131b] hover:opacity-90`}
                 >
                   <CheckCircle2 size={16} />
-                  Save Definition
+                  {editingBotId ? 'Save Changes' : 'Save Definition'}
                 </button>
               </div>
             </motion.div>
