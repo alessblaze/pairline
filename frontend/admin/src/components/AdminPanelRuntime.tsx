@@ -135,6 +135,12 @@ const readAIBotConfig = (config: Record<string, unknown> | AIBotConfig): AIBotCo
 const defaultBotAISystemPrompt = 'You are a friendly anonymous chat partner. Keep replies short, natural, and safe for a general audience.';
 
 type BotSelectionMode = 'balanced' | 'prefer_engagement' | 'strong_engagement' | 'prefer_ai' | 'strong_ai' | 'custom';
+type BotRuntimeSettingsDraft = {
+  rollout_percent: number;
+  max_concurrent_runs: number;
+  engagement_priority: number;
+  ai_priority: number;
+};
 
 const botPriorityPresets: Array<{
   value: Exclude<BotSelectionMode, 'custom'>;
@@ -161,6 +167,13 @@ const getBotSelectionMode = (settings: BotSettings | null): BotSelectionMode => 
 
   return matchedPreset?.value ?? 'custom';
 };
+
+const buildBotRuntimeSettingsDraft = (settings: BotSettings | null): BotRuntimeSettingsDraft => ({
+  rollout_percent: settings?.rollout_percent ?? 0,
+  max_concurrent_runs: settings?.max_concurrent_runs ?? 100,
+  engagement_priority: settings?.engagement_priority ?? 100,
+  ai_priority: settings?.ai_priority ?? 100,
+});
 
 export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelRuntimeProps) {
   const navigate = useNavigate();
@@ -191,6 +204,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
   const [updatingAutoModerationEnabled, setUpdatingAutoModerationEnabled] = useState(false);
   const [botSettings, setBotSettings] = useState<BotSettings | null>(__mockState?.botSettings ?? null);
   const [botDefinitions, setBotDefinitions] = useState<BotDefinition[]>(__mockState?.botDefinitions ?? []);
+  const [isBotSettingsModalOpen, setIsBotSettingsModalOpen] = useState(false);
+  const [botSettingsDraft, setBotSettingsDraft] = useState<BotRuntimeSettingsDraft>(buildBotRuntimeSettingsDraft(__mockState?.botSettings ?? null));
   const [editingBotId, setEditingBotId] = useState<string | null>(null);
   const [botName, setBotName] = useState('');
   const [botSlug, setBotSlug] = useState('');
@@ -933,6 +948,28 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
       console.error('Failed to update bot settings:', error);
       alert('Failed to update bot settings');
     }
+  };
+
+  const openBotSettingsModal = () => {
+    setBotSettingsDraft(buildBotRuntimeSettingsDraft(botSettings));
+    setIsBotSettingsModalOpen(true);
+  };
+
+  const closeBotSettingsModal = () => {
+    setIsBotSettingsModalOpen(false);
+  };
+
+  const saveBotSettingsModal = async () => {
+    if (!canManageBots) return;
+
+    await updateBotSettings({
+      rollout_percent: Math.min(100, Math.max(0, Math.round(botSettingsDraft.rollout_percent))),
+      max_concurrent_runs: Math.min(100000, Math.max(1, Math.round(botSettingsDraft.max_concurrent_runs))),
+      engagement_priority: Math.max(1, Math.round(botSettingsDraft.engagement_priority)),
+      ai_priority: Math.max(1, Math.round(botSettingsDraft.ai_priority)),
+    });
+
+    setIsBotSettingsModalOpen(false);
   };
 
   const resetBotForm = () => {
@@ -2889,79 +2926,52 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         </button>
                       </div>
 
-                      <div className="grid gap-4 lg:grid-cols-2">
-                        <div>
-                          <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Rollout Percent</label>
-                          <div className="flex items-center gap-3">
-                            <input
-                              type="range"
-                              min={0}
-                              max={100}
-                              value={botSettings?.rollout_percent ?? 0}
-                              onChange={(e) => void updateBotSettings({ rollout_percent: Number(e.target.value) })}
-                              disabled={!canManageBots}
-                              className="flex-1 accent-cyan-500"
-                            />
-                            <span className="w-12 text-right text-sm font-bold text-[var(--admin-text)] tabular-nums">{botSettings?.rollout_percent ?? 0}%</span>
-                          </div>
-                        </div>
-                        <div>
-                          <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Max Concurrent Runs</label>
-                          <input
-                            type="number"
-                            min={1}
-                            max={100000}
-                            value={botSettings?.max_concurrent_runs ?? 100}
-                            onChange={(e) => {
-                              const val = Number(e.target.value);
-                              if (val >= 1 && val <= 100000) void updateBotSettings({ max_concurrent_runs: val });
-                            }}
-                            disabled={!canManageBots}
-                            className={inputClass}
-                          />
-                        </div>
-                      </div>
+                      <div className="rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] px-4 py-4">
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="space-y-3">
+                            <div>
+                              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Matchmaking Runtime</p>
+                              <p className="mt-1 text-[11px] leading-5 text-[var(--admin-text-soft)]">
+                                Rollout, concurrency limits, and bot-selection priority now live in one focused settings modal for cleaner editing.
+                              </p>
+                            </div>
 
-                      <div className="grid gap-4 lg:grid-cols-2">
-                        <div>
-                          <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Bot Selection Mode</label>
-                          <select
-                            value={getBotSelectionMode(botSettings)}
-                            onChange={(e) => {
-                              const selectedPreset = botPriorityPresets.find((preset) => preset.value === e.target.value);
-                              if (!selectedPreset) return;
-                              void updateBotSettings({
-                                engagement_priority: selectedPreset.engagementPriority,
-                                ai_priority: selectedPreset.aiPriority,
-                              });
-                            }}
-                            disabled={!canManageBots}
-                            className={compactSelectClass}
-                          >
-                            {botPriorityPresets.map((preset) => (
-                              <option key={preset.value} value={preset.value}>
-                                {preset.label}
-                              </option>
-                            ))}
-                            <option value="custom" disabled>
-                              Custom
-                            </option>
-                          </select>
-                          <p className="text-[11px] text-[var(--admin-text-soft)]">
-                            Choose whether matchmaking should stay balanced or prefer engagement bots or AI bots first.
-                          </p>
-                        </div>
-                        <div className="rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] px-4 py-3">
-                          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Current Priority Values</p>
-                          <p className="mt-2 text-sm text-[var(--admin-text)]">
-                            Engagement: <span className="font-mono">{botSettings?.engagement_priority ?? 100}</span>
-                          </p>
-                          <p className="mt-1 text-sm text-[var(--admin-text)]">
-                            AI: <span className="font-mono">{botSettings?.ai_priority ?? 100}</span>
-                          </p>
-                          <p className="mt-2 text-[11px] leading-5 text-[var(--admin-text-soft)]">
-                            Custom appears if the saved backend values do not match one of the preset modes.
-                          </p>
+                            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                              <div>
+                                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Rollout</p>
+                                <p className="mt-1 text-sm font-medium text-[var(--admin-text)]">{botSettings?.rollout_percent ?? 0}%</p>
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Concurrent Runs</p>
+                                <p className="mt-1 text-sm font-medium text-[var(--admin-text)]">{botSettings?.max_concurrent_runs ?? 100}</p>
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Selection Mode</p>
+                                <p className="mt-1 text-sm font-medium text-[var(--admin-text)]">
+                                  {botPriorityPresets.find((preset) => preset.value === getBotSelectionMode(botSettings))?.label ?? 'Custom'}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Priority Split</p>
+                                <p className="mt-1 text-sm font-medium text-[var(--admin-text)]">
+                                  <span className="font-mono">E {botSettings?.engagement_priority ?? 100}</span>
+                                  {' / '}
+                                  <span className="font-mono">AI {botSettings?.ai_priority ?? 100}</span>
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+
+                          {canManageBots && (
+                            <button
+                              type="button"
+                              onClick={openBotSettingsModal}
+                              className={`${actionButtonClass} w-full lg:w-auto bg-[var(--admin-text)] text-[var(--admin-bg)]`}
+                            >
+                              <Pencil size={16} />
+                              Edit Runtime Settings
+                            </button>
+                          )}
                         </div>
                       </div>
                       </div>
@@ -3378,6 +3388,136 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
 
       {/* Bot Builder Modal */}
       <AnimatePresence>
+        {isBotSettingsModalOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={closeBotSettingsModal}
+              className="absolute inset-0 bg-[var(--admin-bg)]/90 backdrop-blur-sm"
+            />
+
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ type: 'spring', stiffness: 350, damping: 30 }}
+              className="relative flex w-full max-w-[560px] flex-col overflow-hidden rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-surface-bg)] shadow-[0_32px_128px_rgba(0,0,0,0.8)]"
+            >
+              <div className="hud-bracket hud-bracket-tl opacity-20" />
+              <div className="hud-bracket hud-bracket-tr opacity-20" />
+              <div className="hud-bracket hud-bracket-bl opacity-20" />
+              <div className="hud-bracket hud-bracket-br opacity-20" />
+
+              <div className="border-b border-[var(--admin-outline-soft)] px-6 py-5 sm:px-8 sm:py-6">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h3 className="font-heading text-lg font-bold uppercase tracking-wide text-[var(--admin-text)]">BOT_RUNTIME_SETTINGS</h3>
+                    <p className="mt-1 text-sm text-[var(--admin-text-muted)]">
+                      Tune rollout, capacity, and selection priority without crowding the main bots dashboard.
+                    </p>
+                  </div>
+                  <button onClick={closeBotSettingsModal} className="shrink-0 text-[var(--admin-text-muted)] transition-colors hover:text-rose-400">
+                    <X size={20} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="max-h-[min(78vh,720px)] space-y-6 overflow-y-auto px-6 py-6 sm:px-8">
+                <div className="space-y-5">
+                  <div>
+                    <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Rollout Percent</label>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={botSettingsDraft.rollout_percent}
+                        onChange={(e) => setBotSettingsDraft((current) => ({ ...current, rollout_percent: Number(e.target.value) }))}
+                        className="flex-1 accent-cyan-500"
+                      />
+                      <span className="w-12 text-right text-sm font-bold tabular-nums text-[var(--admin-text)]">{botSettingsDraft.rollout_percent}%</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Max Concurrent Runs</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={100000}
+                      value={botSettingsDraft.max_concurrent_runs}
+                      onChange={(e) =>
+                        setBotSettingsDraft((current) => ({
+                          ...current,
+                          max_concurrent_runs: Number.isFinite(Number(e.target.value)) ? Number(e.target.value) : current.max_concurrent_runs,
+                        }))
+                      }
+                      className={inputClass}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-5">
+                  <div>
+                    <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Bot Selection Mode</label>
+                    <select
+                      value={getBotSelectionMode(botSettingsDraft as BotSettings)}
+                      onChange={(e) => {
+                        if (e.target.value === 'custom') return;
+                        const selectedPreset = botPriorityPresets.find((preset) => preset.value === e.target.value);
+                        if (!selectedPreset) return;
+                        setBotSettingsDraft((current) => ({
+                          ...current,
+                          engagement_priority: selectedPreset.engagementPriority,
+                          ai_priority: selectedPreset.aiPriority,
+                        }));
+                      }}
+                      className={compactSelectClass}
+                    >
+                      {botPriorityPresets.map((preset) => (
+                        <option key={preset.value} value={preset.value}>
+                          {preset.label}
+                        </option>
+                      ))}
+                      <option value="custom" disabled>
+                        Custom
+                      </option>
+                    </select>
+                    <p className="text-[11px] text-[var(--admin-text-soft)]">
+                      Choose whether matchmaking should stay balanced or prefer engagement bots or AI bots first.
+                    </p>
+                  </div>
+
+                  <div className="rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] px-4 py-3">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Current Priority Values</p>
+                    <p className="mt-2 text-sm text-[var(--admin-text)]">
+                      Engagement: <span className="font-mono">{botSettingsDraft.engagement_priority}</span>
+                    </p>
+                    <p className="mt-1 text-sm text-[var(--admin-text)]">
+                      AI: <span className="font-mono">{botSettingsDraft.ai_priority}</span>
+                    </p>
+                    <p className="mt-2 text-[11px] leading-5 text-[var(--admin-text-soft)]">
+                      Custom appears if the saved backend values do not match one of the preset modes.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-col-reverse gap-3 border-t border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] p-4 sm:flex-row sm:justify-end sm:p-6">
+                <button onClick={closeBotSettingsModal} className={`${actionButtonClass} w-full border border-[var(--admin-outline-soft)] bg-[var(--admin-surface-bg)] text-[var(--admin-text)] sm:w-auto`}>
+                  Cancel
+                </button>
+                <button onClick={() => void saveBotSettingsModal()} className={`${actionButtonClass} w-full bg-cyan-500 text-[#04131b] hover:opacity-90 sm:w-auto`}>
+                  <CheckCircle2 size={16} />
+                  Save Runtime Settings
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
         {isBotModalOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
             <motion.div
