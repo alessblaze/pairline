@@ -20,6 +20,7 @@ defmodule OmeglePhoenix.Bots.AIWorker do
   Do not ask for contact details, off-platform movement, or sensitive personal data.
   """
   @opening_instruction "The conversation just started. Send a short, friendly opening message."
+  @max_retained_history_messages 8
 
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts)
@@ -342,7 +343,7 @@ defmodule OmeglePhoenix.Bots.AIWorker do
 
         messages =
           [Message.new_system!(system_prompt(definition))]
-          |> Kernel.++(Enum.map(history, &history_message/1))
+          |> Kernel.++(Enum.map(trim_history(history), &history_message/1))
           |> Kernel.++([request_message(request)])
 
         chain =
@@ -392,7 +393,7 @@ defmodule OmeglePhoenix.Bots.AIWorker do
 
     state
     |> Map.put(:pending_request, nil)
-    |> Map.put(:history, updated_history)
+    |> Map.put(:history, trim_history(updated_history))
     |> deliver_bot_message(content)
   end
 
@@ -564,6 +565,13 @@ defmodule OmeglePhoenix.Bots.AIWorker do
 
   defp history_message(%{"role" => "assistant", "content" => content}),
     do: Message.new_assistant!(content)
+
+  defp trim_history(history) when is_list(history) do
+    history
+    |> Enum.take(-@max_retained_history_messages)
+  end
+
+  defp trim_history(_history), do: []
 
   defp request_message(%{type: :opening}), do: Message.new_user!(@opening_instruction)
   defp request_message(%{type: :user, content: content}), do: Message.new_user!(content)

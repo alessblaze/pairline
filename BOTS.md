@@ -171,8 +171,6 @@ Script workers now include both:
 - idle timeout timer
 - total wall-clock TTL timer
 
-These timers were recently fixed and now disconnect properly.
-
 ### Writing Regex For Engagement Bots
 
 Engagement bot triggers are stored under `script_json.triggers`.
@@ -289,8 +287,8 @@ Bad ordering:
 
 ```json
 [
-  { "regex": "(?i)\b(hi|hello|hey|help)\b", "reply": "Hi there!" },
-  { "regex": "(?i)\bhelp\b", "reply": "What do you need help with?" }
+  { "regex": "(?i)\\b(hi|hello|hey|help)\\b", "reply": "Hi there!" },
+  { "regex": "(?i)\\bhelp\\b", "reply": "What do you need help with?" }
 ]
 ```
 
@@ -300,8 +298,8 @@ Better ordering:
 
 ```json
 [
-  { "regex": "(?i)\bhelp\b", "reply": "What do you need help with?" },
-  { "regex": "(?i)\b(hi|hello|hey)\b", "reply": "Hi there!" }
+  { "regex": "(?i)\\bhelp\\b", "reply": "What do you need help with?" },
+  { "regex": "(?i)\\b(hi|hello|hey)\\b", "reply": "Hi there!" }
 ]
 ```
 
@@ -326,7 +324,7 @@ Current behavior:
 - create synthetic bot session
 - pair with human
 - optionally send an opening request to the model
-- keep short in-memory conversation history
+- keep a bounded in-memory conversation history window
 - queue user messages while a model call is in flight
 - call an OpenAI-compatible endpoint through LangChain
 - send typing indicators while generation is in progress
@@ -393,7 +391,7 @@ At a high level:
 
 ### Short Answer
 
-The AI bot backend is bounded, but it is not especially token-efficient.
+The AI bot backend is bounded and more efficient than a full-history replay model, but it is still not highly token-optimized.
 
 ### What Is Good
 
@@ -401,27 +399,27 @@ The AI bot backend is bounded, but it is not especially token-efficient.
 - Output size can be capped with `ai_config_json.max_tokens`
 - Sessions have both idle and wall-clock limits
 - No transcript persistence means there is no long-lived context bloat
+- Model calls use a bounded recent-history window instead of replaying the entire run
 - The implementation is simple and predictable for short-run chats
 
 ### What Is Inefficient
 
-1. Full history is resent on every generation
+1. The system prompt is still resent on every generation
 
 `AIWorker.generate_reply/3` rebuilds the model input as:
 
 - full system prompt
-- full in-memory conversation history
+- recent in-memory conversation history
 - current request
 
-That means token usage grows turn by turn instead of staying near-constant.
+That keeps token usage bounded, but it still means each request pays for repeated prompt context.
 
-2. There is no sliding context window
+2. There is no true token-budget trimming
 
-The worker keeps the whole `history` list in memory for the life of the bot run.
+The worker keeps only a recent bounded history window, but it does not trim by estimated token count.
 There is no:
 
-- truncation to the last N exchanges
-- token-budget trimming
+- model-aware token-budget trimming
 - summary compression
 
 3. A fresh model client/chain is built per request
@@ -429,9 +427,9 @@ There is no:
 `ChatOpenAI.new!/1`, `LLMChain.new!/1`, and `LLMChain.add_messages/2` are rebuilt for each call.
 This is not the main token cost, but it is extra per-request overhead.
 
-4. Queued user messages still preserve earlier full history
+4. Queued user messages still replay recent context
 
-The queueing behavior is correct for ordering, but when the worker processes the next queued request it still sends the full accumulated history again.
+The queueing behavior is correct for ordering, but when the worker processes the next queued request it still sends the same recent context window again.
 
 ### Current Practical Impact
 
@@ -441,7 +439,7 @@ For the current implementation:
 - `message_limit` is capped
 - bot runs are ephemeral rather than long-lived
 
-The main backend token cost comes from repeated full-history replay during model calls.
+The main backend token cost now comes from repeated system prompt plus recent-context replay during model calls, rather than unbounded full-history growth.
 
 ## Test Coverage
 

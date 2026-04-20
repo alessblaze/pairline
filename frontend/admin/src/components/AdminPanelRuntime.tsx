@@ -930,17 +930,20 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
   };
 
   const updateBotSettings = async (updates: Partial<BotSettings>) => {
-    if (!canManageBots) return;
+    if (!canManageBots) return false;
     try {
       const response = await adminFetch(`${import.meta.env.VITE_API_URL}/api/v1/admin/bots/settings`, {
         method: 'PUT',
         body: JSON.stringify(updates),
       });
-      if (response.status === 401) return logout();
+      if (response.status === 401) {
+        logout();
+        return false;
+      }
       if (response.ok) {
         const data: BotSettings = await response.json();
         setBotSettings(data);
-        return;
+        return true;
       }
       const data = await response.json().catch(() => ({}));
       alert(data.error || 'Failed to update bot settings');
@@ -948,6 +951,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
       console.error('Failed to update bot settings:', error);
       alert('Failed to update bot settings');
     }
+
+    return false;
   };
 
   const openBotSettingsModal = () => {
@@ -962,14 +967,16 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
   const saveBotSettingsModal = async () => {
     if (!canManageBots) return;
 
-    await updateBotSettings({
+    const saved = await updateBotSettings({
       rollout_percent: Math.min(100, Math.max(0, Math.round(botSettingsDraft.rollout_percent))),
       max_concurrent_runs: Math.min(100000, Math.max(1, Math.round(botSettingsDraft.max_concurrent_runs))),
       engagement_priority: Math.max(1, Math.round(botSettingsDraft.engagement_priority)),
       ai_priority: Math.max(1, Math.round(botSettingsDraft.ai_priority)),
     });
 
-    setIsBotSettingsModalOpen(false);
+    if (saved) {
+      setIsBotSettingsModalOpen(false);
+    }
   };
 
   const resetBotForm = () => {
