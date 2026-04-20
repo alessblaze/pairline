@@ -48,6 +48,7 @@ This file focuses on **what each variable changes in runtime behavior**, not jus
 - **`REDIS_CLUSTER_NODES`** (format: comma-separated `host:port`): seed nodes for cluster discovery (the client will learn the full cluster topology from these).
 - **`REDIS_PASSWORD`** (default: empty): password for Redis/Valkey auth (must match `requirepass` on the Redis nodes).
 - **`REDIS_POOL_SIZE`** (default: `256`): connection pool size. Increase if Redis latency rises under high concurrency and you see pool exhaustion; too high can overwhelm Redis with connections.
+- **`FINCH_POOL_SIZE`** (default: `10`): outbound Finch HTTP connection pool size used for Turnstile and any future Phoenix HTTP client traffic.
 
 ### Session lifecycle
 - **`SESSION_TTL`** (default: `3600`): how long session records stay alive in Redis after last refresh. Larger values reduce accidental session expiry but increase orphan memory.
@@ -144,6 +145,7 @@ This file focuses on **what each variable changes in runtime behavior**, not jus
 ### Redis cluster
 - **`REDIS_CLUSTER_NODES`** (**required**; format: comma-separated `host:port`): cluster seed list (used for discovery).
 - **`REDIS_PASSWORD`** (default: empty): Redis auth password.
+- **`REDIS_POOL_SIZE`** (default: go-redis cluster default): optional per-node pool size override for the Go Redis client. If unset, go-redis v9 uses its built-in cluster default based on `GOMAXPROCS`.
 
 ### Ban sync behavior
 - **`BAN_SYNC_INTERVAL_SECONDS`** (default: `0`/disabled): if > 0, periodically resyncs active bans from Postgres → Redis.
@@ -167,6 +169,7 @@ This file focuses on **what each variable changes in runtime behavior**, not jus
 - **`AUTO_MODERATION_TEMPERATURE`** (default: `0.5`): Specifies the sampling temperature. Non-reasoning specialized classifiers typically expect `0.0`, while reasoning models require `0.5` or higher.
 - **`AUTO_MODERATION_MAX_TOKENS`** (default: `8192`): Dictates the maximum amount of output tokens the model is permitted to generate. Must be set high (e.g. `8192`) when using reasoning models.
 - **`AUTO_MODERATION_DEBUG`** (default: `false`): When enabled, prints the full prompt, token usage stats, and raw model response to stdout for every moderation assessment. Keep disabled in production.
+- **`AUTO_MODERATION_ENQUEUE_TIMEOUT_MS`** (default: `250`): how long report creation waits when waking the background worker before falling back to the normal periodic sweep.
 
 ### Root admin bootstrap
 - **`ROOT_ADMIN_USERNAME`** (default: `admin`): initial “root” admin username created/ensured at startup.

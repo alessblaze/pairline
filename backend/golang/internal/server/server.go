@@ -45,6 +45,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
+	"gorm.io/gorm"
 )
 
 type Server struct {
@@ -107,7 +108,9 @@ func newServer(enablePublic, enableAdmin bool, serviceName string) *Server {
 	}
 	s.backgroundCtx, s.stopBackground = context.WithCancel(context.Background())
 
-	if err := bots.AutoMigrate(db.GetDB()); err != nil {
+	if err := storage.RunWithStartupMigrationLock(db.GetDB(), func(tx *gorm.DB) error {
+		return bots.AutoMigrate(tx)
+	}); err != nil {
 		log.Fatalf("Failed to migrate bot models: %v", err)
 	}
 

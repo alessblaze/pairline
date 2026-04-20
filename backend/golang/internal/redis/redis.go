@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -48,6 +49,7 @@ func NewClient() *Client {
 	rdb := redis.NewClusterClient(&redis.ClusterOptions{
 		Addrs:                    addrs,
 		Password:                 password,
+		PoolSize:                 getEnvAsInt("REDIS_POOL_SIZE", 0),
 		MaintNotificationsConfig: redisMaintNotificationsConfig(),
 	})
 
@@ -241,4 +243,18 @@ func redisClusterAddrsFromEnv() ([]string, error) {
 	}
 
 	return addrs, nil
+}
+
+func getEnvAsInt(key string, defaultValue int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return defaultValue
+	}
+
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return defaultValue
+	}
+
+	return value
 }

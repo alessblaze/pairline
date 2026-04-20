@@ -109,6 +109,12 @@ defmodule OmeglePhoenix.Config do
     |> max(1)
   end
 
+  def get_finch_pool_size do
+    get("FINCH_POOL_SIZE", "10")
+    |> String.to_integer()
+    |> max(1)
+  end
+
   def get_cors_origins do
     get("CORS_ORIGINS", "")
   end

@@ -26,7 +26,9 @@ defmodule OmeglePhoenix.Application do
     OpentelemetryPhoenix.setup(adapter: :cowboy2, endpoint_prefix: [:omegle_phoenix, :endpoint])
 
     children = [
-      {Finch, name: OmeglePhoenixFinch, pools: %{default: [size: 10]}},
+      {Finch,
+       name: OmeglePhoenixFinch,
+       pools: %{default: [size: OmeglePhoenix.Config.get_finch_pool_size()]}},
       {Phoenix.PubSub, name: OmeglePhoenix.PubSub},
       {Task.Supervisor, name: OmeglePhoenix.TaskSupervisor},
       OmeglePhoenix.Bots.Supervisor,

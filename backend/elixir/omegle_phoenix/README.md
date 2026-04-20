@@ -19,6 +19,8 @@ Copy `.env.example` to `.env` and review:
 
 - `REDIS_HOST`
 - `REDIS_PORT`
+- `REDIS_POOL_SIZE`
+- `FINCH_POOL_SIZE`
 - `SHARED_SECRET`
 - `SECRET_KEY_BASE`
 - `CORS_ORIGINS`

@@ -41,6 +41,8 @@ var (
 	dbInitOnce sync.Once
 )
 
+const startupMigrationLockKey = "pairline:startup_schema_migrations"
+
 type DBConfig struct {
 	Host     string
 	Port     string
@@ -168,25 +170,53 @@ func NewDatabase() *Database {
 			panic(fmt.Errorf("ping database: %w", err))
 		}
 
-		if err := db.AutoMigrate(
-			&AdminAccount{},
-			&Report{},
-			&Ban{},
-			&BannedWord{},
-			&AdminSetting{},
-			&AdminActivityLog{},
-		); err != nil {
-			panic(fmt.Errorf("auto migrate database: %w", err))
-		}
+		if err := RunWithStartupMigrationLock(db, func(tx *gorm.DB) error {
+			if err := runCoreMigrations(tx); err != nil {
+				return err
+			}
 
-		if err := createRootAdmin(db); err != nil {
-			panic(fmt.Errorf("create root admin: %w", err))
+			return createRootAdmin(tx)
+		}); err != nil {
+			panic(err)
 		}
 
 		sharedDB = &Database{db: db}
 	})
 
 	return sharedDB
+}
+
+func RunWithStartupMigrationLock(db *gorm.DB, fn func(tx *gorm.DB) error) error {
+	if db == nil {
+		return nil
+	}
+
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", startupMigrationLockKey).Error; err != nil {
+			return fmt.Errorf("acquire startup migration lock: %w", err)
+		}
+
+		if fn == nil {
+			return nil
+		}
+
+		return fn(tx)
+	})
+}
+
+func runCoreMigrations(db *gorm.DB) error {
+	if err := db.AutoMigrate(
+		&AdminAccount{},
+		&Report{},
+		&Ban{},
+		&BannedWord{},
+		&AdminSetting{},
+		&AdminActivityLog{},
+	); err != nil {
+		return fmt.Errorf("auto migrate database: %w", err)
+	}
+
+	return nil
 }
 
 func (d *Database) GetDB() *gorm.DB {

@@ -68,6 +68,7 @@ type Config struct {
 	ModelType      string
 	BatchSize      int
 	Interval       time.Duration
+	EnqueueTimeout time.Duration
 	Timeout        time.Duration
 	ClaimTimeout   time.Duration
 	MaxAttempts    int
@@ -161,10 +162,18 @@ func (w *Worker) Enqueue(reportID string) {
 		return
 	}
 
+	reportID = strings.TrimSpace(reportID)
+	if reportID == "" {
+		return
+	}
+
+	timer := time.NewTimer(w.config.EnqueueTimeout)
+	defer timer.Stop()
+
 	select {
-	case w.triggerCh <- strings.TrimSpace(reportID):
-	default:
-		log.Printf("auto moderation queue full, dropping trigger for report %q", reportID)
+	case w.triggerCh <- reportID:
+	case <-timer.C:
+		log.Printf("auto moderation enqueue timed out for report %q", reportID)
 	}
 }
 
@@ -800,6 +809,7 @@ func loadConfigFromEnv() Config {
 		ModelType:      strings.TrimSpace(defaultString(firstNonEmptyEnv("AUTO_MODERATION_MODEL_TYPE"), rawModel)),
 		BatchSize:      boundedInt(firstNonEmptyEnv("AUTO_MODERATION_BATCH_SIZE"), 10, 1, 100),
 		Interval:       time.Duration(boundedInt(firstNonEmptyEnv("AUTO_MODERATION_BATCH_INTERVAL_SECONDS"), 30, 5, 3600)) * time.Second,
+		EnqueueTimeout: time.Duration(boundedInt(firstNonEmptyEnv("AUTO_MODERATION_ENQUEUE_TIMEOUT_MS"), 250, 1, 5000)) * time.Millisecond,
 		Timeout:        time.Duration(boundedInt(firstNonEmptyEnv("AUTO_MODERATION_TIMEOUT_SECONDS"), 20, 5, 120)) * time.Second,
 		ClaimTimeout:   time.Duration(boundedInt(firstNonEmptyEnv("AUTO_MODERATION_CLAIM_TIMEOUT_SECONDS"), 300, 30, 3600)) * time.Second,
 		MaxAttempts:    boundedInt(firstNonEmptyEnv("AUTO_MODERATION_MAX_ATTEMPTS"), 3, 1, 10),
