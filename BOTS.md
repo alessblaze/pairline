@@ -1,6 +1,8 @@
 # BOTS.md
 
-This document describes the bot system currently implemented in Pairline.
+This document outlines the bot system currently implemented in Pairline.
+
+Platforms of this scale have traditionally not been open source, particularly when it comes to fully integrated bot systems that include the necessary logic and infrastructure for automated interaction. Most large random chat platforms rely on proprietary implementations for such functionality. Pairline changes this by providing an open and transparent approach, replicating the sophisticated interaction patterns commonly experienced on modern random chat platforms.
 
 It covers:
 

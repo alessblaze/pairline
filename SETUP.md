@@ -1,5 +1,8 @@
 # Setup
 
+Pairline is not designed as a demo platform—it is engineered for scalability and production use. It is a real-time chat application capable of handling thousands of concurrent connections seamlessly. The platform includes a comprehensive feature set, such as chat moderation, an administrative dashboard, video and text communication, interest-based user matching with intelligent fallback mechanisms, AI-driven moderation, bot integration, and more.
+
+
 > **Note:** New to the project? Read the [Developer Onboarding Guide](./ONBOARDING.md) first for a high-level architectural overview and daily development workflows before running these commands!
 
 This project runs as four app services plus Redis and Postgres:
