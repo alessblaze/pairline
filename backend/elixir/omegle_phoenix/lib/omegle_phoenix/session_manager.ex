@@ -218,7 +218,6 @@ defmodule OmeglePhoenix.SessionManager do
     end
   end
 
-
   def get_active_sessions_page(opts \\ []) do
     cursor = normalize_scan_cursor(Keyword.get(opts, :cursor, "0"))
     limit = normalize_scan_limit(Keyword.get(opts, :limit, @active_session_scan_count))
@@ -996,8 +995,6 @@ defmodule OmeglePhoenix.SessionManager do
         end
     end
   end
-
-
 
   defp scan_session_ids(index_key, cursor, count)
        when is_binary(index_key) and is_binary(cursor) and is_integer(count) do
