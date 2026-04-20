@@ -112,9 +112,8 @@ export function useTextChat(wsUrl: string) {
         beginNewChatEpoch();
         const peerIdMatch = message.peer_id;
         const common = (message as any).common_interests || [];
-        const isBotMatch = message.partner_session_kind === 'bot';
         setPeerId(peerIdMatch || '');
-        setReportPeerId((message.reportable !== false || isBotMatch) ? (peerIdMatch || null) : null);
+        setReportPeerId(message.reportable !== false ? (peerIdMatch || null) : null);
         setStatus('connected');
         setReconnectMessageVisible(false);
         setPeerTyping(false);

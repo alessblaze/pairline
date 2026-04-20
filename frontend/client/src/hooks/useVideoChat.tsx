@@ -1050,8 +1050,7 @@ export function useVideoChat(wsUrl: string) {
         beginNewChatEpoch();
         const peerIdMatch = message.peer_id;
         const common = (message as any).common_interests || [];
-        const isBotMatch = message.partner_session_kind === 'bot';
-        const videoEnabled = message.video_enabled !== false && !isBotMatch;
+        const videoEnabled = message.video_enabled !== false;
         if (import.meta.env.VITE_WEBSOCKET_DEBUG === 'true') {
           console.log('Matched with peer:', peerIdMatch);
         }
@@ -1074,7 +1073,7 @@ export function useVideoChat(wsUrl: string) {
         pendingWebrtcStartRef.current = null;
 
         setPeerId(peerIdMatch || '');
-        setReportPeerId((message.reportable !== false || isBotMatch) ? (peerIdMatch || null) : null);
+        setReportPeerId(message.reportable !== false ? (peerIdMatch || null) : null);
         setStatus('connected');
         setIsVideoConnecting(videoEnabled);
         setShowReconnectMessage(false);
@@ -1099,16 +1098,16 @@ export function useVideoChat(wsUrl: string) {
         }
         systemMessages.push({
           id: crypto.randomUUID(),
-          text: isBotMatch
-            ? `You are talking to a random stranger. Video is unavailable right now.`
-            : `You are talking to a random stranger.`,
+          text: videoEnabled
+            ? `You are talking to a random stranger.`
+            : `You are talking to a random stranger. Their camera is currently off.`,
           sender: 'system',
           timestamp: Date.now()
         });
         setMessages(systemMessages);
 
         if (!videoEnabled) {
-          resetWebRTCTransport('bot-text-only-match');
+          resetWebRTCTransport('video-unavailable-match');
           break;
         }
 

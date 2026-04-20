@@ -284,6 +284,23 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
     assert token_ttl > 0
   end
 
+  test "delete_session preserves bot report kind for bot sessions", %{
+    session_id: session_id
+  } do
+    preferences = %{"mode" => "text", "interests" => "report,bot"}
+
+    assert {:ok, _created} =
+             OmeglePhoenix.SessionManager.create_bot_session(session_id, preferences)
+
+    assert :ok = OmeglePhoenix.SessionManager.delete_session(session_id)
+
+    report_kind_key = OmeglePhoenix.RedisKeys.session_report_kind_key(session_id)
+
+    assert OmeglePhoenix.Redis.command(["GET", report_kind_key]) == {:ok, "bot"}
+    assert {:ok, report_kind_ttl} = OmeglePhoenix.Redis.command(["TTL", report_kind_key])
+    assert report_kind_ttl > 0
+  end
+
   test "stale get_session after delete does not clear report locators", %{
     session_id: session_id,
     ip: ip
@@ -309,14 +326,13 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
            ]) == {:ok, ip}
   end
 
-  test "cleanup_orphaned_session removes preserved report locators", %{
-    session_id: session_id,
-    ip: ip
+  test "cleanup_orphaned_session removes preserved report locators and bot kind", %{
+    session_id: session_id
   } do
     preferences = %{"mode" => "text", "interests" => "cleanup,report"}
 
     assert {:ok, _created} =
-             OmeglePhoenix.SessionManager.create_session(session_id, ip, preferences)
+             OmeglePhoenix.SessionManager.create_bot_session(session_id, preferences)
 
     assert :ok = OmeglePhoenix.SessionManager.delete_session(session_id)
 
@@ -332,6 +348,13 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
       OmeglePhoenix.Redis.command([
         "GET",
         OmeglePhoenix.RedisKeys.session_report_locator_key(session_id)
+      ]) == {:ok, nil}
+    end)
+
+    assert_eventually(fn ->
+      OmeglePhoenix.Redis.command([
+        "GET",
+        OmeglePhoenix.RedisKeys.session_report_kind_key(session_id)
       ]) == {:ok, nil}
     end)
 
@@ -756,8 +779,9 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
     assert_eventually(fn ->
       with {:ok, reset_1} <- OmeglePhoenix.SessionManager.get_session(session_id),
            {:ok, reset_2} <- OmeglePhoenix.SessionManager.get_session(peer_session_id) do
-        reset_1.status == :waiting and is_nil(reset_1.partner_id) and
-          reset_2.status == :waiting and is_nil(reset_2.partner_id)
+        # reset_pair tears down the match but does not requeue either side.
+        reset_1.status == :disconnecting and is_nil(reset_1.partner_id) and
+          reset_2.status == :disconnecting and is_nil(reset_2.partner_id)
       else
         _ -> false
       end
@@ -790,7 +814,7 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
       with {:ok, disconnected} <- OmeglePhoenix.SessionManager.get_session(session_id),
            {:ok, partner} <- OmeglePhoenix.SessionManager.get_session(peer_session_id) do
         disconnected.status == :disconnecting and is_nil(disconnected.partner_id) and
-          partner.status == :waiting and is_nil(partner.partner_id)
+          partner.status == :disconnecting and is_nil(partner.partner_id)
       else
         _ -> false
       end

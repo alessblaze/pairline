@@ -47,6 +47,10 @@ func SessionReportLocatorKey(sessionID string) string {
 	return "session:report_locator:" + sessionID
 }
 
+func SessionReportKindKey(sessionID string) string {
+	return "session:report_kind:" + sessionID
+}
+
 func BanIndexKey() string {
 	return "bans:index"
 }

@@ -395,13 +395,14 @@ defmodule OmeglePhoenix.SessionManager do
       Tracing.annotate_internal("session_manager.delete_session")
       Tracer.set_attribute("session.ref", Tracing.safe_ref(session_id))
 
-      with {:ok, route} <-
-             OmeglePhoenix.RedisKeys.resolve_session_route(session_id, verify_exists: false),
+      with {:ok, session} <- get_session(session_id),
+           route = OmeglePhoenix.RedisKeys.route_for_session(session),
            {:ok, ip} <- load_session_ip(session_id, route) do
         case OmeglePhoenix.RedisState.delete_session(
                session_id,
                ip,
                report_grace_seconds(),
+               session_kind: session.session_kind,
                route: route,
                index_cleanup: :async
              ) do

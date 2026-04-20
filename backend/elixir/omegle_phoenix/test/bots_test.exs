@@ -88,5 +88,40 @@ else
       assert OmeglePhoenix.Bots.release_definition_slot(%{"id" => "def-3"}) == :ok
       assert_received :release_called
     end
+
+    test "prioritize_definitions keeps higher bot-type priority tiers ahead of lower ones" do
+      definitions = [
+        %{"id" => "eng-1", "bot_type" => "engagement", "traffic_weight" => 1, "bot_count" => 1},
+        %{"id" => "ai-1", "bot_type" => "ai", "traffic_weight" => 1, "bot_count" => 1}
+      ]
+
+      settings = %{"engagement_priority" => 200, "ai_priority" => 100}
+
+      prioritized = OmeglePhoenix.Bots.prioritize_definitions(definitions, settings)
+
+      assert Enum.map(prioritized, & &1["id"]) == ["eng-1", "ai-1"]
+    end
+
+    test "prioritize_definitions keeps all same-priority definitions and favors higher weights over repeated runs" do
+      definitions = [
+        %{"id" => "heavy", "bot_type" => "engagement", "traffic_weight" => 50, "bot_count" => 1},
+        %{"id" => "light", "bot_type" => "engagement", "traffic_weight" => 1, "bot_count" => 1}
+      ]
+
+      settings = %{"engagement_priority" => 100, "ai_priority" => 100}
+
+      {heavy_first, light_first} =
+        Enum.reduce(1..500, {0, 0}, fn _, {heavy_acc, light_acc} ->
+          [first | _rest] = OmeglePhoenix.Bots.prioritize_definitions(definitions, settings)
+
+          case first["id"] do
+            "heavy" -> {heavy_acc + 1, light_acc}
+            "light" -> {heavy_acc, light_acc + 1}
+          end
+        end)
+
+      assert heavy_first > light_first
+      assert heavy_first + light_first == 500
+    end
   end
 end

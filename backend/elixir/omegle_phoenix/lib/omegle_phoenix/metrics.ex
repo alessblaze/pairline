@@ -25,6 +25,12 @@ defmodule OmeglePhoenix.Metrics do
   @table :omegle_phoenix_metrics
   @handler_id "omegle-phoenix-metrics"
   @events [
+    [:omegle_phoenix, :bots, :worker_started],
+    [:omegle_phoenix, :bots, :message_enqueued],
+    [:omegle_phoenix, :bots, :generation_started],
+    [:omegle_phoenix, :bots, :generation_failed],
+    [:omegle_phoenix, :bots, :reply_sent],
+    [:omegle_phoenix, :bots, :conversation_finished],
     [:omegle_phoenix, :session_lock, :acquired],
     [:omegle_phoenix, :session_lock, :contended],
     [:omegle_phoenix, :redis_state, :success],

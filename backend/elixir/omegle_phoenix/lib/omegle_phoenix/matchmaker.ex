@@ -442,9 +442,13 @@ defmodule OmeglePhoenix.Matchmaker do
                 {:ok, session} when session.status == :waiting ->
                   case OmeglePhoenix.Bots.maybe_assign_waiting_session(session) do
                     :matched ->
-                      :telemetry.execute([:omegle_phoenix, :matchmaking, :bot_assigned], %{count: 1}, %{
-                        session_id: session_id
-                      })
+                      :telemetry.execute(
+                        [:omegle_phoenix, :matchmaking, :bot_assigned],
+                        %{count: 1},
+                        %{
+                          session_id: session_id
+                        }
+                      )
 
                     _ ->
                       with :ok <- leave_queue(session_id),
@@ -454,9 +458,13 @@ defmodule OmeglePhoenix.Matchmaker do
                              }) do
                         OmeglePhoenix.Router.notify_timeout(session_id)
 
-                        :telemetry.execute([:omegle_phoenix, :matchmaking, :timeout], %{count: 1}, %{
-                          session_id: session_id
-                        })
+                        :telemetry.execute(
+                          [:omegle_phoenix, :matchmaking, :timeout],
+                          %{count: 1},
+                          %{
+                            session_id: session_id
+                          }
+                        )
                       else
                         {:error, reason} ->
                           Logger.warning(
@@ -825,7 +833,7 @@ defmodule OmeglePhoenix.Matchmaker do
     %{
       session_kind: session_kind_string(partner_session),
       bot_type: bot_type_value(partner_session),
-      reportable: Map.get(partner_session, :session_kind) != :bot,
+      reportable: true,
       video_enabled:
         Map.get(current_session.preferences, "mode", "text") == "video" and
           Map.get(partner_session, :session_kind) != :bot and

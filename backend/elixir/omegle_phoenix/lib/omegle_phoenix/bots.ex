@@ -1,8 +1,11 @@
 defmodule OmeglePhoenix.Bots do
   @moduledoc false
 
+  require OpenTelemetry.Tracer, as: Tracer
+
   alias OmeglePhoenix.Bots.AIWorker
   alias OmeglePhoenix.Bots.ScriptWorker
+  alias OmeglePhoenix.Tracing
 
   @snapshot_key "bots:definitions:snapshot"
   # Keep both keys in the same Redis Cluster hash slot so the Lua scripts can
@@ -79,42 +82,57 @@ defmodule OmeglePhoenix.Bots do
   def maybe_assign_waiting_session(session) when is_map(session) do
     require Logger
 
-    if session[:session_kind] == :bot do
-      :skip
-    else
-      snapshot_result = load_snapshot()
+    Tracer.with_span "bots.maybe_assign_waiting_session", %{kind: :internal} do
+      Tracing.annotate_internal("bots.maybe_assign_waiting_session", %{
+        "session.ref" => Tracing.safe_ref(session[:id])
+      })
 
-      case snapshot_result do
-        {:ok, snapshot} ->
-          enabled = bots_enabled?(snapshot)
-          rollout = rollout_allows?(snapshot, session.id)
-          defs = matching_definitions(snapshot, session)
-          settings = Map.get(snapshot, "settings", %{})
+      if session[:session_kind] == :bot do
+        :skip
+      else
+        snapshot_result = load_snapshot()
 
-          Logger.debug(
-            "Bots.maybe_assign: enabled=#{inspect(enabled)} rollout=#{inspect(rollout)} " <>
-              "defs_count=#{if is_list(defs), do: length(defs), else: inspect(defs)} " <>
-              "rollout_percent=#{inspect(get_in(snapshot, ["settings", "rollout_percent"]))} " <>
-              "session_id=#{inspect(session.id)}"
-          )
+        case snapshot_result do
+          {:ok, snapshot} ->
+            enabled = bots_enabled?(snapshot)
+            rollout = rollout_allows?(snapshot, session.id)
+            defs = matching_definitions(snapshot, session)
+            settings = Map.get(snapshot, "settings", %{})
 
-          if enabled and rollout and is_list(defs) and defs != [] do
-            case try_start_worker(defs, session, settings) do
-              {:ok, _definition, _pid} ->
-                Logger.info("Bots.maybe_assign: matched session #{inspect(session.id)} to bot")
-                :matched
+            Logger.debug(
+              "Bots.maybe_assign: enabled=#{inspect(enabled)} rollout=#{inspect(rollout)} " <>
+                "defs_count=#{if is_list(defs), do: length(defs), else: inspect(defs)} " <>
+                "rollout_percent=#{inspect(get_in(snapshot, ["settings", "rollout_percent"]))} " <>
+                "session_id=#{inspect(session.id)}"
+            )
 
-              other ->
-                Logger.debug("Bots.maybe_assign: try_start_worker failed: #{inspect(other)}")
-                :skip
+            if enabled and rollout and is_list(defs) and defs != [] do
+              case try_start_worker(defs, session, settings) do
+                {:ok, definition, _pid} ->
+                  Logger.info("Bots.maybe_assign: matched session #{inspect(session.id)} to bot")
+
+                  :telemetry.execute(
+                    [:omegle_phoenix, :bots, :worker_started],
+                    %{count: 1},
+                    %{
+                      bot_type: Map.get(definition, "bot_type", "engagement")
+                    }
+                  )
+
+                  :matched
+
+                other ->
+                  Logger.debug("Bots.maybe_assign: try_start_worker failed: #{inspect(other)}")
+                  :skip
+              end
+            else
+              :skip
             end
-          else
-            :skip
-          end
 
-        other ->
-          Logger.debug("Bots.maybe_assign: snapshot load failed: #{inspect(other)}")
-          :skip
+          other ->
+            Logger.debug("Bots.maybe_assign: snapshot load failed: #{inspect(other)}")
+            :skip
+        end
       end
     end
   end
@@ -203,7 +221,7 @@ defmodule OmeglePhoenix.Bots do
       _ ->
         false
     end)
-    |> Enum.sort_by(&definition_priority(&1, settings), :desc)
+    |> prioritize_definitions(settings)
   end
 
   defp matching_definitions(_snapshot, _session), do: []
@@ -294,12 +312,13 @@ defmodule OmeglePhoenix.Bots do
 
   defp active_run_key(definition_id), do: @active_run_key_prefix <> definition_id
 
-  defp definition_priority(definition, settings) do
-    {
-      bot_type_priority(definition, settings),
-      definition_traffic_weight(definition),
-      definition_capacity(definition)
-    }
+  def prioritize_definitions(definitions, settings) when is_list(definitions) do
+    definitions
+    |> Enum.group_by(&bot_type_priority(&1, settings))
+    |> Enum.sort_by(fn {priority, _definitions} -> priority end, :desc)
+    |> Enum.flat_map(fn {_priority, grouped_definitions} ->
+      weighted_shuffle(grouped_definitions)
+    end)
   end
 
   defp definition_traffic_weight(definition) do
@@ -337,6 +356,27 @@ defmodule OmeglePhoenix.Bots do
   defp max_concurrent_runs(_settings), do: 100
 
   defp definition_capacity(definition), do: definition_bot_count(definition)
+
+  defp weighted_shuffle(definitions) do
+    definitions
+    |> Enum.map(fn definition ->
+      {weighted_selection_key(definition), definition_capacity(definition), definition}
+    end)
+    |> Enum.sort_by(
+      fn {selection_key, capacity, _definition} -> {selection_key, capacity} end,
+      :desc
+    )
+    |> Enum.map(fn {_selection_key, _capacity, definition} -> definition end)
+  end
+
+  # Weighted random ordering without replacement: larger traffic_weight values
+  # are more likely to appear earlier, while still allowing lower-weight bots
+  # to receive some traffic within the same priority tier.
+  defp weighted_selection_key(definition) do
+    weight = definition_traffic_weight(definition)
+    uniform = max(:rand.uniform(), 1.0e-12)
+    :math.pow(uniform, 1.0 / weight)
+  end
 
   defp slot_ttl_seconds(definition) do
     ttl =

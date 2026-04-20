@@ -3,12 +3,14 @@ defmodule OmeglePhoenix.Bots.AIWorker do
 
   use GenServer
 
+  require OpenTelemetry.Tracer, as: Tracer
   require Logger
 
   alias LangChain.Chains.LLMChain
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.Message
   alias LangChain.Message.ContentPart
+  alias OmeglePhoenix.Tracing
 
   @default_fallback_message "Sorry, I need to go for now."
   @default_system_prompt """
@@ -134,6 +136,12 @@ defmodule OmeglePhoenix.Bots.AIWorker do
         end
 
       {:error, reason} ->
+        :telemetry.execute(
+          [:omegle_phoenix, :bots, :generation_failed],
+          %{count: 1},
+          %{bot_type: "ai"}
+        )
+
         Logger.warning(
           "AI bot generation failed for #{inspect(state.bot_session_id)}: #{inspect(reason)}"
         )
@@ -146,6 +154,12 @@ defmodule OmeglePhoenix.Bots.AIWorker do
   end
 
   def handle_info({:DOWN, ref, :process, _pid, reason}, %{llm_task: %Task{ref: ref}} = state) do
+    :telemetry.execute(
+      [:omegle_phoenix, :bots, :generation_failed],
+      %{count: 1},
+      %{bot_type: "ai"}
+    )
+
     Logger.warning("AI bot task crashed for #{inspect(state.bot_session_id)}: #{inspect(reason)}")
     fallback = fallback_message(state.definition)
 
@@ -161,25 +175,55 @@ defmodule OmeglePhoenix.Bots.AIWorker do
   end
 
   def handle_info(:idle_timeout_reached, state) do
+    :telemetry.execute(
+      [:omegle_phoenix, :bots, :conversation_finished],
+      %{count: 1},
+      %{bot_type: "ai", reason: "idle_timeout"}
+    )
+
     disconnect_human_partner(state, "bot timed out")
     {:stop, :normal, state}
   end
 
   def handle_info(:session_ttl_reached, state) do
+    :telemetry.execute(
+      [:omegle_phoenix, :bots, :conversation_finished],
+      %{count: 1},
+      %{bot_type: "ai", reason: "session_ttl"}
+    )
+
     disconnect_human_partner(state, "bot finished")
     {:stop, :normal, state}
   end
 
   def handle_info(:disconnect_bot, state) do
+    :telemetry.execute(
+      [:omegle_phoenix, :bots, :conversation_finished],
+      %{count: 1},
+      %{bot_type: "ai", reason: "bot_finished"}
+    )
+
     disconnect_human_partner(state, "bot finished")
     {:stop, :normal, state}
   end
 
   def handle_info({:router_disconnect, _reason, _generation}, state) do
+    :telemetry.execute(
+      [:omegle_phoenix, :bots, :conversation_finished],
+      %{count: 1},
+      %{bot_type: "ai", reason: "partner_disconnect"}
+    )
+
     {:stop, :normal, state}
   end
 
   def handle_info(:router_timeout, state) do
+    :telemetry.execute(
+      [:omegle_phoenix, :bots, :conversation_finished],
+      %{count: 1},
+      %{bot_type: "ai", reason: "router_timeout"}
+    )
+
     {:stop, :normal, state}
   end
 
@@ -225,6 +269,12 @@ defmodule OmeglePhoenix.Bots.AIWorker do
         state
 
       match?(%Task{}, state.llm_task) ->
+        :telemetry.execute(
+          [:omegle_phoenix, :bots, :message_enqueued],
+          %{count: 1},
+          %{bot_type: "ai", source: "user"}
+        )
+
         update_in(state.queued_user_messages, &(&1 ++ [trimmed]))
 
       true ->
@@ -242,6 +292,18 @@ defmodule OmeglePhoenix.Bots.AIWorker do
         state
 
       true ->
+        :telemetry.execute(
+          [:omegle_phoenix, :bots, :message_enqueued],
+          %{count: 1},
+          %{bot_type: "ai", source: request_source(request)}
+        )
+
+        :telemetry.execute(
+          [:omegle_phoenix, :bots, :generation_started],
+          %{count: 1},
+          %{bot_type: "ai"}
+        )
+
         task =
           Task.Supervisor.async_nolink(OmeglePhoenix.TaskSupervisor, fn ->
             generate_reply(state.definition, state.history, request)
@@ -255,55 +317,64 @@ defmodule OmeglePhoenix.Bots.AIWorker do
   end
 
   defp generate_reply(definition, history, request) do
-    llm_config = ai_config(definition)
+    Tracer.with_span "bots.ai_worker.generate_reply", %{kind: :internal} do
+      Tracing.annotate_internal("bots.ai_worker.generate_reply", %{
+        "bot.type" => "ai",
+        "bot.request.type" => request_source(request)
+      })
 
-    llm_opts =
-      %{
-        model: Map.get(llm_config, "model"),
-        endpoint: normalize_endpoint(Map.get(llm_config, "api_url")),
-        api_key: Map.get(llm_config, "api_token"),
-        stream: false,
-        temperature: llm_temperature(llm_config),
-        receive_timeout: 20_000,
-        retry_count: 0
-      }
-      |> maybe_put_max_tokens(llm_config)
+      try do
+        llm_config = ai_config(definition)
 
-    llm = ChatOpenAI.new!(llm_opts)
+        llm_opts =
+          %{
+            model: Map.get(llm_config, "model"),
+            endpoint: normalize_endpoint(Map.get(llm_config, "api_url")),
+            api_key: Map.get(llm_config, "api_token"),
+            stream: false,
+            temperature: llm_temperature(llm_config),
+            receive_timeout: 20_000,
+            retry_count: 0
+          }
+          |> maybe_put_max_tokens(llm_config)
 
-    messages =
-      [Message.new_system!(system_prompt(definition))]
-      |> Kernel.++(Enum.map(history, &history_message/1))
-      |> Kernel.++([request_message(request)])
+        llm = ChatOpenAI.new!(llm_opts)
 
-    chain =
-      %{llm: llm}
-      |> LLMChain.new!()
-      |> LLMChain.add_messages(messages)
+        messages =
+          [Message.new_system!(system_prompt(definition))]
+          |> Kernel.++(Enum.map(history, &history_message/1))
+          |> Kernel.++([request_message(request)])
 
-    case LLMChain.run(chain) do
-      {:ok, updated_chain} ->
-        content =
-          updated_chain.last_message.content
-          |> ContentPart.content_to_string()
-          |> to_string()
-          |> String.trim()
+        chain =
+          %{llm: llm}
+          |> LLMChain.new!()
+          |> LLMChain.add_messages(messages)
 
-        {:ok, content}
+        case LLMChain.run(chain) do
+          {:ok, updated_chain} ->
+            content =
+              updated_chain.last_message.content
+              |> ContentPart.content_to_string()
+              |> to_string()
+              |> String.trim()
 
-      {:error, _failed_chain, error} ->
-        {:error, format_generation_error(error)}
+            {:ok, content}
 
-      {:error, error} ->
-        {:error, format_generation_error(error)}
+          {:error, _failed_chain, error} ->
+            {:error, format_generation_error(error)}
 
-      other ->
-        {:error, {:unexpected_llm_result, other}}
+          {:error, error} ->
+            {:error, format_generation_error(error)}
+
+          other ->
+            {:error, {:unexpected_llm_result, other}}
+        end
+      rescue
+        error -> {:error, Exception.message(error)}
+      catch
+        kind, reason -> {:error, {kind, reason}}
+      end
     end
-  rescue
-    error -> {:error, Exception.message(error)}
-  catch
-    kind, reason -> {:error, {kind, reason}}
   end
 
   defp apply_successful_reply(state, content) do
@@ -349,6 +420,12 @@ defmodule OmeglePhoenix.Bots.AIWorker do
     if trimmed == "" do
       state
     else
+      :telemetry.execute(
+        [:omegle_phoenix, :bots, :reply_sent],
+        %{count: 1},
+        %{bot_type: "ai"}
+      )
+
       OmeglePhoenix.Router.send_message(
         state.human_session_id,
         %{
@@ -388,6 +465,10 @@ defmodule OmeglePhoenix.Bots.AIWorker do
     state
   end
 
+  defp request_source(%{type: :opening}), do: "opening"
+  defp request_source(%{type: :user}), do: "user"
+  defp request_source(_request), do: "unknown"
+
   defp pair_with_human(human_session_id, bot_session_id) do
     OmeglePhoenix.SessionLock.with_locks([human_session_id, bot_session_id], fn ->
       with {:ok, human_session} <- OmeglePhoenix.SessionManager.get_session(human_session_id),
@@ -422,7 +503,7 @@ defmodule OmeglePhoenix.Bots.AIWorker do
           %{
             session_kind: "bot",
             bot_type: "ai",
-            reportable: false,
+            reportable: true,
             video_enabled: false
           }
         )

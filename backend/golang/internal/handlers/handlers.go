@@ -1592,13 +1592,27 @@ func sessionIsBotForReport(ctx context.Context, redisClient redis.UniversalClien
 	route, err := appredis.ResolveSessionRouteForReport(ctx, redisClient, sessionID)
 	if err != nil {
 		span.RecordError(err)
-		return false, err
+		fallbackValue, fallbackErr := redisClient.Get(ctx, appredis.SessionReportKindKey(sessionID)).Result()
+		if fallbackErr != nil {
+			if !errors.Is(fallbackErr, redis.Nil) {
+				span.RecordError(fallbackErr)
+			}
+			return false, err
+		}
+		return strings.EqualFold(strings.TrimSpace(fallbackValue), "bot"), nil
 	}
 
 	rawSession, err := redisClient.Get(ctx, appredis.SessionDataKey(sessionID, route)).Result()
 	if err != nil {
 		span.RecordError(err)
-		return false, err
+		fallbackValue, fallbackErr := redisClient.Get(ctx, appredis.SessionReportKindKey(sessionID)).Result()
+		if fallbackErr != nil {
+			if !errors.Is(fallbackErr, redis.Nil) {
+				span.RecordError(fallbackErr)
+			}
+			return false, err
+		}
+		return strings.EqualFold(strings.TrimSpace(fallbackValue), "bot"), nil
 	}
 
 	var sessionData map[string]any

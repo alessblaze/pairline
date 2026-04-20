@@ -177,6 +177,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
   const [botDescription, setBotDescription] = useState('');
   const [botType, setBotType] = useState<'engagement' | 'ai'>('engagement');
   const [botCount, setBotCount] = useState('1');
+  const [botTrafficWeight, setBotTrafficWeight] = useState('100');
   const [botOpeningMessages, setBotOpeningMessages] = useState('hey');
   const [botReplyMessages, setBotReplyMessages] = useState('nice\n tell me more');
   const [botFallbackMessage, setBotFallbackMessage] = useState('tell me more');
@@ -203,12 +204,6 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
       mainContentRef.current.scrollTo(0, 0);
     }
   }, [currentTab]);
-
-  useEffect(() => {
-    if (botType === 'ai') {
-      setBotSupportsVideo(false);
-    }
-  }, [botType]);
 
   const [reportStatusFilter, setReportStatusFilter] = useState<'pending' | 'decided' | 'all'>(__mockState?.reportStatusFilter ?? 'pending');
   const [reportReviewSourceFilter, setReportReviewSourceFilter] = useState<'all' | 'awaitingHuman' | 'autoReviewed' | 'humanReviewed'>(
@@ -956,6 +951,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
           description: botDescription.trim(),
           match_modes: matchModes,
           bot_count: Math.max(1, Number(botCount) || 1),
+          traffic_weight: Math.max(1, Number(botTrafficWeight) || 100),
           message_limit: botMessageLimit,
           session_ttl_seconds: botSessionTtl,
           idle_timeout_seconds: botIdleTimeout,
@@ -989,6 +985,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
         setBotDescription('');
         setBotType('engagement');
         setBotCount('1');
+        setBotTrafficWeight('100');
         setBotOpeningMessages('hey');
         setBotReplyMessages('nice\n tell me more');
         setBotFallbackMessage('tell me more');
@@ -2875,7 +2872,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                                 </div>
                                 <p className="text-xs text-[var(--admin-text-soft)]">{bot.description || bot.slug}</p>
                                 <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">
-                                  Modes {bot.match_modes_json.join(', ')} • Pool {bot.bot_count} • Messages {bot.message_limit} • TTL {bot.session_ttl_seconds}s • Idle {bot.idle_timeout_seconds}s
+                                  Modes {bot.match_modes_json.join(', ')} • Pool {bot.bot_count} • Weight {bot.traffic_weight} • Messages {bot.message_limit} • TTL {bot.session_ttl_seconds}s • Idle {bot.idle_timeout_seconds}s
                                 </p>
                                 {bot.bot_type === 'engagement' && (
                                   <p className="text-[11px] text-[var(--admin-text-muted)]">
@@ -3245,7 +3242,7 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
 
                 <section className="space-y-4">
                   <h3 className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] border-b border-[var(--admin-outline-soft)] pb-2 flex items-center gap-2"><ShieldAlert size={14}/> Flow & Limits</h3>
-                  <div className="grid gap-4 md:grid-cols-3">
+                  <div className="grid gap-4 md:grid-cols-4">
                     <div>
                       <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Message Limit</label>
                       <input type="number" min="1" value={botMessageLimit} onChange={(e) => setBotMessageLimit(Number(e.target.value) || 4)} className={inputClass} />
@@ -3257,6 +3254,17 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                     <div>
                       <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Idle Timeout (s)</label>
                       <input type="number" min="5" value={botIdleTimeout} onChange={(e) => setBotIdleTimeout(Number(e.target.value) || 45)} className={inputClass} />
+                    </div>
+                    <div>
+                      <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[var(--admin-text-muted)]">Traffic Weight</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="100000"
+                        value={botTrafficWeight}
+                        onChange={(e) => setBotTrafficWeight(e.target.value)}
+                        className={inputClass}
+                      />
                     </div>
                   </div>
                 </section>

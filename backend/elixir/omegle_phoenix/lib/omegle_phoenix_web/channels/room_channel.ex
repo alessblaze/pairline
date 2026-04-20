@@ -704,15 +704,12 @@ defmodule OmeglePhoenixWeb.RoomChannel do
          partner_owner_node, partner_meta},
         socket
       ) do
-    partner_kind = normalize_partner_kind(partner_meta)
-    video_enabled = partner_video_enabled(socket, partner_kind, partner_meta)
+    video_enabled = partner_video_enabled(socket, partner_meta)
 
     push(socket, "match", %{
       peer_id: partner_session_id,
       common_interests: common_interests,
-      partner_session_kind: partner_kind,
-      partner_bot_type: normalize_partner_bot_type(partner_meta),
-      reportable: partner_kind != "bot",
+      reportable: true,
       video_enabled: video_enabled
     })
 
@@ -1013,33 +1010,16 @@ defmodule OmeglePhoenixWeb.RoomChannel do
     )
   end
 
-  defp normalize_partner_kind(%{session_kind: "bot"}), do: "bot"
-  defp normalize_partner_kind(%{"session_kind" => "bot"}), do: "bot"
-  defp normalize_partner_kind(_partner_meta), do: "human"
-
-  defp normalize_partner_bot_type(%{bot_type: bot_type}) when is_binary(bot_type) and bot_type != "",
-    do: bot_type
-
-  defp normalize_partner_bot_type(%{"bot_type" => bot_type})
-       when is_binary(bot_type) and bot_type != "",
-       do: bot_type
-
-  defp normalize_partner_bot_type(_partner_meta), do: nil
-
-  defp partner_video_enabled(socket, "bot", _partner_meta) do
-    socket.assigns[:mode] == "video" and false
-  end
-
-  defp partner_video_enabled(socket, _partner_kind, %{video_enabled: value}) when is_boolean(value) do
+  defp partner_video_enabled(socket, %{video_enabled: value}) when is_boolean(value) do
     socket.assigns[:mode] == "video" and value
   end
 
-  defp partner_video_enabled(socket, _partner_kind, %{"video_enabled" => value})
+  defp partner_video_enabled(socket, %{"video_enabled" => value})
        when is_boolean(value) do
     socket.assigns[:mode] == "video" and value
   end
 
-  defp partner_video_enabled(socket, _partner_kind, _partner_meta) do
+  defp partner_video_enabled(socket, _partner_meta) do
     socket.assigns[:mode] == "video"
   end
 

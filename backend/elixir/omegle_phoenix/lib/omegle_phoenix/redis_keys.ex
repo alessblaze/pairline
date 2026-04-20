@@ -24,14 +24,20 @@ defmodule OmeglePhoenix.RedisKeys do
   def active_sessions_key, do: "sessions:active"
   def session_locator_key(session_id), do: "session:locator:" <> session_id
   def session_report_locator_key(session_id), do: "session:report_locator:" <> session_id
+  def session_report_kind_key(session_id), do: "session:report_kind:" <> session_id
   def session_ip_locator_key(session_id), do: "session:ip_locator:" <> session_id
   def ip_sessions_key(ip), do: "ip:" <> ip
 
   def route_for_session(%{id: session_id, redis_shard: shard, preferences: preferences}) do
-    %{mode: mode(preferences), shard: normalize_shard(shard, mode(preferences)), session_id: session_id}
+    %{
+      mode: mode(preferences),
+      shard: normalize_shard(shard, mode(preferences)),
+      session_id: session_id
+    }
   end
 
-  def route_for_session(session_id, preferences) when is_binary(session_id) and is_map(preferences) do
+  def route_for_session(session_id, preferences)
+      when is_binary(session_id) and is_map(preferences) do
     mode = mode(preferences)
     %{mode: mode, shard: initial_shard(mode, preferences, session_id), session_id: session_id}
   end
@@ -161,12 +167,17 @@ defmodule OmeglePhoenix.RedisKeys do
   def session_ip_key(route_or_session_id, route \\ nil)
 
   def session_ip_key(%{} = route, nil), do: "session:" <> tag(route) <> ":ip:" <> route.session_id
-  def session_ip_key(session_id, %{} = route), do: "session:" <> tag(route) <> ":ip:" <> session_id
+
+  def session_ip_key(session_id, %{} = route),
+    do: "session:" <> tag(route) <> ":ip:" <> session_id
 
   def session_token_key(route_or_session_id, route \\ nil)
 
-  def session_token_key(%{} = route, nil), do: "session:" <> tag(route) <> ":token:" <> route.session_id
-  def session_token_key(session_id, %{} = route), do: "session:" <> tag(route) <> ":token:" <> session_id
+  def session_token_key(%{} = route, nil),
+    do: "session:" <> tag(route) <> ":token:" <> route.session_id
+
+  def session_token_key(session_id, %{} = route),
+    do: "session:" <> tag(route) <> ":token:" <> session_id
 
   def queue_meta_key(route_or_session_id, route \\ nil)
 
@@ -191,8 +202,11 @@ defmodule OmeglePhoenix.RedisKeys do
 
   def recent_match_key(route_or_session_id, route \\ nil)
 
-  def recent_match_key(%{} = route, nil), do: "recent_match:" <> tag(route) <> ":" <> route.session_id
-  def recent_match_key(session_id, %{} = route), do: "recent_match:" <> tag(route) <> ":" <> session_id
+  def recent_match_key(%{} = route, nil),
+    do: "recent_match:" <> tag(route) <> ":" <> route.session_id
+
+  def recent_match_key(session_id, %{} = route),
+    do: "recent_match:" <> tag(route) <> ":" <> session_id
 
   def session_queue_key(route_or_session_id, route \\ nil)
 
@@ -238,7 +252,10 @@ defmodule OmeglePhoenix.RedisKeys do
   end
 
   def primary_shard(mode, session_id) when is_binary(session_id) do
-    :erlang.phash2({normalize_mode(mode), {:primary, session_id}}, OmeglePhoenix.Config.get_match_shard_count())
+    :erlang.phash2(
+      {normalize_mode(mode), {:primary, session_id}},
+      OmeglePhoenix.Config.get_match_shard_count()
+    )
   end
 
   def initial_shard(mode, preferences, session_id)
@@ -264,10 +281,14 @@ defmodule OmeglePhoenix.RedisKeys do
   end
 
   def tag(%{mode: mode, shard: shard}), do: tag(mode, shard)
-  def tag(mode, shard), do: "{#{normalize_mode(mode)}:#{normalize_shard(shard, normalize_mode(mode))}}"
+
+  def tag(mode, shard),
+    do: "{#{normalize_mode(mode)}:#{normalize_shard(shard, normalize_mode(mode))}}"
 
   defp maybe_verify_session_exists(_session_id, _route, false), do: :ok
-  defp maybe_verify_session_exists(session_id, route, true), do: ensure_session_exists(session_id, route)
+
+  defp maybe_verify_session_exists(session_id, route, true),
+    do: ensure_session_exists(session_id, route)
 
   defp ensure_session_exists(session_id, route) do
     case OmeglePhoenix.Redis.command(["EXISTS", session_key(session_id, route)]) do
@@ -279,7 +300,10 @@ defmodule OmeglePhoenix.RedisKeys do
   end
 
   defp shared_matchmaking_shard(mode) do
-    :erlang.phash2({normalize_mode(mode), :shared_matchmaking}, OmeglePhoenix.Config.get_match_shard_count())
+    :erlang.phash2(
+      {normalize_mode(mode), :shared_matchmaking},
+      OmeglePhoenix.Config.get_match_shard_count()
+    )
   end
 
   defp normalize_shard(shard, _mode) when is_integer(shard) and shard >= 0 do

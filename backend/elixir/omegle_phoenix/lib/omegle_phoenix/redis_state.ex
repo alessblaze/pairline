@@ -320,6 +320,7 @@ defmodule OmeglePhoenix.RedisState do
 
   def delete_session(session_id, ip, report_grace_seconds, opts \\ []) do
     report_grace_ttl = normalize_ttl!(report_grace_seconds)
+    session_kind = Keyword.get(opts, :session_kind, :human)
     {route_result, resolve_route_us} = timed_us(fn -> resolve_delete_route(session_id, opts) end)
 
     with {:ok, route} <- route_result do
@@ -354,7 +355,12 @@ defmodule OmeglePhoenix.RedisState do
           {:ok, _} ->
             {locator_result, locator_us} =
               timed_us(fn ->
-                cleanup_locators_for_report_grace(session_id, route, report_grace_ttl)
+                cleanup_locators_for_report_grace(
+                  session_id,
+                  route,
+                  report_grace_ttl,
+                  session_kind: session_kind
+                )
               end)
 
             with :ok <- locator_result do
@@ -859,6 +865,7 @@ defmodule OmeglePhoenix.RedisState do
     commands = [
       ["DEL", OmeglePhoenix.RedisKeys.session_locator_key(session_id)],
       ["DEL", OmeglePhoenix.RedisKeys.session_report_locator_key(session_id)],
+      ["DEL", OmeglePhoenix.RedisKeys.session_report_kind_key(session_id)],
       ["DEL", OmeglePhoenix.RedisKeys.session_ip_locator_key(session_id)]
     ]
 
@@ -869,17 +876,19 @@ defmodule OmeglePhoenix.RedisState do
     end
   end
 
-  defp cleanup_locators_for_report_grace(session_id, route, report_grace_ttl) do
-    commands = [
+  defp cleanup_locators_for_report_grace(session_id, route, report_grace_ttl, opts) do
+    commands =
       [
-        "SETEX",
-        OmeglePhoenix.RedisKeys.session_report_locator_key(session_id),
-        report_grace_ttl,
-        OmeglePhoenix.RedisKeys.encode_locator(route)
-      ],
-      ["DEL", OmeglePhoenix.RedisKeys.session_locator_key(session_id)],
-      ["EXPIRE", OmeglePhoenix.RedisKeys.session_ip_locator_key(session_id), report_grace_ttl]
-    ]
+        [
+          "SETEX",
+          OmeglePhoenix.RedisKeys.session_report_locator_key(session_id),
+          report_grace_ttl,
+          OmeglePhoenix.RedisKeys.encode_locator(route)
+        ],
+        ["DEL", OmeglePhoenix.RedisKeys.session_locator_key(session_id)],
+        ["EXPIRE", OmeglePhoenix.RedisKeys.session_ip_locator_key(session_id), report_grace_ttl]
+      ] ++
+        maybe_preserve_report_kind(session_id, report_grace_ttl, Keyword.get(opts, :session_kind))
 
     case OmeglePhoenix.Redis.pipeline(commands) do
       {:ok, _} -> :ok
@@ -1060,6 +1069,7 @@ defmodule OmeglePhoenix.RedisState do
         ["SREM", OmeglePhoenix.RedisKeys.active_sessions_key(), session_id],
         ["DEL", OmeglePhoenix.RedisKeys.session_locator_key(session_id)],
         ["DEL", OmeglePhoenix.RedisKeys.session_report_locator_key(session_id)],
+        ["DEL", OmeglePhoenix.RedisKeys.session_report_kind_key(session_id)],
         ["DEL", OmeglePhoenix.RedisKeys.session_ip_locator_key(session_id)]
       ] ++ ip_commands
 
@@ -1079,6 +1089,21 @@ defmodule OmeglePhoenix.RedisState do
       {:error, reason} -> {:error, reason}
       _ -> {:error, :not_found}
     end
+  end
+
+  defp maybe_preserve_report_kind(session_id, report_grace_ttl, :bot) do
+    [
+      [
+        "SETEX",
+        OmeglePhoenix.RedisKeys.session_report_kind_key(session_id),
+        report_grace_ttl,
+        "bot"
+      ]
+    ]
+  end
+
+  defp maybe_preserve_report_kind(_session_id, _report_grace_ttl, _session_kind) do
+    []
   end
 
   defp session_key(session_id, route), do: OmeglePhoenix.RedisKeys.session_key(session_id, route)
