@@ -366,6 +366,62 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
     end)
   end
 
+  test "script worker idle timeout disconnects a live human session", %{
+    session_id: session_id,
+    ip: ip
+  } do
+    preferences = %{"mode" => "text", "interests" => "live,bot,timeout"}
+
+    definition = %{
+      "id" => "live-script-timeout",
+      "message_limit" => 4,
+      "idle_timeout_seconds" => 1,
+      "session_ttl_seconds" => 10,
+      "script_json" => %{
+        "opening_messages" => ["hey there"],
+        "reply_messages" => ["tell me more"],
+        "fallback_message" => "still there?"
+      }
+    }
+
+    assert {:ok, session} =
+             OmeglePhoenix.SessionManager.create_session(session_id, ip, preferences)
+
+    assert :ok = OmeglePhoenix.Router.register(session_id, self())
+
+    on_exit(fn ->
+      _ = OmeglePhoenix.Router.unregister(session_id)
+    end)
+
+    assert {:ok, pid} =
+             OmeglePhoenix.Bots.ScriptWorker.start_link(session: session, definition: definition)
+
+    ref = Process.monitor(pid)
+
+    assert_receive {:router_match, bot_session_id, _common_interests, match_generation, _route,
+                    _owner, _partner_meta},
+                   2_000
+
+    assert is_binary(bot_session_id)
+
+    assert_receive {:router_disconnect, "bot timed out", ^match_generation}, 3_000
+    assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 3_000
+
+    assert_eventually(fn ->
+      case OmeglePhoenix.SessionManager.get_session(session_id) do
+        {:ok, human_session} ->
+          human_session.status == :disconnecting and is_nil(human_session.partner_id)
+
+        _ ->
+          false
+      end
+    end)
+
+    assert_eventually(fn ->
+      OmeglePhoenix.SessionManager.get_session(bot_session_id) == {:error, :not_found}
+    end)
+  end
+
   test "matchmaker join and leave queue works against live cluster", %{
     session_id: session_id,
     ip: ip

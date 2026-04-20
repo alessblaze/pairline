@@ -189,8 +189,8 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
     __mockState?.autoModerationSettings ?? null
   );
   const [updatingAutoModerationEnabled, setUpdatingAutoModerationEnabled] = useState(false);
-  const [botSettings, setBotSettings] = useState<BotSettings | null>(null);
-  const [botDefinitions, setBotDefinitions] = useState<BotDefinition[]>([]);
+  const [botSettings, setBotSettings] = useState<BotSettings | null>(__mockState?.botSettings ?? null);
+  const [botDefinitions, setBotDefinitions] = useState<BotDefinition[]>(__mockState?.botDefinitions ?? []);
   const [editingBotId, setEditingBotId] = useState<string | null>(null);
   const [botName, setBotName] = useState('');
   const [botSlug, setBotSlug] = useState('');
@@ -2751,8 +2751,12 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                   <div className="space-y-6">
                     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                       <div className={metricCardClass('active')}>
-                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[inset_0_0_20px_rgba(34,211,238,0.05)]">
                           <Bot size={20} />
+                          <div className="hud-bracket hud-bracket-tl" />
+                          <div className="hud-bracket hud-bracket-tr" />
+                          <div className="hud-bracket hud-bracket-bl" />
+                          <div className="hud-bracket hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
                           <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-1">Definitions</p>
@@ -2760,8 +2764,12 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         </div>
                       </div>
                       <div className={metricCardClass(botSettings?.enabled ? 'approved' : 'inactive')}>
-                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-[inset_0_0_20px_rgba(16,185,129,0.05)]">
                           <Play size={20} />
+                          <div className="hud-bracket hud-bracket-tl" />
+                          <div className="hud-bracket hud-bracket-tr" />
+                          <div className="hud-bracket hud-bracket-bl" />
+                          <div className="hud-bracket hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
                           <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-1">Bots Enabled</p>
@@ -2769,8 +2777,12 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         </div>
                       </div>
                       <div className={metricCardClass(botSettings?.engagement_enabled ? 'approved' : 'inactive')}>
-                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-amber-500/10 text-amber-400 border border-amber-500/20 shadow-[inset_0_0_20px_rgba(245,158,11,0.05)]">
                           <MessageSquare size={20} />
+                          <div className="hud-bracket hud-bracket-tl" />
+                          <div className="hud-bracket hud-bracket-tr" />
+                          <div className="hud-bracket hud-bracket-bl" />
+                          <div className="hud-bracket hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
                           <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-1">Engagement</p>
@@ -2778,8 +2790,12 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         </div>
                       </div>
                       <div className={metricCardClass(botSettings?.emergency_stop ? 'pending' : 'approved')}>
-                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-rose-500/10 text-rose-400 border border-rose-500/20 shadow-[inset_0_0_20px_rgba(244,63,94,0.05)]">
                           <Sparkles size={20} />
+                          <div className="hud-bracket hud-bracket-tl" />
+                          <div className="hud-bracket hud-bracket-tr" />
+                          <div className="hud-bracket hud-bracket-bl" />
+                          <div className="hud-bracket hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
                           <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-1">Emergency Stop</p>
@@ -2787,8 +2803,12 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                         </div>
                       </div>
                       <div className={metricCardClass((botSettings?.rollout_percent ?? 0) > 0 ? 'approved' : 'inactive')}>
-                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-none bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[inset_0_0_20px_rgba(34,211,238,0.05)]">
                           <Activity size={20} />
+                          <div className="hud-bracket hud-bracket-tl" />
+                          <div className="hud-bracket hud-bracket-tr" />
+                          <div className="hud-bracket hud-bracket-bl" />
+                          <div className="hud-bracket hud-bracket-br" />
                         </div>
                         <div className="flex flex-col">
                           <p className="font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)] mb-1">Rollout %</p>
@@ -2797,18 +2817,27 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                       </div>
                     </div>
 
-                    <div className={`${surfaceCardClass} p-6 space-y-4`}>
+                    <div className="surface-card rounded-none p-5">
+                      <div className="hud-bracket hud-bracket-tl" />
+                      <div className="hud-bracket hud-bracket-tr" />
+                      <div className="hud-bracket hud-bracket-bl" />
+                      <div className="hud-bracket hud-bracket-br" />
+
+                      <div className="space-y-4">
                       <div className="flex items-center justify-between gap-4 flex-wrap">
-                        <h3 className="text-lg font-bold text-[var(--admin-text)]">Runtime Controls</h3>
+                        <div className="flex items-center gap-3">
+                          <h3 className="section-prefix font-heading text-sm font-bold uppercase tracking-[0.14em] text-[var(--admin-text)]">Runtime Controls</h3>
+                          <span className="ml-auto font-heading text-[10px] text-[var(--admin-text-muted)] tracking-wider font-bold uppercase tracking-[0.14em] whitespace-nowrap">// BOT_RUNTIME_CONTROLS</span>
+                        </div>
                         <button
                           onClick={() => {
                             void fetchBotSettings();
                             void fetchBotDefinitions();
                           }}
-                          className={`${actionButtonClass} bg-[var(--admin-text)] text-[var(--admin-bg)]`}
+                          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] text-[var(--admin-text-soft)] transition-all hover:bg-[var(--admin-muted-surface)] hover:text-[var(--admin-text)]"
+                          title="Refresh Bot Data"
                         >
                           <RefreshCw size={16} />
-                          Refresh Bots
                         </button>
                       </div>
 
@@ -2935,12 +2964,25 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
                           </p>
                         </div>
                       </div>
+                      </div>
                     </div>
 
                     {canManageBots && (
-                      <div className={`${surfaceCardClass} p-6 space-y-4`}>
-                        <div className="flex items-center justify-between">
-                          <h3 className="text-lg font-bold text-[var(--admin-text)]">Conversation Types</h3>
+                      <div className="surface-card rounded-none p-5">
+                        <div className="hud-bracket hud-bracket-tl" />
+                        <div className="hud-bracket hud-bracket-tr" />
+                        <div className="hud-bracket hud-bracket-bl" />
+                        <div className="hud-bracket hud-bracket-br" />
+
+                        <div className="flex items-center gap-3 mb-0">
+                          <h3 className="section-prefix font-heading text-sm font-bold uppercase tracking-[0.14em] text-[var(--admin-text)]">Bot Definitions</h3>
+                          <span className="ml-auto font-heading text-[10px] text-[var(--admin-text-muted)] tracking-wider font-bold uppercase tracking-[0.14em] whitespace-nowrap">// BOT_DEFINITIONS</span>
+                        </div>
+
+                        <div className="flex items-center justify-between mt-4">
+                          <p className="text-xs text-[var(--admin-text-soft)]">
+                            {botDefinitions.length} definition{botDefinitions.length !== 1 ? 's' : ''} registered
+                          </p>
                           <button onClick={openCreateBotModal} className={`${actionButtonClass} bg-cyan-400 text-[#04131b] hover:bg-cyan-300`}>
                             <Plus size={16} />
                             Add Bot Definition
@@ -2951,70 +2993,144 @@ export function AdminPanelRuntime({ loginRoute = '/', __mockState }: AdminPanelR
 
                     <div className="space-y-4">
                       {botDefinitions.length === 0 ? (
-                        <div className="rounded-none border border-dashed border-[var(--admin-outline-strong)] py-20 text-center">
-                          <p className="text-[var(--admin-text-muted)]">No bot definitions created yet.</p>
+                        <div className="surface-card rounded-none flex flex-col items-center justify-center px-8 py-16 text-center">
+                          <div className="hud-bracket hud-bracket-tl" />
+                          <div className="hud-bracket hud-bracket-tr" />
+                          <div className="hud-bracket hud-bracket-bl" />
+                          <div className="hud-bracket hud-bracket-br" />
+
+                          <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-none border border-[var(--admin-outline-strong)] bg-[var(--admin-muted-surface)]">
+                            <Bot size={28} className="text-[var(--admin-text-muted)]" />
+                          </div>
+                          <h4 className="font-heading text-lg font-semibold text-[var(--admin-text-soft)] mb-2 tracking-wide">NO BOT DEFINITIONS</h4>
+                          <p className="font-heading text-[11px] text-[var(--admin-text-muted)] uppercase tracking-[0.14em] font-bold">SYSTEM_REGISTRY_CLEAR // NO BOTS CONFIGURED</p>
                         </div>
                       ) : (
-                        botDefinitions.map((bot) => (
-                          <div key={bot.id} className={`${surfaceCardClass} p-6`}>
-                            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                              <div className="space-y-1">
-                                <div className="flex items-center gap-3 flex-wrap">
-                                  <h4 className="font-bold text-[var(--admin-text)]">{bot.name}</h4>
-                                  <span className="text-[10px] font-bold uppercase tracking-widest text-cyan-400">{bot.bot_type}</span>
-                                  <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider ${bot.is_active ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
-                                    {bot.is_active ? 'Active' : 'Inactive'}
-                                  </span>
+                        <AnimatePresence mode="popLayout">
+                          {botDefinitions.map((bot, index) => (
+                            <motion.div
+                              key={bot.id}
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: -10 }}
+                              transition={{ delay: index * 0.03, duration: 0.2 }}
+                              className="surface-card group rounded-none p-0 overflow-hidden transition-all duration-300 hover:border-[var(--admin-outline-strong)] hover:translate-y-[-1px] hover:shadow-[0_8px_32px_rgba(0,0,0,0.4)]"
+                            >
+                              <div className="hud-bracket hud-bracket-tl" />
+                              <div className="hud-bracket hud-bracket-tr" />
+                              <div className="hud-bracket hud-bracket-bl" />
+                              <div className="hud-bracket hud-bracket-br" />
+
+                              <div className="flex flex-col md:grid md:grid-cols-[4px_1fr_120px] md:items-stretch h-full">
+                                {/* Color Stripe */}
+                                <div className={`w-full h-1 md:w-1 md:h-auto shrink-0 ${bot.bot_type === 'ai' ? 'bg-gradient-to-b from-violet-500 to-violet-700 shadow-[2px_0_12px_rgba(139,92,246,0.2)]' : 'bg-gradient-to-b from-cyan-500 to-cyan-700 shadow-[2px_0_12px_rgba(34,211,238,0.2)]'}`} />
+
+                                <div className="flex flex-1 flex-col px-4 py-4 md:px-5 md:py-4">
+                                  {/* Meta Row */}
+                                  <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+                                    <div className="flex items-center gap-2">
+                                      <div className={`inline-flex items-center gap-1.5 rounded-none px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] border ${bot.bot_type === 'ai' ? 'border-violet-500/20 bg-violet-500/10 text-violet-300' : 'border-cyan-500/20 bg-cyan-500/10 text-cyan-300'}`}>
+                                        <div className={`h-1.5 w-1.5 rounded-none ${bot.bot_type === 'ai' ? 'bg-violet-400' : 'bg-cyan-400'} ${bot.is_active ? 'animate-pulse' : 'opacity-40'}`} />
+                                        {bot.bot_type === 'ai' ? 'AI Bot' : 'Engagement'}
+                                      </div>
+                                      <span className={`inline-flex items-center rounded-none px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider ${bot.is_active ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
+                                        {bot.is_active ? 'Active' : 'Inactive'}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5 font-heading text-[11px] text-[var(--admin-text-muted)] font-bold uppercase tracking-[0.14em]">
+                                      <Clock size={12} className="text-[var(--admin-text-muted)]" />
+                                      <span>{formatDate(bot.created_at)}</span>
+                                    </div>
+                                  </div>
+
+                                  {/* Name & Description */}
+                                  <h4 className="font-heading text-base font-bold text-[var(--admin-text)] mb-1">{bot.name}</h4>
+                                  <p className="text-xs text-[var(--admin-text-soft)] mb-3">{bot.description || bot.slug}</p>
+
+                                  {/* Data Panel */}
+                                  <div className="detail-panel rounded-none px-4 py-3 md:px-5">
+                                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-x-6 gap-y-3">
+                                      <div className="flex flex-col">
+                                        <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Modes</p>
+                                        <p className="font-mono text-sm font-medium text-[var(--admin-text)]">{bot.match_modes_json.join(', ')}</p>
+                                      </div>
+                                      <div className="flex flex-col">
+                                        <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Pool</p>
+                                        <p className="font-mono text-sm font-medium text-[var(--admin-text)]">{bot.bot_count}</p>
+                                      </div>
+                                      <div className="flex flex-col">
+                                        <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Weight</p>
+                                        <p className="font-mono text-sm font-medium text-[var(--admin-text)]">{bot.traffic_weight}</p>
+                                      </div>
+                                      <div className="flex flex-col">
+                                        <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Msg Limit</p>
+                                        <p className="font-mono text-sm font-medium text-[var(--admin-text)]">{bot.message_limit}</p>
+                                      </div>
+                                      <div className="flex flex-col">
+                                        <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">TTL</p>
+                                        <p className="font-mono text-sm font-medium text-[var(--admin-text)]">{bot.session_ttl_seconds}s</p>
+                                      </div>
+                                      <div className="flex flex-col">
+                                        <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">Idle</p>
+                                        <p className="font-mono text-sm font-medium text-[var(--admin-text)]">{bot.idle_timeout_seconds}s</p>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Type-specific info */}
+                                  {bot.bot_type === 'engagement' && (
+                                    <div className="mt-3 flex items-center gap-4 text-[11px] text-[var(--admin-text-muted)]">
+                                      <span className="flex items-center gap-1"><MessageSquare size={12} className="text-cyan-400" /> Openers {readScriptLines(bot.script_json, 'opening_messages').length}</span>
+                                      <span className="flex items-center gap-1"><MessageSquare size={12} className="text-cyan-400" /> Replies {readScriptLines(bot.script_json, 'reply_messages').length}</span>
+                                    </div>
+                                  )}
+                                  {bot.bot_type === 'ai' && (() => {
+                                    const aiConfig = readAIBotConfig(bot.ai_config_json);
+                                    return (
+                                      <div className="mt-3 flex items-center gap-4 text-[11px] text-[var(--admin-text-muted)] flex-wrap">
+                                        <span className="flex items-center gap-1"><Sparkles size={12} className="text-violet-400" /> {aiConfig.provider || 'openai-compatible'}</span>
+                                        <span className="font-mono">{aiConfig.model || 'unconfigured'}</span>
+                                        <span className="font-mono text-[10px] break-all">{aiConfig.api_url || 'no endpoint'}</span>
+                                      </div>
+                                    );
+                                  })()}
                                 </div>
-                                <p className="text-xs text-[var(--admin-text-soft)]">{bot.description || bot.slug}</p>
-                                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--admin-text-muted)]">
-                                  Modes {bot.match_modes_json.join(', ')} • Pool {bot.bot_count} • Weight {bot.traffic_weight} • Messages {bot.message_limit} • TTL {bot.session_ttl_seconds}s • Idle {bot.idle_timeout_seconds}s
-                                </p>
-                                {bot.bot_type === 'engagement' && (
-                                  <p className="text-[11px] text-[var(--admin-text-muted)]">
-                                    Openers {readScriptLines(bot.script_json, 'opening_messages').length} • Replies {readScriptLines(bot.script_json, 'reply_messages').length}
-                                  </p>
+
+                                {/* Action Area */}
+                                {canManageBots && (
+                                  <div className="flex items-center justify-start md:justify-center gap-1 px-4 pb-4 md:pb-0 md:px-3 border-t border-[var(--admin-outline-soft)] md:border-t-0 md:border-l md:border-[var(--admin-outline-soft)]">
+                                    <div className="flex md:flex-col items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => openEditBotModal(bot)}
+                                        className="flex h-9 w-9 items-center justify-center rounded-none border border-[var(--admin-outline-soft)] bg-[var(--admin-muted-surface)] text-[var(--admin-text-soft)] transition-all hover:text-[var(--admin-text)] hover:border-[var(--admin-outline-strong)]"
+                                        title="Edit"
+                                      >
+                                        <Pencil size={14} />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => void setBotActiveState(bot.id, !bot.is_active)}
+                                        className={`flex h-9 w-9 items-center justify-center rounded-none border transition-all ${bot.is_active ? 'border-rose-500/20 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20' : 'border-emerald-500/20 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20'}`}
+                                        title={bot.is_active ? 'Deactivate' : 'Activate'}
+                                      >
+                                        {bot.is_active ? <XCircle size={14} /> : <CheckCircle2 size={14} />}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => void deleteBotDefinition(bot.id, bot.name)}
+                                        className="flex h-9 w-9 items-center justify-center rounded-none border border-rose-500/20 bg-rose-500/10 text-rose-400 transition-all hover:bg-rose-500/20 hover:border-rose-500/40"
+                                        title="Delete"
+                                      >
+                                        <Trash2 size={14} />
+                                      </button>
+                                    </div>
+                                  </div>
                                 )}
-                                {bot.bot_type === 'ai' && (() => {
-                                  const aiConfig = readAIBotConfig(bot.ai_config_json);
-                                  return (
-                                    <p className="text-[11px] text-[var(--admin-text-muted)] break-all">
-                                      Provider {aiConfig.provider || 'openai-compatible'} • Model {aiConfig.model || 'unconfigured'} • Endpoint {aiConfig.api_url || 'missing'}
-                                    </p>
-                                  );
-                                })()}
                               </div>
-                              {canManageBots && (
-                                <div className="flex items-center gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => openEditBotModal(bot)}
-                                    className={`${actionButtonClass} bg-[var(--admin-muted-surface)] text-[var(--admin-text)] hover:bg-[var(--admin-muted-surface-hover)]`}
-                                  >
-                                    <Pencil size={16} />
-                                    Edit
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => void setBotActiveState(bot.id, !bot.is_active)}
-                                    className={`${actionButtonClass} ${bot.is_active ? 'bg-rose-500 text-white' : 'bg-emerald-500 text-[#04110c]'}`}
-                                  >
-                                    {bot.is_active ? <XCircle size={16} /> : <CheckCircle2 size={16} />}
-                                    {bot.is_active ? 'Deactivate' : 'Activate'}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => void deleteBotDefinition(bot.id, bot.name)}
-                                    className={`${actionButtonClass} bg-rose-500/20 text-rose-400 hover:bg-rose-500/30`}
-                                    title="Delete bot definition"
-                                  >
-                                    <Trash2 size={16} />
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        ))
+                            </motion.div>
+                          ))}
+                        </AnimatePresence>
                       )}
                     </div>
                   </div>

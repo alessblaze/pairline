@@ -541,10 +541,12 @@ defmodule OmeglePhoenix.Bots.AIWorker do
          {:ok, human_session} <- OmeglePhoenix.SessionManager.get_session(state.human_session_id),
          {:ok, _updated_bot, updated_human} <-
            OmeglePhoenix.SessionManager.reset_pair(bot_session, human_session) do
+      match_generation = human_session.match_generation || state.match_generation
+
       OmeglePhoenix.Router.notify_disconnect(
         updated_human.id,
         reason,
-        updated_human.match_generation
+        match_generation
       )
     else
       _ ->

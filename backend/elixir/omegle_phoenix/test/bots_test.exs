@@ -15,9 +15,19 @@ else
   defmodule OmeglePhoenix.BotsTest do
     use ExUnit.Case, async: false
     @moduletag capture_log: true
+    @router_owner_table :omegle_phoenix_router_owners
 
     setup do
       EredisClusterStub.reset()
+
+      case :ets.whereis(@router_owner_table) do
+        :undefined ->
+          :ets.new(@router_owner_table, [:named_table, :public, :set, read_concurrency: true])
+
+        _table ->
+          :ets.delete_all_objects(@router_owner_table)
+      end
+
       :ok
     end
 
@@ -122,6 +132,39 @@ else
 
       assert heavy_first > light_first
       assert heavy_first + light_first == 500
+    end
+
+    test "script worker idle timeout disconnects the human via the fallback path" do
+      human_session_id = "human-timeout-test"
+      bot_session_id = "bot-timeout-test"
+      match_generation = "gen-timeout-test"
+
+      true = :ets.insert(@router_owner_table, {human_session_id, self(), "owner-token"})
+
+      EredisClusterStub.put(:q, fn
+        :omegle_phoenix_redis_cluster,
+        ["GET", "session:locator:" <> ^bot_session_id] ->
+          {:error, :timeout}
+      end)
+
+      state = %{
+        human_session_id: human_session_id,
+        bot_session_id: bot_session_id,
+        definition: %{"id" => "eng-timeout"},
+        match_generation: match_generation,
+        bot_messages_sent: 1,
+        max_messages: 4,
+        delivery_in_flight: false,
+        delivery_timer: nil,
+        queued_replies: [],
+        idle_timer: nil,
+        ttl_timer: nil
+      }
+
+      assert {:stop, :normal, ^state} =
+               OmeglePhoenix.Bots.ScriptWorker.handle_info(:idle_timeout_reached, state)
+
+      assert_receive {:router_disconnect, "bot timed out", ^match_generation}
     end
   end
 end

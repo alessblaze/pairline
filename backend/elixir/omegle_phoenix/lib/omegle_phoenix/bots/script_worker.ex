@@ -35,8 +35,11 @@ defmodule OmeglePhoenix.Bots.ScriptWorker do
          max_messages: max_messages(definition),
          delivery_in_flight: false,
          delivery_timer: nil,
-         queued_replies: []
-       }}
+         queued_replies: [],
+         idle_timer: nil,
+         ttl_timer: schedule_timer(:session_ttl_reached, session_ttl_ms(definition))
+       }
+       |> reset_idle_timer()}
     else
       _error ->
         _ = OmeglePhoenix.Router.unregister(bot_session_id)
@@ -65,7 +68,8 @@ defmodule OmeglePhoenix.Bots.ScriptWorker do
         Process.send_after(self(), :send_opening_message, @initial_reply_delay_ms)
 
         {:noreply,
-         %{state | human_session_id: partner_session_id, match_generation: match_generation}}
+         %{state | human_session_id: partner_session_id, match_generation: match_generation}
+         |> reset_idle_timer()}
     end
   end
 
@@ -97,7 +101,7 @@ defmodule OmeglePhoenix.Bots.ScriptWorker do
             enqueue_user_reply(state, to_string(content))
           end
 
-        {:noreply, state}
+        {:noreply, reset_idle_timer(state)}
     end
   end
 
@@ -135,8 +139,31 @@ defmodule OmeglePhoenix.Bots.ScriptWorker do
       |> Map.put(:delivery_in_flight, false)
       |> Map.put(:delivery_timer, nil)
       |> Map.put(:bot_messages_sent, state.bot_messages_sent + 1)
+      |> reset_idle_timer()
 
     {:noreply, maybe_start_next_delivery(next_state)}
+  end
+
+  def handle_info(:idle_timeout_reached, state) do
+    :telemetry.execute(
+      [:omegle_phoenix, :bots, :conversation_finished],
+      %{count: 1},
+      %{bot_type: "engagement", reason: "idle_timeout"}
+    )
+
+    disconnect_human_partner(state, "bot timed out")
+    {:stop, :normal, state}
+  end
+
+  def handle_info(:session_ttl_reached, state) do
+    :telemetry.execute(
+      [:omegle_phoenix, :bots, :conversation_finished],
+      %{count: 1},
+      %{bot_type: "engagement", reason: "session_ttl"}
+    )
+
+    disconnect_human_partner(state, "bot finished")
+    {:stop, :normal, state}
   end
 
   def handle_info(:disconnect_bot, state) do
@@ -177,6 +204,8 @@ defmodule OmeglePhoenix.Bots.ScriptWorker do
   @impl true
   def terminate(_reason, state) do
     cancel_timer(state[:delivery_timer])
+    cancel_timer(state[:idle_timer])
+    cancel_timer(state[:ttl_timer])
 
     if definition = state[:definition] do
       _ = OmeglePhoenix.Bots.release_definition_slot(definition)
@@ -403,6 +432,36 @@ defmodule OmeglePhoenix.Bots.ScriptWorker do
     state
   end
 
+  defp idle_timeout_ms(definition) do
+    definition
+    |> Map.get("idle_timeout_seconds", 45)
+    |> case do
+      value when is_integer(value) and value > 0 -> value * 1_000
+      _ -> 45_000
+    end
+  end
+
+  defp session_ttl_ms(definition) do
+    definition
+    |> Map.get("session_ttl_seconds", 300)
+    |> case do
+      value when is_integer(value) and value > 0 -> value * 1_000
+      _ -> 300_000
+    end
+  end
+
+  defp reset_idle_timer(state) do
+    cancel_timer(state[:idle_timer])
+
+    %{
+      state
+      | idle_timer: schedule_timer(:idle_timeout_reached, idle_timeout_ms(state.definition))
+    }
+  end
+
+  defp schedule_timer(_message, delay_ms) when not is_integer(delay_ms) or delay_ms <= 0, do: nil
+  defp schedule_timer(message, delay_ms), do: Process.send_after(self(), message, delay_ms)
+
   defp cancel_timer(nil), do: :ok
   defp cancel_timer(timer_ref), do: Process.cancel_timer(timer_ref, async: false, info: false)
 
@@ -411,10 +470,12 @@ defmodule OmeglePhoenix.Bots.ScriptWorker do
          {:ok, human_session} <- OmeglePhoenix.SessionManager.get_session(state.human_session_id),
          {:ok, _updated_bot, updated_human} <-
            OmeglePhoenix.SessionManager.reset_pair(bot_session, human_session) do
+      match_generation = human_session.match_generation || state.match_generation
+
       OmeglePhoenix.Router.notify_disconnect(
         updated_human.id,
         reason,
-        updated_human.match_generation
+        match_generation
       )
     else
       _ ->

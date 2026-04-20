@@ -4,6 +4,8 @@ import type {
   AdminRole,
   Ban,
   BannedWord,
+  BotDefinition,
+  BotSettings,
   InfraHealthResponse,
   Report,
 } from '../../types';
@@ -29,6 +31,8 @@ export interface AdminPanelMockState {
   reports?: Report[];
   bans?: Ban[];
   bannedWords?: BannedWord[];
+  botSettings?: BotSettings | null;
+  botDefinitions?: BotDefinition[];
   accounts?: AdminAccount[];
   infraHealth?: InfraHealthResponse | null;
   autoModerationSettings?: AutoModerationSettings | null;

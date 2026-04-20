@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { AdminPanelStoryHarness } from './AdminPanelStoryHarness';
-import type { AdminAccount, AutoModerationSettings, Ban, BannedWord, InfraHealthResponse, Report } from '../types';
+import type { AdminAccount, AutoModerationSettings, Ban, BannedWord, BotDefinition, BotSettings, InfraHealthResponse, Report } from '../types';
 
 const meta = {
   title: 'Pages/AdminPanel',
@@ -489,6 +489,109 @@ export const MobileMenuOpen: Story = {
       autoModerationSettings: mockAutoModerationSettings,
       serverReportMetrics: { pending: 1, approved: 1, rejected: 0 },
       isMobileMenuOpen: true,
+    }
+  }
+};
+
+const mockBotSettings: BotSettings = {
+  enabled: true,
+  engagement_enabled: true,
+  ai_enabled: true,
+  rollout_percent: 40,
+  max_concurrent_runs: 500,
+  engagement_priority: 200,
+  ai_priority: 100,
+  emergency_stop: false,
+};
+
+const mockBotDefinitions: BotDefinition[] = [
+  {
+    id: 'bot-1',
+    name: 'Friendly Greeter',
+    slug: 'friendly_greeter',
+    bot_type: 'engagement',
+    is_active: true,
+    description: 'Opens conversations with a warm greeting and keeps the chat going.',
+    match_modes_json: ['text'],
+    bot_count: 50,
+    traffic_weight: 200,
+    targeting_json: {},
+    script_json: {
+      opening_messages: ['Hey! How\'s it going?', 'Hi there! What\'s on your mind?'],
+      reply_messages: ['That\'s interesting!', 'Tell me more!', 'Nice one 😄'],
+      fallback_message: 'Still there?',
+      closing_message: 'Gotta run, take care!',
+      triggers: [{ regex: '(?i)hello|hi', reply: 'Hey! Great to meet you 👋' }],
+    },
+    ai_config_json: {},
+    message_limit: 6,
+    session_ttl_seconds: 300,
+    idle_timeout_seconds: 45,
+    disconnect_reason: 'session_complete',
+    created_by_username: 'albert',
+    updated_by_username: 'albert',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  },
+  {
+    id: 'bot-2',
+    name: 'AI Companion',
+    slug: 'ai_companion',
+    bot_type: 'ai',
+    is_active: false,
+    description: 'OpenAI-powered conversational bot for richer interactions.',
+    match_modes_json: ['text', 'video'],
+    bot_count: 10,
+    traffic_weight: 100,
+    targeting_json: {},
+    script_json: {},
+    ai_config_json: {
+      enabled: true,
+      provider: 'openai-compatible',
+      api_url: 'https://api.openai.com/v1/chat/completions',
+      api_token: 'sk-••••••••••••••••',
+      model: 'gpt-4o-mini',
+      system_prompt: 'You are a friendly anonymous chat partner. Keep replies short and safe.',
+      temperature: 0.7,
+      max_tokens: 300,
+    },
+    message_limit: 10,
+    session_ttl_seconds: 600,
+    idle_timeout_seconds: 60,
+    disconnect_reason: 'session_complete',
+    created_by_username: 'albert',
+    updated_by_username: 'albert',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  },
+];
+
+export const AuthenticatedBotsView: Story = {
+  name: 'Bots Tab (Admin)',
+  args: {
+    mockState: {
+      isAuthenticated: true,
+      authReady: true,
+      currentAdminUsername: 'albert',
+      role: 'admin',
+      currentTab: 'bots',
+      botSettings: mockBotSettings,
+      botDefinitions: mockBotDefinitions,
+    }
+  }
+};
+
+export const BotsEmptyState: Story = {
+  name: 'Bots Tab Empty',
+  args: {
+    mockState: {
+      isAuthenticated: true,
+      authReady: true,
+      currentAdminUsername: 'albert',
+      role: 'admin',
+      currentTab: 'bots',
+      botSettings: { ...mockBotSettings, enabled: false, rollout_percent: 0 },
+      botDefinitions: [],
     }
   }
 };
