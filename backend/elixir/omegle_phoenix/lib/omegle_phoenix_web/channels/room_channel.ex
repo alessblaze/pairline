@@ -949,13 +949,18 @@ defmodule OmeglePhoenixWeb.RoomChannel do
   defp with_session_partner_lock(nil, fun), do: fun.(nil)
 
   defp with_session_partner_lock(session_id, fun),
-    do: with_session_partner_lock(session_id, fun, 3)
+    do: with_session_partner_lock(session_id, fun, _lock_retries = 3, _partner_retries = 3)
 
-  defp with_session_partner_lock(_session_id, _fun, 0) do
+  defp with_session_partner_lock(_session_id, _fun, 0, _partner_retries) do
     {:error, %{reason: "Session busy, please retry"}}
   end
 
-  defp with_session_partner_lock(session_id, fun, attempts_left) do
+  defp with_session_partner_lock(_session_id, _fun, _lock_retries, 0) do
+    Logger.warning("with_session_partner_lock exhausted partner retries")
+    {:error, %{reason: "Session busy, please retry"}}
+  end
+
+  defp with_session_partner_lock(session_id, fun, lock_retries, partner_retries) do
     partner_id =
       case OmeglePhoenix.SessionManager.get_session(session_id) do
         {:ok, session} -> session.partner_id
@@ -982,10 +987,10 @@ defmodule OmeglePhoenixWeb.RoomChannel do
          end) do
       {:error, :locked} ->
         Process.sleep(50)
-        with_session_partner_lock(session_id, fun, attempts_left - 1)
+        with_session_partner_lock(session_id, fun, lock_retries - 1, partner_retries)
 
       {:retry, _updated_partner_id} ->
-        with_session_partner_lock(session_id, fun, attempts_left - 1)
+        with_session_partner_lock(session_id, fun, lock_retries, partner_retries - 1)
 
       result ->
         result

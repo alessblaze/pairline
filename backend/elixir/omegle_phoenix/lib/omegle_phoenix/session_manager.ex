@@ -218,9 +218,6 @@ defmodule OmeglePhoenix.SessionManager do
     end
   end
 
-  def get_all_sessions do
-    collect_active_sessions("0", %{}, [])
-  end
 
   def get_active_sessions_page(opts \\ []) do
     cursor = normalize_scan_cursor(Keyword.get(opts, :cursor, "0"))
@@ -1000,41 +997,7 @@ defmodule OmeglePhoenix.SessionManager do
     end
   end
 
-  defp collect_active_sessions(cursor, acc, stale_ids)
-       when is_binary(cursor) and is_map(acc) and is_list(stale_ids) do
-    with {:ok, next_cursor, session_ids} <-
-           scan_session_ids(
-             OmeglePhoenix.RedisKeys.active_sessions_key(),
-             cursor,
-             @active_session_scan_count
-           ),
-         {:ok, batched_sessions} <- get_sessions(session_ids) do
-      batch_stale_ids = Enum.reject(session_ids, &Map.has_key?(batched_sessions, &1))
 
-      merged =
-        Enum.reduce(session_ids, acc, fn session_id, sessions_acc ->
-          case Map.fetch(batched_sessions, session_id) do
-            {:ok, session} -> Map.put(sessions_acc, session_id, session)
-            :error -> sessions_acc
-          end
-        end)
-
-      if next_cursor == "0" do
-        _ =
-          prune_stale_session_ids(
-            OmeglePhoenix.RedisKeys.active_sessions_key(),
-            Enum.uniq(stale_ids ++ batch_stale_ids),
-            %{}
-          )
-
-        {:ok, merged}
-      else
-        collect_active_sessions(next_cursor, merged, stale_ids ++ batch_stale_ids)
-      end
-    else
-      _ -> {:ok, acc}
-    end
-  end
 
   defp scan_session_ids(index_key, cursor, count)
        when is_binary(index_key) and is_binary(cursor) and is_integer(count) do
