@@ -41,16 +41,25 @@ STRESS_PAIR_COUNT="${STRESS_PAIR_COUNT:-3200}"
 STRESS_LEAVE_COUNT="${STRESS_LEAVE_COUNT:-5000}"
 STRESS_DISCONNECT_COUNT="${STRESS_DISCONNECT_COUNT:-4000}"
 
-GO_STRESS_SESSION_COUNT="${GO_STRESS_SESSION_COUNT:-600}"
-GO_STRESS_LOCAL_SESSION_COUNT="${GO_STRESS_LOCAL_SESSION_COUNT:-300}"
+GO_STRESS_SESSION_COUNT="${GO_STRESS_SESSION_COUNT:-24000}"
+GO_STRESS_LOCAL_SESSION_COUNT="${GO_STRESS_LOCAL_SESSION_COUNT:-12000}"
 GO_STRESS_LOCAL_SENDS_PER_SESSION="${GO_STRESS_LOCAL_SENDS_PER_SESSION:-80}"
 GO_STRESS_REMOTE_SENDS_PER_SESSION="${GO_STRESS_REMOTE_SENDS_PER_SESSION:-128}"
-GO_STRESS_CONCURRENCY="${GO_STRESS_CONCURRENCY:-64}"
+GO_STRESS_CONCURRENCY="${GO_STRESS_CONCURRENCY:-12000}"
 
 declare -A RESULTS
 
 print_header() {
   printf '\n== %s ==\n' "$1"
+}
+
+print_go_stress_config() {
+  printf '  service=%s\n' "$GO_STRESS_SERVICE"
+  printf '  session_count=%s\n' "$GO_STRESS_SESSION_COUNT"
+  printf '  local_session_count=%s\n' "$GO_STRESS_LOCAL_SESSION_COUNT"
+  printf '  local_sends_per_session=%s\n' "$GO_STRESS_LOCAL_SENDS_PER_SESSION"
+  printf '  remote_sends_per_session=%s\n' "$GO_STRESS_REMOTE_SENDS_PER_SESSION"
+  printf '  concurrency=%s\n' "$GO_STRESS_CONCURRENCY"
 }
 
 service_running() {
@@ -196,6 +205,7 @@ run_go_stage() {
   local command="$3"
 
   print_header "$label"
+  print_go_stress_config
 
   if ! ensure_named_service_running "$GO_STRESS_SERVICE"; then
     RESULTS["$key"]="FAIL"
@@ -248,7 +258,7 @@ if stage_enabled "$RUN_STRESS" && stage_enabled "$RUN_GO_STRESS"; then
   run_go_stage \
     "go_stress" \
     "Golang Redis Stress Harness" \
-    "go test -tags=stress -run TestRedisSignalingLiveStress -count=1 ./internal/handlers"
+    "go test -v -tags=stress -run TestRedisSignalingLiveStress -count=1 ./internal/handlers"
 fi
 
 if stage_enabled "$RUN_GO_TESTS"; then

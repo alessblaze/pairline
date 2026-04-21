@@ -248,6 +248,9 @@ type RedisSignalingHub struct {
 	redis      *appredis.Client
 	instanceID string
 	startOnce  sync.Once
+	stopOnce   sync.Once
+	stopCh     chan struct{}
+	subscriber sync.WaitGroup
 }
 
 var Signaling = NewRedisSignalingHub()
@@ -262,6 +265,7 @@ func NewRedisSignalingHub() *RedisSignalingHub {
 
 	h := &RedisSignalingHub{
 		instanceID: instanceID,
+		stopCh:     make(chan struct{}),
 	}
 
 	for i := range h.shards {
@@ -284,8 +288,19 @@ func (h *RedisSignalingHub) clientShard(sessionID string) *clientShard {
 func (h *RedisSignalingHub) Start(redisClient *appredis.Client) {
 	h.startOnce.Do(func() {
 		h.redis = redisClient
-		go h.runSubscriber()
+		h.subscriber.Add(1)
+		go func() {
+			defer h.subscriber.Done()
+			h.runSubscriber()
+		}()
 	})
+}
+
+func (h *RedisSignalingHub) Stop() {
+	h.stopOnce.Do(func() {
+		close(h.stopCh)
+	})
+	h.subscriber.Wait()
 }
 
 func (h *RedisSignalingHub) Register(sessionID string, conn *websocket.Conn) (*SignalingClient, [][]byte, error) {
@@ -456,8 +471,14 @@ return 0
 
 func (h *RedisSignalingHub) runSubscriber() {
 	for {
+		if h.stopped() {
+			return
+		}
+
 		if h.redis == nil {
-			time.Sleep(time.Second)
+			if h.waitOrStop(time.Second) {
+				return
+			}
 			continue
 		}
 
@@ -465,14 +486,30 @@ func (h *RedisSignalingHub) runSubscriber() {
 		pubsub := h.redis.GetClient().Subscribe(ctx, signalChannel(h.instanceID))
 		_, err := pubsub.Receive(ctx)
 		if err != nil {
-			log.Printf("Redis signaling subscribe failed for %s: %v", h.instanceID, err)
 			_ = pubsub.Close()
-			time.Sleep(time.Second)
+
+			if h.stopped() || errors.Is(err, redis.ErrClosed) {
+				return
+			}
+
+			log.Printf("Redis signaling subscribe failed for %s: %v", h.instanceID, err)
+			if h.waitOrStop(time.Second) {
+				return
+			}
 			continue
 		}
 
 		ch := pubsub.Channel()
 		log.Printf("Redis signaling subscriber active for %s", h.instanceID)
+		subscriptionDone := make(chan struct{})
+
+		go func() {
+			select {
+			case <-h.stopCh:
+				_ = pubsub.Close()
+			case <-subscriptionDone:
+			}
+		}()
 
 		for msg := range ch {
 			var envelope redisSignalEnvelope
@@ -498,8 +535,34 @@ func (h *RedisSignalingHub) runSubscriber() {
 			}
 		}
 
+		close(subscriptionDone)
 		_ = pubsub.Close()
-		time.Sleep(time.Second)
+
+		if h.stopped() {
+			return
+		}
+
+		if h.waitOrStop(time.Second) {
+			return
+		}
+	}
+}
+
+func (h *RedisSignalingHub) stopped() bool {
+	select {
+	case <-h.stopCh:
+		return true
+	default:
+		return false
+	}
+}
+
+func (h *RedisSignalingHub) waitOrStop(delay time.Duration) bool {
+	select {
+	case <-h.stopCh:
+		return true
+	case <-time.After(delay):
+		return false
 	}
 }
 

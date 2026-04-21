@@ -30,6 +30,8 @@ type signalingStressJob struct {
 	payload  []byte
 }
 
+const localStressBatchSize = 16
+
 func TestRedisSignalingLiveStress(t *testing.T) {
 	if os.Getenv("RUN_LIVE_REDIS_STRESS") == "" {
 		t.Skip("set RUN_LIVE_REDIS_STRESS=1 to run the live Redis signaling stress test")
@@ -47,18 +49,20 @@ func TestRedisSignalingLiveStress(t *testing.T) {
 	concurrency := stressEnvInt("STRESS_CONCURRENCY", 32)
 	concurrency = max(1, concurrency)
 
-	redisClient := appredis.NewClient()
-	defer func() {
-		if err := redisClient.Close(); err != nil {
-			t.Fatalf("redis close returned error: %v", err)
-		}
-	}()
-
 	senderHub := NewRedisSignalingHub()
+	redisClient := appredis.NewClient()
 	senderHub.redis = redisClient
 
 	receiverHub := NewRedisSignalingHub()
 	receiverHub.Start(redisClient)
+
+	t.Cleanup(func() {
+		receiverHub.Stop()
+		senderHub.Stop()
+		if err := redisClient.Close(); err != nil {
+			t.Fatalf("redis close returned error: %v", err)
+		}
+	})
 
 	runID := fmt.Sprintf("stress:%d:%s", time.Now().UnixMilli(), uuid.NewString())
 	t.Logf(
@@ -72,11 +76,13 @@ func TestRedisSignalingLiveStress(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	totalStartedAt := time.Now()
 
 	localSessions := make([]*signalingStressSession, 0, localSessionCount)
 	remoteSessions := make([]*signalingStressSession, 0, remoteSessionCount)
 	allSessions := make([]*signalingStressSession, 0, sessionCount)
 
+	seedStartedAt := time.Now()
 	for i := 0; i < sessionCount; i++ {
 		session := &signalingStressSession{
 			id: uuid.NewString(),
@@ -97,6 +103,7 @@ func TestRedisSignalingLiveStress(t *testing.T) {
 			t.Fatalf("set locator for %s returned error: %v", session.id, err)
 		}
 	}
+	seedDuration := time.Since(seedStartedAt)
 
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -115,6 +122,7 @@ func TestRedisSignalingLiveStress(t *testing.T) {
 		}
 	})
 
+	registerLocalStartedAt := time.Now()
 	for _, session := range localSessions {
 		client, pending, err := receiverHub.Register(session.id, nil)
 		if err != nil {
@@ -127,54 +135,63 @@ func TestRedisSignalingLiveStress(t *testing.T) {
 		session.client = client
 		go drainStressClient(client, &session.delivered)
 	}
+	registerLocalDuration := time.Since(registerLocalStartedAt)
 
+	warmupStartedAt := time.Now()
 	time.Sleep(250 * time.Millisecond)
+	warmupDuration := time.Since(warmupStartedAt)
 
-	jobs := make(chan signalingStressJob, concurrency*2)
-	var workerWG sync.WaitGroup
-	var sendErr atomic.Value
+	localSendStartedAt := time.Now()
+	var localDeliveryDuration time.Duration
+	deliveredPerSession := 0
 
-	for workerIndex := 0; workerIndex < concurrency; workerIndex++ {
-		workerWG.Add(1)
-		go func() {
-			defer workerWG.Done()
-			for job := range jobs {
-				if err := senderHub.SendOrQueue(job.targetID, job.payload); err != nil {
-					sendErr.CompareAndSwap(nil, err)
+	for deliveredPerSession < localSendsPerSession {
+		batchSize := min(localStressBatchSize, localSendsPerSession-deliveredPerSession)
+		batchStart := deliveredPerSession
+
+		err := runStressJobs(concurrency, func(jobs chan<- signalingStressJob) {
+			for sendOffset := 0; sendOffset < batchSize; sendOffset++ {
+				sendIndex := batchStart + sendOffset
+				for _, session := range localSessions {
+					jobs <- signalingStressJob{
+						targetID: session.id,
+						payload:  mustMarshalStressPayload(runID, session.id, sendIndex),
+					}
 				}
 			}
-		}()
-	}
-
-	startedAt := time.Now()
-
-	for _, session := range localSessions {
-		for sendIndex := 0; sendIndex < localSendsPerSession; sendIndex++ {
-			jobs <- signalingStressJob{
-				targetID: session.id,
-				payload:  mustMarshalStressPayload(runID, session.id, sendIndex),
-			}
+		}, func(job signalingStressJob) error {
+			return senderHub.SendOrQueue(job.targetID, job.payload)
+		})
+		if err != nil {
+			t.Fatalf("local stress send returned error: %v", err)
 		}
+
+		deliveredPerSession += batchSize
+		deliveryStartedAt := time.Now()
+		waitForStressLocalDelivery(t, localSessions, int64(deliveredPerSession), 20*time.Second)
+		localDeliveryDuration += time.Since(deliveryStartedAt)
 	}
 
-	for _, session := range remoteSessions {
+	localSendDuration := time.Since(localSendStartedAt)
+
+	remoteSendStartedAt := time.Now()
+	if err := runStressJobs(concurrency, func(jobs chan<- signalingStressJob) {
 		for sendIndex := 0; sendIndex < remoteSendsPerSession; sendIndex++ {
-			jobs <- signalingStressJob{
-				targetID: session.id,
-				payload:  mustMarshalStressPayload(runID, session.id, sendIndex),
+			for _, session := range remoteSessions {
+				jobs <- signalingStressJob{
+					targetID: session.id,
+					payload:  mustMarshalStressPayload(runID, session.id, sendIndex),
+				}
 			}
 		}
+	}, func(job signalingStressJob) error {
+		return senderHub.SendOrQueue(job.targetID, job.payload)
+	}); err != nil {
+		t.Fatalf("remote stress send returned error: %v", err)
 	}
+	remoteSendDuration := time.Since(remoteSendStartedAt)
 
-	close(jobs)
-	workerWG.Wait()
-
-	if err, _ := sendErr.Load().(error); err != nil {
-		t.Fatalf("stress send returned error: %v", err)
-	}
-
-	waitForStressLocalDelivery(t, localSessions, int64(localSendsPerSession), 10*time.Second)
-
+	pendingCheckStartedAt := time.Now()
 	for _, session := range remoteSessions {
 		client, pending, err := senderHub.Register(session.id, nil)
 		if err != nil {
@@ -191,8 +208,9 @@ func TestRedisSignalingLiveStress(t *testing.T) {
 		}
 		senderHub.Unregister(session.id)
 	}
+	pendingCheckDuration := time.Since(pendingCheckStartedAt)
 
-	elapsed := time.Since(startedAt)
+	elapsed := time.Since(totalStartedAt)
 	t.Logf(
 		"signaling stress run completed run_id=%s duration=%s local_messages=%d remote_messages=%d",
 		runID,
@@ -200,6 +218,14 @@ func TestRedisSignalingLiveStress(t *testing.T) {
 		len(localSessions)*localSendsPerSession,
 		len(remoteSessions)*remoteSendsPerSession,
 	)
+	t.Logf("  seed_ms=%d", seedDuration.Milliseconds())
+	t.Logf("  register_local_ms=%d", registerLocalDuration.Milliseconds())
+	t.Logf("  warmup_ms=%d", warmupDuration.Milliseconds())
+	t.Logf("  local_send_ms=%d", localSendDuration.Milliseconds())
+	t.Logf("  local_delivery_ms=%d", localDeliveryDuration.Milliseconds())
+	t.Logf("  remote_send_ms=%d", remoteSendDuration.Milliseconds())
+	t.Logf("  pending_check_ms=%d", pendingCheckDuration.Milliseconds())
+	t.Logf("  total_ms=%d", elapsed.Milliseconds())
 }
 
 func drainStressClient(client *SignalingClient, delivered *atomic.Int64) {
@@ -264,6 +290,38 @@ func mustMarshalStressPayload(runID, sessionID string, index int) []byte {
 		panic(err)
 	}
 	return payload
+}
+
+func runStressJobs(
+	concurrency int,
+	enqueue func(chan<- signalingStressJob),
+	send func(signalingStressJob) error,
+) error {
+	jobs := make(chan signalingStressJob, concurrency*2)
+	var workerWG sync.WaitGroup
+	var sendErr atomic.Value
+
+	for workerIndex := 0; workerIndex < concurrency; workerIndex++ {
+		workerWG.Add(1)
+		go func() {
+			defer workerWG.Done()
+			for job := range jobs {
+				if err := send(job); err != nil {
+					sendErr.CompareAndSwap(nil, err)
+				}
+			}
+		}()
+	}
+
+	enqueue(jobs)
+	close(jobs)
+	workerWG.Wait()
+
+	if err, _ := sendErr.Load().(error); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func stressEnvInt(key string, fallback int) int {
