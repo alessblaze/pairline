@@ -305,3 +305,29 @@ func TestReportAutoApprovalFilterFallsBackToRelatedReportsWithoutReportID(t *tes
 		}
 	}
 }
+
+func TestAsyncEnqueueAutoModerationReturnsWithoutWaiting(t *testing.T) {
+	started := make(chan string, 1)
+	release := make(chan struct{})
+
+	start := time.Now()
+	asyncEnqueueAutoModeration(func(reportID string) {
+		started <- reportID
+		<-release
+	}, "report-123")
+
+	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
+		t.Fatalf("asyncEnqueueAutoModeration took %v, want a fast return", elapsed)
+	}
+
+	select {
+	case got := <-started:
+		if got != "report-123" {
+			t.Fatalf("asyncEnqueueAutoModeration reportID = %q, want %q", got, "report-123")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("asyncEnqueueAutoModeration did not invoke the enqueue callback")
+	}
+
+	close(release)
+}

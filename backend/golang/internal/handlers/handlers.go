@@ -514,14 +514,20 @@ func CreateReportHandlerGin(redisClient redis.UniversalClient, enqueueAutoModera
 			"report.created",
 			attribute.Bool("report.chat_log_present", chatLogStr != "[]"),
 		)
-		if enqueueAutoModeration != nil {
-			enqueueAutoModeration(report.ID)
-		}
+		asyncEnqueueAutoModeration(enqueueAutoModeration, report.ID)
 
 		c.JSON(http.StatusOK, gin.H{
 			"status": "created",
 		})
 	}
+}
+
+func asyncEnqueueAutoModeration(enqueueAutoModeration func(string), reportID string) {
+	if enqueueAutoModeration == nil {
+		return
+	}
+
+	go enqueueAutoModeration(reportID)
 }
 
 func GetAutoModerationSettingsHandlerGin(c *gin.Context) {
@@ -2063,9 +2069,7 @@ func SeedReportsHandlerGin(enqueueAutoModeration func(string)) gin.HandlerFunc {
 				return
 			}
 
-			if enqueueAutoModeration != nil {
-				enqueueAutoModeration(report.ID)
-			}
+			asyncEnqueueAutoModeration(enqueueAutoModeration, report.ID)
 			createdIds = append(createdIds, report.ID)
 		}
 
