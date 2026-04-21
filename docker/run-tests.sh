@@ -20,6 +20,7 @@ set -u
 
 COMPOSE_FILE="${COMPOSE_FILE:-docker/docker-compose.yml}"
 SERVICE="${SERVICE:-phoenix1}"
+GO_STRESS_SERVICE="${GO_STRESS_SERVICE:-golang-public-1}"
 PHOENIX_IMAGE="${PHOENIX_IMAGE:-pairline-phoenix:local}"
 AUTO_BUILD_IMAGE="${AUTO_BUILD_IMAGE:-1}"
 
@@ -29,6 +30,7 @@ SHARED_SECRET="${SHARED_SECRET:-test-shared}"
 RUN_UNIT="${RUN_UNIT:-1}"
 RUN_LIVE="${RUN_LIVE:-1}"
 RUN_STRESS="${RUN_STRESS:-1}"
+RUN_GO_STRESS="${RUN_GO_STRESS:-1}"
 RUN_GO_TESTS="${RUN_GO_TESTS:-1}"
 TEST_TRACE="${TEST_TRACE:-1}"
 
@@ -38,6 +40,12 @@ STRESS_CLEANUP_CONCURRENCY="${STRESS_CLEANUP_CONCURRENCY:-200}"
 STRESS_PAIR_COUNT="${STRESS_PAIR_COUNT:-3200}"
 STRESS_LEAVE_COUNT="${STRESS_LEAVE_COUNT:-5000}"
 STRESS_DISCONNECT_COUNT="${STRESS_DISCONNECT_COUNT:-4000}"
+
+GO_STRESS_SESSION_COUNT="${GO_STRESS_SESSION_COUNT:-600}"
+GO_STRESS_LOCAL_SESSION_COUNT="${GO_STRESS_LOCAL_SESSION_COUNT:-300}"
+GO_STRESS_LOCAL_SENDS_PER_SESSION="${GO_STRESS_LOCAL_SENDS_PER_SESSION:-80}"
+GO_STRESS_REMOTE_SENDS_PER_SESSION="${GO_STRESS_REMOTE_SENDS_PER_SESSION:-128}"
+GO_STRESS_CONCURRENCY="${GO_STRESS_CONCURRENCY:-64}"
 
 declare -A RESULTS
 
@@ -49,11 +57,32 @@ service_running() {
   docker compose -f "$COMPOSE_FILE" ps --status running "$SERVICE" 2>/dev/null | grep -q "$SERVICE"
 }
 
+named_service_running() {
+  local service_name="$1"
+  docker compose -f "$COMPOSE_FILE" ps --status running "$service_name" 2>/dev/null | grep -q "$service_name"
+}
+
 wait_for_service() {
   local attempts="${1:-60}"
 
   while (( attempts > 0 )); do
     if service_running; then
+      return 0
+    fi
+
+    sleep 2
+    attempts=$((attempts - 1))
+  done
+
+  return 1
+}
+
+wait_for_named_service() {
+  local service_name="$1"
+  local attempts="${2:-60}"
+
+  while (( attempts > 0 )); do
+    if named_service_running "$service_name"; then
       return 0
     fi
 
@@ -96,6 +125,25 @@ ensure_stack_running() {
   return 1
 }
 
+ensure_named_service_running() {
+  local service_name="$1"
+
+  if named_service_running "$service_name"; then
+    return 0
+  fi
+
+  if ! ensure_stack_running; then
+    return 1
+  fi
+
+  if wait_for_named_service "$service_name"; then
+    return 0
+  fi
+
+  echo "Service $service_name did not become ready in time."
+  return 1
+}
+
 run_in_service() {
   local command="$1"
 
@@ -114,6 +162,20 @@ run_in_service() {
     bash -lc "cd /app && $command"
 }
 
+run_in_go_service() {
+  local command="$1"
+
+  docker compose -f "$COMPOSE_FILE" exec -T \
+    -e RUN_LIVE_REDIS_STRESS=1 \
+    -e STRESS_SESSION_COUNT="$GO_STRESS_SESSION_COUNT" \
+    -e STRESS_LOCAL_SESSION_COUNT="$GO_STRESS_LOCAL_SESSION_COUNT" \
+    -e STRESS_LOCAL_SENDS_PER_SESSION="$GO_STRESS_LOCAL_SENDS_PER_SESSION" \
+    -e STRESS_REMOTE_SENDS_PER_SESSION="$GO_STRESS_REMOTE_SENDS_PER_SESSION" \
+    -e STRESS_CONCURRENCY="$GO_STRESS_CONCURRENCY" \
+    "$GO_STRESS_SERVICE" \
+    bash -lc "cd /app && $command"
+}
+
 run_stage() {
   local key="$1"
   local label="$2"
@@ -122,6 +184,25 @@ run_stage() {
   print_header "$label"
 
   if run_in_service "$command"; then
+    RESULTS["$key"]="PASS"
+  else
+    RESULTS["$key"]="FAIL"
+  fi
+}
+
+run_go_stage() {
+  local key="$1"
+  local label="$2"
+  local command="$3"
+
+  print_header "$label"
+
+  if ! ensure_named_service_running "$GO_STRESS_SERVICE"; then
+    RESULTS["$key"]="FAIL"
+    return 1
+  fi
+
+  if run_in_go_service "$command"; then
     RESULTS["$key"]="PASS"
   else
     RESULTS["$key"]="FAIL"
@@ -163,6 +244,13 @@ if stage_enabled "$RUN_STRESS"; then
   run_stage "stress" "Redis Stress Harness" "mix run scripts/redis_live_stress.exs"
 fi
 
+if stage_enabled "$RUN_STRESS" && stage_enabled "$RUN_GO_STRESS"; then
+  run_go_stage \
+    "go_stress" \
+    "Golang Redis Stress Harness" \
+    "go test -tags=stress -run TestRedisSignalingLiveStress -count=1 ./internal/handlers"
+fi
+
 if stage_enabled "$RUN_GO_TESTS"; then
   print_header "Golang Tests"
   if (cd backend/golang && go test -v -cover ./...); then
@@ -176,7 +264,7 @@ print_header "Summary"
 
 overall=0
 
-for key in unit live stress golang; do
+for key in unit live stress go_stress golang; do
   if [[ -n "${RESULTS[$key]:-}" ]]; then
     printf '%-12s %s\n' "$key" "${RESULTS[$key]}"
     if [[ "${RESULTS[$key]}" != "PASS" ]]; then

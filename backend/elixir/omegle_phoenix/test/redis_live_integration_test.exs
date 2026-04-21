@@ -117,6 +117,32 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
     end)
   end
 
+  test "get_sessions repairs a missing session locator for live sessions", %{
+    session_id: session_id,
+    ip: ip
+  } do
+    preferences = %{"mode" => "text", "interests" => "music,games"}
+
+    assert {:ok, _created} =
+             OmeglePhoenix.SessionManager.create_session(session_id, ip, preferences)
+
+    assert {:ok, original_route} = OmeglePhoenix.SessionManager.get_session_route(session_id)
+
+    assert OmeglePhoenix.Redis.command([
+             "DEL",
+             OmeglePhoenix.RedisKeys.session_locator_key(session_id)
+           ]) == {:ok, 1}
+
+    assert {:ok, %{^session_id => repaired_session}} =
+             OmeglePhoenix.SessionManager.get_sessions([session_id])
+
+    assert repaired_session.id == session_id
+    assert repaired_session.redis_shard == original_route.shard
+
+    assert {:ok, repaired_route} = OmeglePhoenix.SessionManager.get_session_route(session_id)
+    assert repaired_route == original_route
+  end
+
   test "count_active_sessions uses the active session index cardinality", %{
     session_id: session_id,
     peer_session_id: peer_session_id,
@@ -902,7 +928,10 @@ defmodule OmeglePhoenix.RedisLiveIntegrationTest do
     send(OmeglePhoenix.Reaper, :reap)
 
     assert_eventually(fn ->
-      case OmeglePhoenix.Redis.command(["SMEMBERS", OmeglePhoenix.RedisKeys.active_sessions_key()]) do
+      case OmeglePhoenix.Redis.command([
+             "SMEMBERS",
+             OmeglePhoenix.RedisKeys.active_sessions_key()
+           ]) do
         {:ok, active_sessions} when is_list(active_sessions) -> session_id not in active_sessions
         _ -> false
       end

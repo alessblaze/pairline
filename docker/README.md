@@ -154,7 +154,7 @@ That live suite covers:
 - reaper orphan cleanup
 - IP ban/unban
 
-Run the stress harness inside `phoenix1`:
+Run the combined stress harnesses:
 
 ```bash
 ./docker/run-tests.sh
@@ -172,8 +172,10 @@ It includes:
 - Elixir unit tests
 - live Redis integration tests
 - the Redis stress harness
+- the Go Redis/WebRTC signaling live stress harness
 
-The default stress run uses `1000` sessions at `500` concurrency.
+The Elixir stress stage uses the existing `STRESS_*` env vars.
+The Go stress stage runs inside `golang-public-1` and uses separate `GO_STRESS_*` env vars so it can be tuned independently from the Phoenix load profile.
 
 Override the load parameters with env vars:
 
@@ -186,11 +188,23 @@ STRESS_DISCONNECT_COUNT=100 \
 ./docker/run-tests.sh
 ```
 
+Override the Go live stress parameters separately:
+
+```bash
+GO_STRESS_SESSION_COUNT=600 \
+GO_STRESS_LOCAL_SESSION_COUNT=300 \
+GO_STRESS_LOCAL_SENDS_PER_SESSION=80 \
+GO_STRESS_REMOTE_SENDS_PER_SESSION=128 \
+GO_STRESS_CONCURRENCY=64 \
+./docker/run-tests.sh
+```
+
 Run only selected stages:
 
 ```bash
 RUN_STRESS=0 ./docker/run-tests.sh
 RUN_UNIT=0 RUN_LIVE=1 RUN_STRESS=0 ./docker/run-tests.sh
+RUN_GO_STRESS=0 ./docker/run-tests.sh
 TEST_TRACE=0 ./docker/run-tests.sh
 ```
 

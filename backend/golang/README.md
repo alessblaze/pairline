@@ -77,6 +77,28 @@ go run ./cmd/admin
 GOCACHE=/tmp/go-build go test ./...
 ```
 
+## Live stress test
+
+The Go backend now includes an opt-in live Redis signaling stress test, similar in spirit to the Phoenix Redis stress runner. It is excluded from normal `go test` runs and only executes when you opt in with the `stress` build tag plus `RUN_LIVE_REDIS_STRESS=1`.
+
+Example:
+
+```bash
+cd backend/golang
+RUN_LIVE_REDIS_STRESS=1 \
+REDIS_CLUSTER_NODES=127.0.0.1:7000,127.0.0.1:7001,127.0.0.1:7002 \
+GOCACHE=/tmp/go-build \
+go test -tags=stress -run TestRedisSignalingLiveStress -count=1 ./internal/handlers
+```
+
+Optional knobs:
+
+- `STRESS_SESSION_COUNT`
+- `STRESS_LOCAL_SESSION_COUNT`
+- `STRESS_LOCAL_SENDS_PER_SESSION`
+- `STRESS_REMOTE_SENDS_PER_SESSION`
+- `STRESS_CONCURRENCY`
+
 ## Main routes
 
 - Public:

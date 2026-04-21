@@ -972,11 +972,33 @@ defmodule OmeglePhoenix.SessionManager do
               end
           end)
 
-        {:ok, routes}
+        missing_ids = Enum.reject(session_ids, &Map.has_key?(routes, &1))
+
+        with {:ok, repaired_routes} <- repair_missing_session_routes(missing_ids) do
+          {:ok, Map.merge(routes, repaired_routes)}
+        end
 
       other ->
         other
     end
+  end
+
+  defp repair_missing_session_routes([]), do: {:ok, %{}}
+
+  defp repair_missing_session_routes(session_ids) do
+    session_ids
+    |> Enum.reduce_while({:ok, %{}}, fn session_id, {:ok, acc} ->
+      case OmeglePhoenix.RedisKeys.resolve_session_route(session_id, verify_exists: false) do
+        {:ok, route} ->
+          {:cont, {:ok, Map.put(acc, session_id, route)}}
+
+        {:error, :not_found} ->
+          {:cont, {:ok, acc}}
+
+        {:error, reason} ->
+          {:halt, {:error, reason}}
+      end
+    end)
   end
 
   defp prune_stale_session_ids(index_key, session_ids, sessions_by_id)
