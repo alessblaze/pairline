@@ -556,6 +556,11 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       OTEL_EXPORTER_OTLP_INSECURE: "true"
       OTEL_ENVIRONMENT: docker
+      TURN_MODE: integrated
+      TURN_REALM: pairline
+      TURN_STATIC_AUTH_SECRET: pairline-dev-turn-session
+      TURN_STUN_SERVERS: stun:stun.cloudflare.com:3478,stun:stun.l.google.com:19302
+      TURN_SERVER_URLS: turn:127.0.0.1:3478?transport=udp,turn:127.0.0.1:3478?transport=tcp,turn:127.0.0.1:3479?transport=udp,turn:127.0.0.1:3479?transport=tcp
     networks:
       pairline_cluster:
         ipv4_address: 172.30.0.40
@@ -601,6 +606,11 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       OTEL_EXPORTER_OTLP_INSECURE: "true"
       OTEL_ENVIRONMENT: docker
+      TURN_MODE: integrated
+      TURN_REALM: pairline
+      TURN_STATIC_AUTH_SECRET: pairline-dev-turn-session
+      TURN_STUN_SERVERS: stun:stun.cloudflare.com:3478,stun:stun.l.google.com:19302
+      TURN_SERVER_URLS: turn:127.0.0.1:3478?transport=udp,turn:127.0.0.1:3478?transport=tcp,turn:127.0.0.1:3479?transport=udp,turn:127.0.0.1:3479?transport=tcp
     networks:
       pairline_cluster:
         ipv4_address: 172.30.0.42
@@ -648,6 +658,7 @@ services:
       OTEL_ENVIRONMENT: docker
       ADMIN_HEALTH_PHOENIX_URLS: http://phoenix1:8080/api/health,http://phoenix2:8080/api/health,http://phoenix3:8080/api/health
       ADMIN_HEALTH_GO_URLS: http://golang-admin:8082/health,http://golang-public-1:8081/health,http://golang-public-2:8081/health
+      ADMIN_HEALTH_TURN_URLS: http://golang-turn-1:8090/health,http://golang-turn-2:8091/health
       OTEL_COLLECTOR_HEALTH_URL: http://otel-collector:13133/
       AUTO_MODERATION_ENABLED: "false"
       # NIM_API_KEY: ""
@@ -674,6 +685,94 @@ services:
       - |
         go mod download &&
         go run ./cmd/admin
+
+  golang-turn-1:
+    image: registry.suse.com/bci/golang:1.26
+    container_name: pairline-golang-turn-1
+    working_dir: /app
+    depends_on:
+      redis-cluster-init:
+        condition: service_completed_successfully
+    environment:
+      REDIS_CLUSTER_NODES: redis-node-1:7000,redis-node-2:7001,redis-node-3:7002
+      REDIS_PASSWORD: pairline-dev-redis-password
+      GOCACHE: /tmp/go-build
+      REDIS_MAINT_NOTIFICATIONS_MODE: disabled
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+      OTEL_ENVIRONMENT: docker
+      TURN_MODE: integrated
+      TURN_REALM: pairline
+      TURN_STATIC_AUTH_SECRET: pairline-dev-turn-session
+      TURN_PUBLIC_IP: 127.0.0.1
+      TURN_UDP_LISTEN_ADDRESS: :3478
+      TURN_TCP_LISTEN_ADDRESS: :3478
+      TURN_HEALTH_LISTEN_ADDRESS: :8090
+      TURN_RELAY_ADDRESS: 0.0.0.0
+      TURN_RELAY_MIN_PORT: "49152"
+      TURN_RELAY_MAX_PORT: "49252"
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "49152-49252:49152-49252/udp"
+      - "49152-49252:49152-49252/tcp"
+    networks:
+      pairline_cluster:
+        ipv4_address: 172.30.0.43
+    volumes:
+      - ../backend/golang:/app
+      - golang_mod_cache:/go/pkg/mod
+      - golang_build_cache:/tmp/go-build
+    command:
+      - /bin/bash
+      - -lc
+      - |
+        go mod download &&
+        go run ./cmd/turn
+
+  golang-turn-2:
+    image: registry.suse.com/bci/golang:1.26
+    container_name: pairline-golang-turn-2
+    working_dir: /app
+    depends_on:
+      redis-cluster-init:
+        condition: service_completed_successfully
+    environment:
+      REDIS_CLUSTER_NODES: redis-node-1:7000,redis-node-2:7001,redis-node-3:7002
+      REDIS_PASSWORD: pairline-dev-redis-password
+      GOCACHE: /tmp/go-build
+      REDIS_MAINT_NOTIFICATIONS_MODE: disabled
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+      OTEL_ENVIRONMENT: docker
+      TURN_MODE: integrated
+      TURN_REALM: pairline
+      TURN_STATIC_AUTH_SECRET: pairline-dev-turn-session
+      TURN_PUBLIC_IP: 127.0.0.1
+      TURN_UDP_LISTEN_ADDRESS: :3479
+      TURN_TCP_LISTEN_ADDRESS: :3479
+      TURN_HEALTH_LISTEN_ADDRESS: :8091
+      TURN_RELAY_ADDRESS: 0.0.0.0
+      TURN_RELAY_MIN_PORT: "49253"
+      TURN_RELAY_MAX_PORT: "49353"
+    ports:
+      - "3479:3479/udp"
+      - "3479:3479/tcp"
+      - "49253-49353:49253-49353/udp"
+      - "49253-49353:49253-49353/tcp"
+    networks:
+      pairline_cluster:
+        ipv4_address: 172.30.0.44
+    volumes:
+      - ../backend/golang:/app
+      - golang_mod_cache:/go/pkg/mod
+      - golang_build_cache:/tmp/go-build
+    command:
+      - /bin/bash
+      - -lc
+      - |
+        go mod download &&
+        go run ./cmd/turn
 
 volumes:
   prometheus_data:

@@ -5,6 +5,7 @@ This folder contains a local end-to-end Docker Compose stack for testing:
 - a 3-node Elixir/Phoenix cluster
 - a 2-node public Go backend
 - a separate admin Go backend
+- dedicated turn-only Go relay containers
 - a 6-node Valkey/Redis Cluster
 - Postgres
 - Nginx ingress ports split by backend
@@ -23,6 +24,8 @@ This folder contains a local end-to-end Docker Compose stack for testing:
 - `golang-public-1`
 - `golang-public-2`
 - `golang-admin`
+- `golang-turn-1`
+- `golang-turn-2`
 
 Nginx is the only exposed ingress layer. Phoenix and Go stay internal to the
 Docker network, while host access is split cleanly by port.
@@ -53,6 +56,8 @@ Static IP assignments on `172.30.0.0/24`:
 - `golang-public-1` -> `172.30.0.40`
 - `golang-public-2` -> `172.30.0.42`
 - `golang-admin` -> `172.30.0.41`
+- `golang-turn-1` -> `172.30.0.43`
+- `golang-turn-2` -> `172.30.0.44`
 
 Internal app ports:
 
@@ -62,7 +67,14 @@ Internal app ports:
 - `golang-public-1` -> `8081`
 - `golang-public-2` -> `8081`
 - `golang-admin` -> `8082`
+- `golang-turn-1` -> TURN `3478` plus relay range `49152-49252`, health `8090`
+- `golang-turn-2` -> TURN `3479` plus relay range `49253-49353`, health `8091`
 - `nginx` -> exposed on host `8080` and `8081`
+
+Direct TURN ingress is exposed on the host for local browser testing:
+
+- `127.0.0.1:3478` UDP/TCP via `golang-turn-1`
+- `127.0.0.1:3479` UDP/TCP via `golang-turn-2`
 
 All Go services share the same Redis Cluster and Postgres backing services.
 
@@ -99,6 +111,8 @@ Inspect Go services directly from inside the Docker network:
 docker compose -f docker/docker-compose.yml exec golang-admin curl -s http://localhost:8082/health
 docker compose -f docker/docker-compose.yml exec golang-public-1 curl -s http://localhost:8081/health
 docker compose -f docker/docker-compose.yml exec golang-public-2 curl -s http://localhost:8081/health
+docker compose -f docker/docker-compose.yml exec golang-turn-1 curl -s http://localhost:8090/health
+docker compose -f docker/docker-compose.yml exec golang-turn-2 curl -s http://localhost:8091/health
 ```
 
 The authenticated cross-service infra summary lives on the admin API:
@@ -109,7 +123,7 @@ GET /api/v1/admin/infra/health
 
 That route is intended for authenticated admin users and is what powers the
 admin dashboard health panels for Postgres, Redis, Phoenix, Go, and the OTEL
-collector.
+collector, including turn-only relay containers when configured.
 
 ## Run tests
 

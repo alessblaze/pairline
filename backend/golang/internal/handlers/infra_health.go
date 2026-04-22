@@ -455,11 +455,12 @@ func fetchConfiguredServiceHealth(ctx context.Context) []RemoteServiceHealth {
 	}
 
 	goTargets := parseURLListEnv("ADMIN_HEALTH_GO_URLS", nil)
+	goTargets = append(goTargets, parseURLListEnv("ADMIN_HEALTH_TURN_URLS", nil)...)
 	if len(goTargets) == 0 {
 		targets = append(targets, probeTarget{
-			name:   "ADMIN_HEALTH_GO_URLS",
+			name:   "ADMIN_HEALTH_GO_URLS,ADMIN_HEALTH_TURN_URLS",
 			kind:   "config",
-			rawURL: "env://ADMIN_HEALTH_GO_URLS",
+			rawURL: "env://ADMIN_HEALTH_GO_URLS,ADMIN_HEALTH_TURN_URLS",
 		})
 	}
 	for _, targetURL := range goTargets {

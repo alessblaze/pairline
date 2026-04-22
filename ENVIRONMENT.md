@@ -179,12 +179,32 @@ This file focuses on **what each variable changes in runtime behavior**, not jus
 - **`CLOUDFLARE_TURN_KEY_ID`** / **`CLOUDFLARE_TURN_API_TOKEN`** (optional): enables `/api/v1/webrtc/turn` to mint ephemeral relay credentials via Cloudflare Calls.
   - If missing, the TURN endpoint falls back to STUN-only ICE servers (P2P may still work, but NAT traversal will be worse).
 
+### Pairline TURN mode
+- **`TURN_MODE`** (default: `cloudflare`): selects TURN behavior for the Go WebRTC bootstrap endpoint.
+  - `cloudflare`: use Cloudflare Calls TURN credentials.
+  - `integrated`: return Pairline-managed credentials and expect the dedicated Pion TURN relay binary/container to be running.
+  - `off`: disable relay credentials and return STUN-only ICE servers.
+- **`TURN_REALM`** (default: `pairline`): TURN realm used by the integrated Pion relay.
+- **`TURN_STUN_SERVERS`** (default: `stun:stun.cloudflare.com:3478,stun:stun.l.google.com:19302`): comma-separated STUN servers always returned by `/api/v1/webrtc/turn`.
+- **`TURN_SERVER_URLS`** (default: unset): optional explicit TURN URLs advertised to browsers in integrated mode.
+- **`TURN_STATIC_AUTH_SECRET`** (default: `pairline-turn-session`): static password paired with the integrated TURN username format. Live authorization still depends on Redis-backed session validation.
+- **`TURN_PUBLIC_IP`**: required for the dedicated Pion relay in integrated mode; this is the IP advertised in allocations.
+- **`TURN_RELAY_ADDRESS`** (default: `0.0.0.0`): local bind address used for relay sockets.
+- **`TURN_UDP_LISTEN_ADDRESS`** (default: `:3478`): UDP TURN/STUN listener for the integrated relay.
+- **`TURN_TCP_LISTEN_ADDRESS`** (default: unset): optional TCP TURN listener.
+- **`TURN_TLS_LISTEN_ADDRESS`** (default: unset): optional TLS/TURNS listener.
+- **`TURN_HEALTH_LISTEN_ADDRESS`** (default: unset): optional internal HTTP bind for the turn-only binary health endpoint (`/health`), useful for Docker infra-health checks.
+- **`TURN_TLS_CERT_FILE`** / **`TURN_TLS_KEY_FILE`**: required when `TURN_TLS_LISTEN_ADDRESS` is set.
+- **`TURN_RELAY_MIN_PORT`** / **`TURN_RELAY_MAX_PORT`** (defaults: `49152` / `49252`): relay allocation port range for the integrated relay.
+- **`TURN_MAX_ALLOCATIONS_PER_SESSION`** (default: `4`): coarse integrated relay allocation cap used to avoid runaway allocation growth.
+
 ### Redis client compatibility
 - **`REDIS_MAINT_NOTIFICATIONS_MODE`** (default: `disabled`): controls whether the Go Redis client sends `CLIENT MAINT_NOTIFICATIONS` on connect. Use `disabled` for Valkey or older Redis servers, `auto` to probe support safely, or `enabled` only when you know the server supports it.
 
 ### Root-only infra health dashboard
 - **`ADMIN_HEALTH_PHOENIX_URLS`** (default: unset in code): comma-separated Phoenix health endpoints the Go admin service should poll for topology and node details. In Docker, set this explicitly on the admin service.
 - **`ADMIN_HEALTH_GO_URLS`** (default: unset in code): comma-separated Go service health endpoints the admin dashboard should poll. In Docker, set this explicitly on the admin service.
+- **`ADMIN_HEALTH_TURN_URLS`** (default: unset in code): optional comma-separated turn-only health endpoints the admin dashboard should poll alongside the rest of the Go fleet.
 - **`OTEL_COLLECTOR_HEALTH_URL`** (default: unset in code): health endpoint used to confirm the OTLP collector is reachable from the admin service. In Docker, set this explicitly on the admin service.
 
 ### OpenTelemetry tracing

@@ -81,13 +81,14 @@ func TestFetchConfiguredServiceHealthProbesTargetsConcurrently(t *testing.T) {
 		"http://phoenix-two.internal/api/health",
 	}, ","))
 	t.Setenv("ADMIN_HEALTH_GO_URLS", "http://go-one.internal/health")
+	t.Setenv("ADMIN_HEALTH_TURN_URLS", "http://turn-one.internal/health")
 
 	startedAt := time.Now()
 	services := fetchConfiguredServiceHealth(context.Background())
 	elapsed := time.Since(startedAt)
 
-	if len(services) != 3 {
-		t.Fatalf("fetchConfiguredServiceHealth() count = %d, want %d", len(services), 3)
+	if len(services) != 4 {
+		t.Fatalf("fetchConfiguredServiceHealth() count = %d, want %d", len(services), 4)
 	}
 	if elapsed >= 450*time.Millisecond {
 		t.Fatalf("fetchConfiguredServiceHealth() took %v, want concurrent execution under 450ms", elapsed)

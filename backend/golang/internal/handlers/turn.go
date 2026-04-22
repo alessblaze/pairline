@@ -30,6 +30,7 @@ import (
 
 	"github.com/anish/omegle/backend/golang/internal/observability"
 	internalredis "github.com/anish/omegle/backend/golang/internal/redis"
+	"github.com/anish/omegle/backend/golang/internal/turnservice"
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -62,8 +63,9 @@ type cloudflareIceServersWrapper struct {
 	Credential string   `json:"credential"`
 }
 
-// GetTURNCredentials proxies to Cloudflare Calls TURN API to generate ephemeral credentials.
-// This keeps the Cloudflare API token server-side and hidden from clients.
+// GetTURNCredentials returns ICE server configuration for the active TURN mode.
+// Cloudflare mode proxies to Cloudflare Calls, integrated mode returns Pairline-owned
+// TURN credentials, and off mode returns STUN-only servers.
 func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		startedAt := time.Now()
@@ -97,9 +99,37 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 		defer cancel()
 
-		if !verifySessionToken(ctx, redisClient.GetClient(), sessionID, sessionToken) {
+		turnConfig := turnservice.LoadConfigFromEnv()
+		span.SetAttributes(attribute.String("webrtc.turn.mode", string(turnConfig.Mode)))
+		if err := turnConfig.ValidateForBootstrap(); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "turn bootstrap misconfigured")
+			log.Printf("Integrated TURN bootstrap misconfigured: %v", err)
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "turn bootstrap unavailable"})
+			return
+		}
+
+		if turnConfig.Mode == turnservice.ModeIntegrated {
+			if _, err := turnservice.ValidateMatchedSession(ctx, redisClient.GetClient(), sessionID, sessionToken); err != nil {
+				span.SetStatus(codes.Error, "invalid or unmatched session")
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid session"})
+				return
+			}
+		} else if !verifySessionToken(ctx, redisClient.GetClient(), sessionID, sessionToken) {
 			span.SetStatus(codes.Error, "invalid session")
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid session"})
+			return
+		}
+
+		if turnConfig.Mode == turnservice.ModeOff {
+			observability.RecordTURNRequest(c.Request.Context(), time.Since(startedAt), "stun_only", false)
+			c.JSON(http.StatusOK, turnConfig.BootstrapResponse(sessionID, sessionToken))
+			return
+		}
+
+		if turnConfig.Mode == turnservice.ModeIntegrated {
+			observability.RecordTURNRequest(c.Request.Context(), time.Since(startedAt), "integrated", false)
+			c.JSON(http.StatusOK, turnConfig.BootstrapResponse(sessionID, sessionToken))
 			return
 		}
 
@@ -121,13 +151,7 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 			log.Println("CLOUDFLARE_TURN_KEY_ID or CLOUDFLARE_TURN_API_TOKEN not configured")
 			span.SetAttributes(attribute.Bool("webrtc.turn.fallback_stun_only", true))
 			observability.RecordTURNRequest(c.Request.Context(), time.Since(startedAt), "stun_fallback", cacheHit)
-			// Fallback: return public STUN only so WebRTC can still attempt direct P2P
-			c.JSON(http.StatusOK, gin.H{
-				"iceServers": []gin.H{
-					{"urls": []string{"stun:stun.cloudflare.com:3478"}},
-					{"urls": []string{"stun:stun.l.google.com:19302"}},
-				},
-			})
+			c.JSON(http.StatusOK, turnConfig.BootstrapResponse(sessionID, sessionToken))
 			return
 		}
 
@@ -187,8 +211,9 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 
 		// Return structured iceServers array that RTCPeerConnection expects directly.
 		responseBody, _ := json.Marshal(gin.H{
+			"mode": turnConfig.Mode,
 			"iceServers": []gin.H{
-				{"urls": []string{"stun:stun.cloudflare.com:3478"}},
+				{"urls": turnConfig.STUNServers},
 				{
 					"urls":       cfResp.IceServers.URLs,
 					"username":   cfResp.IceServers.Username,

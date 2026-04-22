@@ -55,27 +55,44 @@ type Server struct {
 	sharedSecret   string
 	jwtSecret      string
 	serviceName    string
-	enableAdmin    bool
-	enablePublic   bool
+	capabilities   Capabilities
 	shutdownOTel   func(context.Context) error
 	backgroundCtx  context.Context
 	stopBackground context.CancelFunc
 	autoModerator  *automod.Worker
 }
 
+type Capabilities struct {
+	EnableAdminAPI      bool
+	EnableModerationAPI bool
+	EnableSignalingWS   bool
+	EnableTurnBootstrap bool
+}
+
 func NewServer() *Server {
-	return newServer(true, true, "pairline-go-service")
+	return newServer(Capabilities{
+		EnableAdminAPI:      true,
+		EnableModerationAPI: true,
+		EnableSignalingWS:   true,
+		EnableTurnBootstrap: true,
+	}, "pairline-go-service")
 }
 
 func NewPublicServer() *Server {
-	return newServer(true, false, "pairline-go-public")
+	return newServer(Capabilities{
+		EnableModerationAPI: true,
+		EnableSignalingWS:   true,
+		EnableTurnBootstrap: true,
+	}, "pairline-go-public")
 }
 
 func NewAdminServer() *Server {
-	return newServer(false, true, "pairline-go-admin")
+	return newServer(Capabilities{
+		EnableAdminAPI: true,
+	}, "pairline-go-admin")
 }
 
-func newServer(enablePublic, enableAdmin bool, serviceName string) *Server {
+func newServer(capabilities Capabilities, serviceName string) *Server {
 	db := storage.NewDatabase()
 	redisClient := appredis.NewClient()
 
@@ -85,7 +102,7 @@ func newServer(enablePublic, enableAdmin bool, serviceName string) *Server {
 	}
 
 	jwtSecret := ""
-	if enableAdmin {
+	if capabilities.EnableAdminAPI {
 		jwtSecret = os.Getenv("JWT_SECRET")
 		if jwtSecret == "" {
 			log.Fatal("JWT_SECRET environment variable is required")
@@ -101,8 +118,7 @@ func newServer(enablePublic, enableAdmin bool, serviceName string) *Server {
 		sharedSecret: sharedSecret,
 		jwtSecret:    jwtSecret,
 		serviceName:  serviceName,
-		enableAdmin:  enableAdmin,
-		enablePublic: enablePublic,
+		capabilities: capabilities,
 		router:       gin.New(),
 		shutdownOTel: func(context.Context) error { return nil },
 	}
@@ -145,7 +161,7 @@ func newServer(enablePublic, enableAdmin bool, serviceName string) *Server {
 		log.Fatalf("Failed to configure trusted proxies: %v", err)
 	}
 
-	if enablePublic || enableAdmin {
+	if capabilities.EnableAdminAPI || capabilities.EnableModerationAPI || capabilities.EnableSignalingWS || capabilities.EnableTurnBootstrap {
 		s.syncActiveBansToRedis()
 		s.syncBannedWordsConfigToRedis()
 		s.syncBannedWordsToRedis()
@@ -159,7 +175,7 @@ func newServer(enablePublic, enableAdmin bool, serviceName string) *Server {
 
 	s.setupRoutes()
 
-	if enablePublic {
+	if capabilities.EnableSignalingWS {
 		handlers.Signaling.Start(redisClient)
 	}
 
@@ -594,7 +610,7 @@ func (s *Server) setupRoutes() {
 
 	s.router.GET("/health", handlers.HealthHandlerGin(s.serviceName))
 
-	if s.enableAdmin {
+	if s.capabilities.EnableAdminAPI {
 		admin := s.router.Group("/api/v1/admin")
 		{
 			admin.POST("/login", LoginRateLimitMiddleware(10, 15*time.Minute), handlers.LoginHandlerGin)
@@ -664,13 +680,19 @@ func (s *Server) setupRoutes() {
 		}
 	}
 
-	if s.enablePublic {
+	if s.capabilities.EnableSignalingWS || s.capabilities.EnableTurnBootstrap {
 		webrtc := s.router.Group("/api/v1/webrtc")
 		{
-			webrtc.GET("/ws", handlers.WebRTCWebSocketHandlerGin(s.redis))
-			webrtc.POST("/turn", handlers.GetTURNCredentials(s.redis))
+			if s.capabilities.EnableSignalingWS {
+				webrtc.GET("/ws", handlers.WebRTCWebSocketHandlerGin(s.redis))
+			}
+			if s.capabilities.EnableTurnBootstrap {
+				webrtc.POST("/turn", handlers.GetTURNCredentials(s.redis))
+			}
 		}
+	}
 
+	if s.capabilities.EnableModerationAPI {
 		moderation := s.router.Group("/api/v1/moderation")
 		{
 			var enqueueAutoModeration func(string)

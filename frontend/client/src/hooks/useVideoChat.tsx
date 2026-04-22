@@ -22,7 +22,14 @@ import { BANNED_PHRASE_REASON, BLOCKED_PHRASE_NOTICE } from '../chatModeration';
 import type { ChatMessage, Message } from '../types';
 
 const isCallerSession = (sessionId: string, peerId: string) => sessionId > peerId;
-const turnEnabled = import.meta.env.VITE_ENABLE_TURN !== 'false';
+const turnMode = (() => {
+  const explicitMode = import.meta.env.VITE_TURN_MODE;
+  if (explicitMode === 'off' || explicitMode === 'cloudflare' || explicitMode === 'integrated' || explicitMode === 'auto') {
+    return explicitMode;
+  }
+  return import.meta.env.VITE_ENABLE_TURN === 'false' ? 'off' : 'auto';
+})();
+const turnEnabled = turnMode !== 'off';
 const webrtcDebugEnabled = import.meta.env.VITE_WEBRTC_DEBUG !== 'false';
 const forceRelay = import.meta.env.VITE_FORCE_RELAY === 'true';
 const hasTurnServer = (iceServers: RTCIceServer[]) =>
@@ -757,6 +764,7 @@ export function useVideoChat(wsUrl: string) {
 
         if (data.iceServers && Array.isArray(data.iceServers)) {
           logWebRTC('Fetched TURN/STUN servers', {
+            mode: data.mode ?? turnMode,
             urls: data.iceServers.flatMap((server: RTCIceServer) => Array.isArray(server.urls) ? server.urls : [server.urls])
           });
           return data.iceServers as RTCIceServer[];
@@ -1032,17 +1040,6 @@ export function useVideoChat(wsUrl: string) {
               console.error("Failed parsing Go WS signal:", err);
             }
           };
-          // Proactively fetch TURN credentials as soon as we have a session to avoid delay during match
-          if (turnEnabled && !turnFetchedRef.current) {
-            void fetchTurnServers().then(iceServers => {
-              if (iceServers) {
-                turnServersRef.current = iceServers;
-                if (hasTurnServer(iceServers)) {
-                  turnFetchedRef.current = true;
-                }
-              }
-            });
-          }
         }
         break;
 
