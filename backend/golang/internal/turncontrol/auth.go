@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"fmt"
-	"time"
+	"strings"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -14,7 +14,6 @@ import (
 )
 
 const authMetadataKey = "x-pairline-turn-control-auth"
-const connectTimeout = 5 * time.Second
 
 func NewAuthenticatedClientConn(ctx context.Context, addr, sharedSecret string) (*grpc.ClientConn, error) {
 	return newAuthenticatedClientConn(ctx, addr, sharedSecret)
@@ -28,18 +27,23 @@ func newAuthenticatedClientConn(ctx context.Context, addr, sharedSecret string, 
 		return nil, fmt.Errorf("turn control grpc shared secret is required")
 	}
 
-	connectCtx, cancel := context.WithTimeout(ctx, connectTimeout)
-	defer cancel()
+	_ = ctx
 
 	opts := []grpc.DialOption{
-		grpc.WithBlock(),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithDefaultCallOptions(grpc.ForceCodec(JSONCodec)),
 		grpc.WithUnaryInterceptor(clientAuthInterceptor(sharedSecret)),
 	}
 	opts = append(opts, extraOpts...)
 
-	return grpc.DialContext(connectCtx, addr, opts...)
+	return grpc.NewClient(grpcTarget(addr), opts...)
+}
+
+func grpcTarget(addr string) string {
+	if strings.Contains(addr, "://") {
+		return addr
+	}
+	return "passthrough:///" + addr
 }
 
 func AuthUnaryServerInterceptor(sharedSecret string) grpc.UnaryServerInterceptor {

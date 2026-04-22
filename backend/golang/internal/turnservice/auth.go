@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	appredis "github.com/anish/omegle/backend/golang/internal/redis"
 	"github.com/redis/go-redis/v9"
@@ -21,6 +22,33 @@ var (
 	ErrSessionBanned          = errors.New("session banned")
 	ErrValidationBackend      = errors.New("session validation backend failure")
 )
+
+const turnAllocationCounterTTL = 24 * time.Hour
+
+const reserveAllocationSlotScriptSource = `
+local current = redis.call("INCR", KEYS[1])
+redis.call("PEXPIRE", KEYS[1], ARGV[2])
+if current > tonumber(ARGV[1]) then
+	local remaining = redis.call("DECR", KEYS[1])
+	if remaining <= 0 then
+		redis.call("DEL", KEYS[1])
+	end
+	return 0
+end
+return 1
+`
+
+const releaseAllocationSlotScriptSource = `
+local remaining = redis.call("DECR", KEYS[1])
+if remaining <= 0 then
+	redis.call("DEL", KEYS[1])
+	return 0
+end
+return remaining
+`
+
+var reserveAllocationSlotScript = redis.NewScript(reserveAllocationSlotScriptSource)
+var releaseAllocationSlotScript = redis.NewScript(releaseAllocationSlotScriptSource)
 
 type ValidationResult struct {
 	SessionID string
@@ -185,18 +213,18 @@ func ReserveAllocationSlot(ctx context.Context, redisClient redis.UniversalClien
 		return false, ErrInvalidSessionIdentity
 	}
 
-	allocations, err := redisClient.Incr(ctx, turnAllocationKey(sessionID)).Result()
+	result, err := reserveAllocationSlotScript.Run(
+		ctx,
+		redisClient,
+		[]string{turnAllocationKey(sessionID)},
+		limit,
+		turnAllocationCounterTTL.Milliseconds(),
+	).Int()
 	if err != nil {
 		return false, ErrValidationBackend
 	}
-	if allocations > int64(limit) {
-		if _, decErr := redisClient.Decr(ctx, turnAllocationKey(sessionID)).Result(); decErr != nil {
-			return false, ErrValidationBackend
-		}
-		return false, nil
-	}
 
-	return true, nil
+	return result == 1, nil
 }
 
 func ReleaseAllocationSlot(ctx context.Context, redisClient redis.UniversalClient, username string) error {
@@ -205,14 +233,8 @@ func ReleaseAllocationSlot(ctx context.Context, redisClient redis.UniversalClien
 		return ErrInvalidSessionIdentity
 	}
 
-	allocations, err := redisClient.Decr(ctx, turnAllocationKey(sessionID)).Result()
-	if err != nil {
+	if _, err := releaseAllocationSlotScript.Run(ctx, redisClient, []string{turnAllocationKey(sessionID)}).Int(); err != nil {
 		return ErrValidationBackend
-	}
-	if allocations <= 0 {
-		if delErr := redisClient.Del(ctx, turnAllocationKey(sessionID)).Err(); delErr != nil {
-			return ErrValidationBackend
-		}
 	}
 
 	return nil

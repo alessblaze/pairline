@@ -72,6 +72,8 @@ type cloudflareIceServersWrapper struct {
 // Cloudflare mode proxies to Cloudflare Calls, integrated mode returns Pairline-owned
 // TURN credentials, and off mode returns STUN-only servers.
 func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
+	turnConfig := turnservice.LoadConfigFromEnv()
+
 	return func(c *gin.Context) {
 		startedAt := time.Now()
 		cacheHit := false
@@ -105,7 +107,6 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 		defer cancel()
 
-		turnConfig := turnservice.LoadConfigFromEnv()
 		span.SetAttributes(attribute.String("webrtc.turn.mode", string(turnConfig.Mode)))
 		if err := turnConfig.ValidateForBootstrap(); err != nil {
 			span.RecordError(err)
