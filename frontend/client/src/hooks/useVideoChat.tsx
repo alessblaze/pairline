@@ -32,6 +32,7 @@ const turnMode = (() => {
 const turnEnabled = turnMode !== 'off';
 const webrtcDebugEnabled = import.meta.env.VITE_WEBRTC_DEBUG !== 'false';
 const forceRelay = import.meta.env.VITE_FORCE_RELAY === 'true';
+const initialTurnPrefetchWaitMs = 400;
 const hasTurnServer = (iceServers: RTCIceServer[]) =>
   iceServers.some(server => {
     const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
@@ -245,6 +246,7 @@ export function useVideoChat(wsUrl: string) {
     pendingWebrtcStartRef.current = null;
     signalingReadySentRef.current = false;
     negotiationStartedRef.current = false;
+    turnServersRef.current = defaultStunServers;
     turnFetchedRef.current = false;
     turnFetchPromiseRef.current = null;
     closeGoWebSocket(reason);
@@ -542,6 +544,7 @@ export function useVideoChat(wsUrl: string) {
 
     let pc = peerConnectionRef.current;
     if (!pc) {
+      await waitForInitialTurnPrefetch('initial_offer');
       pc = createPeerConnection(targetPeerId);
 
       const transceiverInit: RTCRtpTransceiverInit = {
@@ -784,18 +787,58 @@ export function useVideoChat(wsUrl: string) {
     return turnFetchPromiseRef.current;
   };
 
+  const applyTurnServers = (iceServers: RTCIceServer[], reason: string) => {
+    const hasRelay = hasTurnServer(iceServers);
+    turnServersRef.current = iceServers;
+    if (hasRelay) {
+      turnFetchedRef.current = true;
+    }
+    logWebRTC('Prepared TURN/STUN servers', {
+      reason,
+      hasRelay,
+      urls: iceServers.flatMap(server => Array.isArray(server.urls) ? server.urls : [server.urls])
+    });
+  };
+
+  const prefetchTurnServers = async (reason: string) => {
+    const iceServers = await fetchTurnServers();
+    if (iceServers) {
+      applyTurnServers(iceServers, reason);
+    }
+    return iceServers;
+  };
+
+  const waitForInitialTurnPrefetch = async (reason: string) => {
+    if (!turnEnabled || hasTurnServer(turnServersRef.current)) {
+      return;
+    }
+
+    const gotRelay = await Promise.race([
+      prefetchTurnServers(reason).then(iceServers => Boolean(iceServers && hasTurnServer(iceServers))),
+      new Promise<boolean>(resolve => {
+        window.setTimeout(() => resolve(false), initialTurnPrefetchWaitMs);
+      })
+    ]);
+
+    if (!gotRelay) {
+      logWebRTC('TURN relay was not ready before peer connection creation', {
+        reason,
+        timeoutMs: initialTurnPrefetchWaitMs
+      });
+    }
+  };
+
   const fetchAndApplyTURN = async (pc: RTCPeerConnection, _targetPeerId: string) => {
     if (turnFetchedRef.current) return; // Already upgraded — don't call CF API again
     turnFetchedRef.current = true;
 
     try {
-      const iceServers = await fetchTurnServers();
+      const iceServers = await prefetchTurnServers('ice_failure_fallback');
       if (!iceServers) {
         turnFetchedRef.current = false;
         return;
       }
 
-      turnServersRef.current = iceServers;
       if (!hasTurnServer(iceServers)) {
         console.warn('TURN endpoint returned no relay servers; staying on STUN-only ICE.');
         turnFetchedRef.current = false;
@@ -1112,6 +1155,9 @@ export function useVideoChat(wsUrl: string) {
         // If the Go WS is dead (e.g. server rejected with 1008, or network drop),
         // re-establish it so video signaling can work for this match.
         if (webrtcSocketOpenRef.current) {
+          if (turnEnabled && !turnFetchedRef.current) {
+            void prefetchTurnServers('match');
+          }
           maybeSendWebRTCReady(peerIdMatch || null);
         } else if (!webrtcWsRef.current && sessionIdRef.current && canOpenGoWebSocket()) {
           logWebRTC('Go WS is dead on match, re-establishing for signaling', {
@@ -1133,16 +1179,8 @@ export function useVideoChat(wsUrl: string) {
 
       case 'webrtc_ready':
         if (turnEnabled && !turnFetchedRef.current) {
-          const iceServers = await fetchTurnServers();
+          const iceServers = await prefetchTurnServers('webrtc_ready');
           if (iceServers) {
-            turnServersRef.current = iceServers;
-            if (hasTurnServer(iceServers)) {
-              turnFetchedRef.current = true;
-            }
-            logWebRTC('Prepared TURN/STUN servers during webrtc_ready', {
-              hasRelay: hasTurnServer(iceServers),
-              urls: iceServers.flatMap(server => Array.isArray(server.urls) ? server.urls : [server.urls])
-            });
             // PROACTIVE FIX: If the PeerConnection was already created (e.g., match raced with webrtc_ready),
             // apply the new config immediately to avoid waiting for ICE failure.
             if (peerConnectionRef.current) {
@@ -1208,6 +1246,7 @@ export function useVideoChat(wsUrl: string) {
         if (message.peer_id) {
           let pc = peerConnectionRef.current;
           if (!pc) {
+            await waitForInitialTurnPrefetch('initial_answer');
             pc = createPeerConnection(message.peer_id);
           }
           try {
@@ -1259,14 +1298,15 @@ export function useVideoChat(wsUrl: string) {
         break;
 
       case 'ice':
-        if (peerConnectionRef.current && message.data?.candidate) {
+        if (message.data?.candidate) {
           try {
             logWebRTC('Received ICE candidate', {
               sdpMid: message.data.candidate.sdpMid,
               ...parseIceCandidate(message.data.candidate.candidate)
             });
-            if (peerConnectionRef.current.remoteDescription) {
-              await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(message.data.candidate));
+            const pc = peerConnectionRef.current;
+            if (pc?.remoteDescription) {
+              await pc.addIceCandidate(new RTCIceCandidate(message.data.candidate));
             } else {
               pendingIceCandidatesRef.current.push(message.data.candidate);
             }
