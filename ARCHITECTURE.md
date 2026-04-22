@@ -390,6 +390,44 @@ Leader election uses `SET NX PX` on `reaper:leader` with a 5s TTL, renewed in a 
 
 ---
 
+## Admin Action Stream
+
+The `OmeglePhoenix.Redis.AdminSubscriber` is a GenServer that consumes a Redis Stream (`admin:action:stream`) using `XREADGROUP BLOCK`. It allows the Go Admin API to fan out administrative actions across the entire Phoenix cluster in real-time.
+
+1. **Topology**: Every Phoenix node connects to the same stream using a shared consumer group (`admin:workers`). Each node uses a unique, sanitized node name as its consumer ID.
+2. **Delivery**: The stream guarantees that actions are processed, and the consumer automatically claims stale pending messages if a node crashes mid-action.
+3. **Supported Actions**:
+   - `emergency_ban` / `emergency_ban_ip`: Immediately terminates and bans an active session or IP across the cluster.
+   - `emergency_disconnect`: Forcibly drops a session.
+   - `emergency_unban` / `emergency_unban_ip`: Removes an active ban.
+   - `refresh_banned_words`: Triggers all nodes to immediately sync the banned word list from Redis.
+   - `bot_config_refresh`: Triggers all nodes to reload the bot definition snapshot.
+
+```mermaid
+graph TB
+    GoAdmin["Go Admin API<br/>(e.g., Ban User)"]
+    Stream[("Redis Stream<br/>admin:action:stream")]
+    
+    subgraph cg ["Consumer Group: admin:workers"]
+        Node1["phoenix-1<br/>(AdminSubscriber)"]
+        Node2["phoenix-2<br/>(AdminSubscriber)"]
+        Node3["phoenix-3<br/>(AdminSubscriber)"]
+    end
+    
+    Users(("Connected Users"))
+    
+    GoAdmin -->|"XADD"| Stream
+    Stream -->|"XREADGROUP BLOCK<br/>(fan-out)"| Node1
+    Stream -->|"XREADGROUP BLOCK<br/>(fan-out)"| Node2
+    Stream -->|"XREADGROUP BLOCK<br/>(fan-out)"| Node3
+    
+    Node1 -.->|"Apply locally"| Users
+    Node2 -.->|"Apply locally"| Users
+    Node3 -.->|"Apply locally"| Users
+```
+
+---
+
 ## Elixir OTP Supervision Tree
 
 ```mermaid
@@ -402,6 +440,7 @@ graph TB
     App --> SessionMgr["SessionManager"]
     App --> Reaper["Reaper (GenServer)"]
     App --> MsgMod["MessageModeration (GenServer)"]
+    App --> AdminSub["AdminSubscriber (GenServer)"]
     App --> BotSup["Bots.Supervisor (DynamicSupervisor)"]
     App --> TaskSup["TaskSupervisor"]
     App --> Cluster["ClusterConnector (GenServer)"]
