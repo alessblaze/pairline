@@ -105,6 +105,7 @@ export function useVideoChat(wsUrl: string) {
   const turnServersRef = useRef<RTCIceServer[]>(defaultStunServers);
   const turnFetchedRef = useRef(false);
   const turnFetchPromiseRef = useRef<Promise<RTCIceServer[] | null> | null>(null);
+  const turnFetchGenerationRef = useRef(0);
 
   const apiRetryCountRef = useRef(0);
   const apiSuccessTimeoutRef = useRef<number | null>(null);
@@ -246,6 +247,7 @@ export function useVideoChat(wsUrl: string) {
     pendingWebrtcStartRef.current = null;
     signalingReadySentRef.current = false;
     negotiationStartedRef.current = false;
+    turnFetchGenerationRef.current += 1;
     turnServersRef.current = defaultStunServers;
     turnFetchedRef.current = false;
     turnFetchPromiseRef.current = null;
@@ -739,6 +741,7 @@ export function useVideoChat(wsUrl: string) {
       return turnFetchPromiseRef.current;
     }
     turnFetchPromiseRef.current = (async () => {
+      const fetchGeneration = turnFetchGenerationRef.current;
       try {
         const goApiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8082';
         const activeSessionId = sessionIdRef.current;
@@ -764,6 +767,18 @@ export function useVideoChat(wsUrl: string) {
         }
         reportApiSuccess(() => !goWsReconnectExhaustedRef.current || webrtcSocketOpenRef.current);
         const data = await res.json();
+
+        if (
+          turnFetchGenerationRef.current !== fetchGeneration ||
+          sessionIdRef.current !== activeSessionId ||
+          sessionTokenRef.current !== activeSessionToken
+        ) {
+          logWebRTC('Discarding stale TURN fetch result', {
+            fetchGeneration,
+            currentGeneration: turnFetchGenerationRef.current
+          });
+          return null;
+        }
 
         if (data.iceServers && Array.isArray(data.iceServers)) {
           logWebRTC('Fetched TURN/STUN servers', {
@@ -1378,6 +1393,10 @@ export function useVideoChat(wsUrl: string) {
         setStatus('idle');
         setIsVideoConnecting(false);
         setPeerId(null);
+        turnFetchGenerationRef.current += 1;
+        turnServersRef.current = defaultStunServers;
+        turnFetchedRef.current = false;
+        turnFetchPromiseRef.current = null;
         setSessionId(null);
         setSessionToken(null);
         sessionTokenRef.current = null;
@@ -1390,6 +1409,8 @@ export function useVideoChat(wsUrl: string) {
 
   const startSearch = async (interests: string = '', turnstileToken?: string) => {
     try {
+      turnFetchGenerationRef.current += 1;
+      turnServersRef.current = defaultStunServers;
       turnFetchedRef.current = false;
       iceRestartPendingRef.current = false;
       signalingReadySentRef.current = false;
@@ -1433,6 +1454,10 @@ export function useVideoChat(wsUrl: string) {
 
   const stopSearch = () => {
     try {
+      turnFetchGenerationRef.current += 1;
+      turnServersRef.current = defaultStunServers;
+      turnFetchedRef.current = false;
+      turnFetchPromiseRef.current = null;
       setStatus('idle');
       setSessionId(null);
       setSessionToken(null);
@@ -1468,7 +1493,10 @@ export function useVideoChat(wsUrl: string) {
       pendingWebrtcStartRef.current = null;
       signalingReadySentRef.current = false;
       negotiationStartedRef.current = false;
+      turnFetchGenerationRef.current += 1;
+      turnServersRef.current = defaultStunServers;
       turnFetchedRef.current = false;
+      turnFetchPromiseRef.current = null;
       iceRestartPendingRef.current = false;
       goWsReconnectExhaustedRef.current = false;
     }

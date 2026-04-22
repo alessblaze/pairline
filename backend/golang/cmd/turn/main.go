@@ -101,3 +101,11 @@ type redisValidator struct {
 func (v *redisValidator) ValidateTURNUsername(ctx context.Context, username string) (turnservice.ValidationResult, error) {
 	return turnservice.ValidateTURNUsername(ctx, v.redisClient.GetClient(), username)
 }
+
+func (v *redisValidator) ReserveTURNAllocation(ctx context.Context, username string, limit int) (bool, error) {
+	return turnservice.ReserveAllocationSlot(ctx, v.redisClient.GetClient(), username, limit)
+}
+
+func (v *redisValidator) ReleaseTURNAllocation(ctx context.Context, username string) error {
+	return turnservice.ReleaseAllocationSlot(ctx, v.redisClient.GetClient(), username)
+}

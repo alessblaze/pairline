@@ -33,6 +33,27 @@ func (s *turnControlValidationServer) ValidateTurnUsername(ctx context.Context, 
 	return validationSuccessResponse(result), nil
 }
 
+func (s *turnControlValidationServer) ReserveAllocation(ctx context.Context, req *turncontrol.ReserveAllocationRequest) (*turncontrol.ReserveAllocationResponse, error) {
+	allowed, err := turnservice.ReserveAllocationSlot(ctx, s.redisClient, req.Username, int(req.Limit))
+	if err != nil {
+		return &turncontrol.ReserveAllocationResponse{
+			Allowed: false,
+			Reason:  turnservice.ValidationErrorReason(err),
+		}, nil
+	}
+	return &turncontrol.ReserveAllocationResponse{Allowed: allowed}, nil
+}
+
+func (s *turnControlValidationServer) ReleaseAllocation(ctx context.Context, req *turncontrol.ReleaseAllocationRequest) (*turncontrol.ReleaseAllocationResponse, error) {
+	if err := turnservice.ReleaseAllocationSlot(ctx, s.redisClient, req.Username); err != nil {
+		return &turncontrol.ReleaseAllocationResponse{
+			Released: false,
+			Reason:   turnservice.ValidationErrorReason(err),
+		}, nil
+	}
+	return &turncontrol.ReleaseAllocationResponse{Released: true}, nil
+}
+
 func validationSuccessResponse(result turnservice.ValidationResult) *turncontrol.ValidationResponse {
 	return &turncontrol.ValidationResponse{
 		Allowed:   true,

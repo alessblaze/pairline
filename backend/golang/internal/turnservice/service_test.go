@@ -9,8 +9,10 @@ import (
 )
 
 type fakeTurnControlClient struct {
-	response *turncontrol.ValidationResponse
-	err      error
+	response        *turncontrol.ValidationResponse
+	reserveResponse *turncontrol.ReserveAllocationResponse
+	releaseResponse *turncontrol.ReleaseAllocationResponse
+	err             error
 }
 
 func (c *fakeTurnControlClient) ValidateMatchedSession(context.Context, *turncontrol.ValidateMatchedSessionRequest, ...grpc.CallOption) (*turncontrol.ValidationResponse, error) {
@@ -19,6 +21,14 @@ func (c *fakeTurnControlClient) ValidateMatchedSession(context.Context, *turncon
 
 func (c *fakeTurnControlClient) ValidateTurnUsername(context.Context, *turncontrol.ValidateTurnUsernameRequest, ...grpc.CallOption) (*turncontrol.ValidationResponse, error) {
 	return c.response, c.err
+}
+
+func (c *fakeTurnControlClient) ReserveAllocation(context.Context, *turncontrol.ReserveAllocationRequest, ...grpc.CallOption) (*turncontrol.ReserveAllocationResponse, error) {
+	return c.reserveResponse, c.err
+}
+
+func (c *fakeTurnControlClient) ReleaseAllocation(context.Context, *turncontrol.ReleaseAllocationRequest, ...grpc.CallOption) (*turncontrol.ReleaseAllocationResponse, error) {
+	return c.releaseResponse, c.err
 }
 
 func TestGRPCValidatorValidateTURNUsername(t *testing.T) {
@@ -43,5 +53,24 @@ func TestGRPCValidatorValidateTURNUsername(t *testing.T) {
 	}
 	if result.MatchedID != "session-2" {
 		t.Fatalf("MatchedID = %q, want %q", result.MatchedID, "session-2")
+	}
+}
+
+func TestGRPCValidatorReserveAndReleaseTURNAllocation(t *testing.T) {
+	validator := &grpcValidator{client: &fakeTurnControlClient{
+		reserveResponse: &turncontrol.ReserveAllocationResponse{Allowed: true},
+		releaseResponse: &turncontrol.ReleaseAllocationResponse{Released: true},
+	}}
+
+	allowed, err := validator.ReserveTURNAllocation(context.Background(), "session-1|digest", 2)
+	if err != nil {
+		t.Fatalf("ReserveTURNAllocation() error = %v", err)
+	}
+	if !allowed {
+		t.Fatal("ReserveTURNAllocation() = false, want true")
+	}
+
+	if err := validator.ReleaseTURNAllocation(context.Background(), "session-1|digest"); err != nil {
+		t.Fatalf("ReleaseTURNAllocation() error = %v", err)
 	}
 }

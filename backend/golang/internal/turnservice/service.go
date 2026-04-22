@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"sync"
 	"time"
 
 	appredis "github.com/anish/omegle/backend/golang/internal/redis"
@@ -20,13 +19,13 @@ type Service struct {
 	server      *pionturn.Server
 	packetConns []net.PacketConn
 	listeners   []net.Listener
-	allocMu     sync.Mutex
-	allocations map[string]int
 	validator   Validator
 }
 
 type Validator interface {
 	ValidateTURNUsername(context.Context, string) (ValidationResult, error)
+	ReserveTURNAllocation(context.Context, string, int) (bool, error)
+	ReleaseTURNAllocation(context.Context, string) error
 }
 
 type grpcValidator struct {
@@ -52,6 +51,34 @@ func (v *grpcValidator) ValidateTURNUsername(ctx context.Context, username strin
 	}, nil
 }
 
+func (v *grpcValidator) ReserveTURNAllocation(ctx context.Context, username string, limit int) (bool, error) {
+	resp, err := v.client.ReserveAllocation(ctx, &turncontrol.ReserveAllocationRequest{
+		Username: username,
+		Limit:    int32(limit),
+	})
+	if err != nil {
+		return false, err
+	}
+	if !resp.Allowed {
+		if resp.Reason == "" {
+			return false, nil
+		}
+		return false, validationErrorFromReason(resp.Reason)
+	}
+	return true, nil
+}
+
+func (v *grpcValidator) ReleaseTURNAllocation(ctx context.Context, username string) error {
+	resp, err := v.client.ReleaseAllocation(ctx, &turncontrol.ReleaseAllocationRequest{Username: username})
+	if err != nil {
+		return err
+	}
+	if !resp.Released && resp.Reason != "" {
+		return validationErrorFromReason(resp.Reason)
+	}
+	return nil
+}
+
 func NewService(config Config, validator Validator) (*Service, error) {
 	if validator == nil {
 		return nil, fmt.Errorf("turn validator is required")
@@ -61,9 +88,8 @@ func NewService(config Config, validator Validator) (*Service, error) {
 	}
 
 	svc := &Service{
-		config:      config,
-		allocations: make(map[string]int),
-		validator:   validator,
+		config:    config,
+		validator: validator,
 	}
 
 	packetConfigs := make([]pionturn.PacketConnConfig, 0, 1)
@@ -123,18 +149,12 @@ func NewService(config Config, validator Validator) (*Service, error) {
 		AuthHandler:       svc.authHandler,
 		QuotaHandler:      svc.quotaHandler,
 		EventHandler: pionturn.EventHandler{
-			OnAllocationCreated: func(_, _ net.Addr, _, userID, _ string, _ net.Addr, _ int) {
-				svc.allocMu.Lock()
-				defer svc.allocMu.Unlock()
-				svc.allocations[userID]++
-			},
 			OnAllocationDeleted: func(_, _ net.Addr, _, userID, _ string) {
-				svc.allocMu.Lock()
-				defer svc.allocMu.Unlock()
-				if svc.allocations[userID] > 1 {
-					svc.allocations[userID]--
-				} else {
-					delete(svc.allocations, userID)
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+
+				if err := svc.validator.ReleaseTURNAllocation(ctx, userID); err != nil {
+					log.Printf("TURN allocation release failed user=%q reason=%v", userID, err)
 				}
 			},
 		},
@@ -198,9 +218,15 @@ func (s *Service) quotaHandler(username, realm string, srcAddr net.Addr) bool {
 		return true
 	}
 
-	s.allocMu.Lock()
-	defer s.allocMu.Unlock()
-	return s.allocations[username] < s.config.AllocationQuota
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	allowed, err := s.validator.ReserveTURNAllocation(ctx, username, s.config.AllocationQuota)
+	if err != nil {
+		log.Printf("TURN allocation quota validation failed user=%q src=%v reason=%v", username, srcAddr, err)
+		return false
+	}
+	return allowed
 }
 
 func (s *Service) closeSockets() error {
@@ -259,6 +285,8 @@ func validationErrorFromReason(reason string) error {
 		return ErrSessionUnmatched
 	case "session_banned":
 		return ErrSessionBanned
+	case "internal_error":
+		return ErrValidationBackend
 	default:
 		return fmt.Errorf("turn control validation failed: %s", reason)
 	}

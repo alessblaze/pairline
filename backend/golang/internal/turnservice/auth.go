@@ -19,6 +19,7 @@ var (
 	ErrSessionInactive        = errors.New("session inactive")
 	ErrSessionUnmatched       = errors.New("session not matched")
 	ErrSessionBanned          = errors.New("session banned")
+	ErrValidationBackend      = errors.New("session validation backend failure")
 )
 
 type ValidationResult struct {
@@ -34,45 +35,14 @@ func ValidateMatchedSession(ctx context.Context, redisClient redis.UniversalClie
 
 	route, err := appredis.ResolveSessionRoute(ctx, redisClient, sessionID)
 	if err != nil {
-		return ValidationResult{}, ErrSessionNotFound
-	}
-
-	expectedToken, err := redisClient.Get(ctx, appredis.SessionTokenKey(sessionID, route)).Result()
-	if err != nil || expectedToken == "" {
-		return ValidationResult{}, ErrSessionInactive
+		return ValidationResult{}, validationRouteError(err)
 	}
 
 	hash := sha256.Sum256([]byte(providedToken))
 	providedHashHex := hex.EncodeToString(hash[:])
-	if subtle.ConstantTimeCompare([]byte(expectedToken), []byte(providedHashHex)) != 1 {
-		return ValidationResult{}, ErrInvalidSessionIdentity
-	}
-
-	sessionExists, err := redisClient.Exists(ctx, appredis.SessionDataKey(sessionID, route)).Result()
-	if err != nil || sessionExists == 0 {
-		return ValidationResult{}, ErrSessionInactive
-	}
-
-	if banned, err := redisClient.Exists(ctx, appredis.BanSessionKey(sessionID)).Result(); err == nil && banned > 0 {
-		return ValidationResult{}, ErrSessionBanned
-	}
-
-	if sessionIP, err := redisClient.Get(ctx, appredis.SessionIPKey(sessionID, route)).Result(); err == nil && strings.TrimSpace(sessionIP) != "" {
-		if banned, banErr := redisClient.Exists(ctx, appredis.BanIPKey(sessionIP)).Result(); banErr == nil && banned > 0 {
-			return ValidationResult{}, ErrSessionBanned
-		}
-	}
-
-	matchedID, err := redisClient.Get(ctx, appredis.MatchKey(sessionID, route)).Result()
-	if err != nil || strings.TrimSpace(matchedID) == "" {
-		return ValidationResult{}, ErrSessionUnmatched
-	}
-
-	return ValidationResult{
-		SessionID: sessionID,
-		Route:     route,
-		MatchedID: matchedID,
-	}, nil
+	return validateMatchedRouteSession(ctx, redisClient, route, sessionID, func(expectedToken string) bool {
+		return subtle.ConstantTimeCompare([]byte(expectedToken), []byte(providedHashHex)) == 1
+	})
 }
 
 func ValidateTURNUsername(ctx context.Context, redisClient redis.UniversalClient, username string) (ValidationResult, error) {
@@ -87,35 +57,99 @@ func ValidateTURNUsername(ctx context.Context, redisClient redis.UniversalClient
 
 	route, err := appredis.ResolveSessionRoute(ctx, redisClient, sessionID)
 	if err != nil {
-		return ValidationResult{}, ErrSessionNotFound
+		return ValidationResult{}, validationRouteError(err)
 	}
 
+	return validateMatchedRouteSession(ctx, redisClient, route, sessionID, func(expectedToken string) bool {
+		return subtle.ConstantTimeCompare([]byte(expectedToken), []byte(tokenDigest)) == 1
+	})
+}
+
+func validateMatchedRouteSession(
+	ctx context.Context,
+	redisClient redis.UniversalClient,
+	route appredis.SessionRoute,
+	sessionID string,
+	tokenMatches func(expectedToken string) bool,
+) (ValidationResult, error) {
 	expectedToken, err := redisClient.Get(ctx, appredis.SessionTokenKey(sessionID, route)).Result()
-	if err != nil || expectedToken == "" {
+	switch {
+	case errors.Is(err, redis.Nil):
+		return ValidationResult{}, ErrSessionInactive
+	case err != nil:
+		return ValidationResult{}, ErrValidationBackend
+	case expectedToken == "":
 		return ValidationResult{}, ErrSessionInactive
 	}
 
-	if subtle.ConstantTimeCompare([]byte(expectedToken), []byte(tokenDigest)) != 1 {
+	if !tokenMatches(expectedToken) {
 		return ValidationResult{}, ErrInvalidSessionIdentity
 	}
 
 	sessionExists, err := redisClient.Exists(ctx, appredis.SessionDataKey(sessionID, route)).Result()
-	if err != nil || sessionExists == 0 {
+	if err != nil {
+		return ValidationResult{}, ErrValidationBackend
+	}
+	if sessionExists == 0 {
 		return ValidationResult{}, ErrSessionInactive
 	}
 
-	if banned, err := redisClient.Exists(ctx, appredis.BanSessionKey(sessionID)).Result(); err == nil && banned > 0 {
+	banned, err := redisClient.Exists(ctx, appredis.BanSessionKey(sessionID)).Result()
+	if err != nil {
+		return ValidationResult{}, ErrValidationBackend
+	}
+	if banned > 0 {
 		return ValidationResult{}, ErrSessionBanned
 	}
 
-	if sessionIP, err := redisClient.Get(ctx, appredis.SessionIPKey(sessionID, route)).Result(); err == nil && strings.TrimSpace(sessionIP) != "" {
-		if banned, banErr := redisClient.Exists(ctx, appredis.BanIPKey(sessionIP)).Result(); banErr == nil && banned > 0 {
+	sessionIP, err := redisClient.Get(ctx, appredis.SessionIPKey(sessionID, route)).Result()
+	switch {
+	case errors.Is(err, redis.Nil):
+	case err != nil:
+		return ValidationResult{}, ErrValidationBackend
+	case strings.TrimSpace(sessionIP) != "":
+		ipBanned, banErr := redisClient.Exists(ctx, appredis.BanIPKey(sessionIP)).Result()
+		if banErr != nil {
+			return ValidationResult{}, ErrValidationBackend
+		}
+		if ipBanned > 0 {
 			return ValidationResult{}, ErrSessionBanned
 		}
 	}
 
 	matchedID, err := redisClient.Get(ctx, appredis.MatchKey(sessionID, route)).Result()
-	if err != nil || strings.TrimSpace(matchedID) == "" {
+	switch {
+	case errors.Is(err, redis.Nil):
+		return ValidationResult{}, ErrSessionUnmatched
+	case err != nil:
+		return ValidationResult{}, ErrValidationBackend
+	case strings.TrimSpace(matchedID) == "":
+		return ValidationResult{}, ErrSessionUnmatched
+	}
+
+	peerRoute, err := appredis.ResolveSessionRoute(ctx, redisClient, matchedID)
+	switch {
+	case errors.Is(err, appredis.ErrSessionRouteNotFound):
+		return ValidationResult{}, ErrSessionUnmatched
+	case err != nil:
+		return ValidationResult{}, ErrValidationBackend
+	}
+
+	peerExists, err := redisClient.Exists(ctx, appredis.SessionDataKey(matchedID, peerRoute)).Result()
+	if err != nil {
+		return ValidationResult{}, ErrValidationBackend
+	}
+	if peerExists == 0 {
+		return ValidationResult{}, ErrSessionUnmatched
+	}
+
+	peerMatchedID, err := redisClient.Get(ctx, appredis.MatchKey(matchedID, peerRoute)).Result()
+	switch {
+	case errors.Is(err, redis.Nil):
+		return ValidationResult{}, ErrSessionUnmatched
+	case err != nil:
+		return ValidationResult{}, ErrValidationBackend
+	case strings.TrimSpace(peerMatchedID) != sessionID:
 		return ValidationResult{}, ErrSessionUnmatched
 	}
 
@@ -124,6 +158,64 @@ func ValidateTURNUsername(ctx context.Context, redisClient redis.UniversalClient
 		Route:     route,
 		MatchedID: matchedID,
 	}, nil
+}
+
+func validationRouteError(err error) error {
+	switch {
+	case errors.Is(err, appredis.ErrSessionRouteNotFound):
+		return ErrSessionNotFound
+	case errors.Is(err, appredis.ErrInvalidSessionRoute):
+		return ErrValidationBackend
+	default:
+		return ErrValidationBackend
+	}
+}
+
+func turnAllocationKey(sessionID string) string {
+	return "turn:allocations:" + sessionID
+}
+
+func ReserveAllocationSlot(ctx context.Context, redisClient redis.UniversalClient, username string, limit int) (bool, error) {
+	if limit <= 0 {
+		return true, nil
+	}
+
+	sessionID, _, err := ParseUsername(username)
+	if err != nil {
+		return false, ErrInvalidSessionIdentity
+	}
+
+	allocations, err := redisClient.Incr(ctx, turnAllocationKey(sessionID)).Result()
+	if err != nil {
+		return false, ErrValidationBackend
+	}
+	if allocations > int64(limit) {
+		if _, decErr := redisClient.Decr(ctx, turnAllocationKey(sessionID)).Result(); decErr != nil {
+			return false, ErrValidationBackend
+		}
+		return false, nil
+	}
+
+	return true, nil
+}
+
+func ReleaseAllocationSlot(ctx context.Context, redisClient redis.UniversalClient, username string) error {
+	sessionID, _, err := ParseUsername(username)
+	if err != nil {
+		return ErrInvalidSessionIdentity
+	}
+
+	allocations, err := redisClient.Decr(ctx, turnAllocationKey(sessionID)).Result()
+	if err != nil {
+		return ErrValidationBackend
+	}
+	if allocations <= 0 {
+		if delErr := redisClient.Del(ctx, turnAllocationKey(sessionID)).Err(); delErr != nil {
+			return ErrValidationBackend
+		}
+	}
+
+	return nil
 }
 
 func ValidationErrorReason(err error) string {
@@ -138,6 +230,8 @@ func ValidationErrorReason(err error) string {
 		return "session_unmatched"
 	case errors.Is(err, ErrSessionBanned):
 		return "session_banned"
+	case errors.Is(err, ErrValidationBackend):
+		return "internal_error"
 	default:
 		return "internal_error"
 	}

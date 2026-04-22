@@ -24,6 +24,14 @@ func (s *testServiceServer) ValidateTurnUsername(ctx context.Context, req *Valid
 	return s.validateTurnUsername(ctx, req)
 }
 
+func (s *testServiceServer) ReserveAllocation(context.Context, *ReserveAllocationRequest) (*ReserveAllocationResponse, error) {
+	return &ReserveAllocationResponse{Allowed: true}, nil
+}
+
+func (s *testServiceServer) ReleaseAllocation(context.Context, *ReleaseAllocationRequest) (*ReleaseAllocationResponse, error) {
+	return &ReleaseAllocationResponse{Released: true}, nil
+}
+
 func startTestServer(t *testing.T, sharedSecret string, srv ServiceServer) (*bufconn.Listener, func()) {
 	t.Helper()
 

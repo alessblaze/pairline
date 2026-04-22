@@ -116,6 +116,12 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 		}
 
 		if err := validateTurnBootstrapSession(ctx, redisClient.GetClient(), turnConfig.Mode, sessionID, sessionToken); err != nil {
+			if errors.Is(err, turnservice.ErrValidationBackend) {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, "turn validation backend unavailable")
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "turn validation unavailable"})
+				return
+			}
 			span.SetStatus(codes.Error, "invalid session")
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid session"})
 			return
