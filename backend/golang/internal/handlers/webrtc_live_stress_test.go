@@ -16,6 +16,7 @@ import (
 
 	appredis "github.com/anish/omegle/backend/golang/internal/redis"
 	"github.com/google/uuid"
+	redis "github.com/redis/go-redis/v9"
 )
 
 type signalingStressSession struct {
@@ -31,6 +32,7 @@ type signalingStressJob struct {
 }
 
 const localStressBatchSize = 16
+const stressRedisOpTimeout = 5 * time.Second
 
 func TestRedisSignalingLiveStress(t *testing.T) {
 	if os.Getenv("RUN_LIVE_REDIS_STRESS") == "" {
@@ -74,8 +76,8 @@ func TestRedisSignalingLiveStress(t *testing.T) {
 		concurrency,
 	)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	seedCtx, seedCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer seedCancel()
 	totalStartedAt := time.Now()
 
 	localSessions := make([]*signalingStressSession, 0, localSessionCount)
@@ -99,7 +101,7 @@ func TestRedisSignalingLiveStress(t *testing.T) {
 		}
 
 		locator := fmt.Sprintf("%s|%d", session.route.Mode, session.route.Shard)
-		if err := redisClient.GetClient().Set(ctx, appredis.SessionLocatorKey(session.id), locator, 5*time.Minute).Err(); err != nil {
+		if err := redisClient.GetClient().Set(seedCtx, appredis.SessionLocatorKey(session.id), locator, 5*time.Minute).Err(); err != nil {
 			t.Fatalf("set locator for %s returned error: %v", session.id, err)
 		}
 	}
@@ -124,6 +126,7 @@ func TestRedisSignalingLiveStress(t *testing.T) {
 
 	registerLocalStartedAt := time.Now()
 	for _, session := range localSessions {
+		assertStressRoute(t, redisClient, session)
 		client, pending, err := receiverHub.Register(session.id, nil)
 		if err != nil {
 			t.Fatalf("register local session %s returned error: %v", session.id, err)
@@ -131,6 +134,8 @@ func TestRedisSignalingLiveStress(t *testing.T) {
 		if len(pending) != 0 {
 			t.Fatalf("register local session %s returned pending=%d, want 0", session.id, len(pending))
 		}
+		assertStressOwner(t, redisClient, session, receiverHub.instanceID)
+		assertStressPendingLen(t, redisClient, session, 0)
 
 		session.client = client
 		go drainStressClient(client, &session.delivered)
@@ -174,6 +179,10 @@ func TestRedisSignalingLiveStress(t *testing.T) {
 
 	localSendDuration := time.Since(localSendStartedAt)
 
+	for _, session := range localSessions {
+		assertStressOwner(t, redisClient, session, receiverHub.instanceID)
+	}
+
 	remoteSendStartedAt := time.Now()
 	if err := runStressJobs(concurrency, func(jobs chan<- signalingStressJob) {
 		for sendIndex := 0; sendIndex < remoteSendsPerSession; sendIndex++ {
@@ -191,6 +200,13 @@ func TestRedisSignalingLiveStress(t *testing.T) {
 	}
 	remoteSendDuration := time.Since(remoteSendStartedAt)
 
+	wantRemotePending := min(remoteSendsPerSession, maxPendingMsgs)
+	for _, session := range remoteSessions {
+		assertStressRoute(t, redisClient, session)
+		assertStressPendingLen(t, redisClient, session, wantRemotePending)
+		assertStressOwnerMissing(t, redisClient, session)
+	}
+
 	pendingCheckStartedAt := time.Now()
 	for _, session := range remoteSessions {
 		client, pending, err := senderHub.Register(session.id, nil)
@@ -198,15 +214,18 @@ func TestRedisSignalingLiveStress(t *testing.T) {
 			t.Fatalf("register remote session %s returned error: %v", session.id, err)
 		}
 
-		wantPending := min(remoteSendsPerSession, maxPendingMsgs)
-		if len(pending) != wantPending {
-			t.Fatalf("remote session %s pending=%d, want %d", session.id, len(pending), wantPending)
+		if len(pending) != wantRemotePending {
+			t.Fatalf("remote session %s pending=%d, want %d", session.id, len(pending), wantRemotePending)
 		}
+		assertStressOwner(t, redisClient, session, senderHub.instanceID)
+		assertStressPendingLen(t, redisClient, session, 0)
 
 		if client != nil {
 			client.close()
 		}
 		senderHub.Unregister(session.id)
+		assertStressOwnerMissing(t, redisClient, session)
+		assertStressPendingLen(t, redisClient, session, 0)
 	}
 	pendingCheckDuration := time.Since(pendingCheckStartedAt)
 
@@ -276,6 +295,80 @@ func waitForStressLocalDelivery(
 		}
 
 		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+func assertStressRoute(
+	t *testing.T,
+	redisClient *appredis.Client,
+	session *signalingStressSession,
+) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), stressRedisOpTimeout)
+	defer cancel()
+	route, err := appredis.ResolveSessionRoute(ctx, redisClient.GetClient(), session.id)
+	if err != nil {
+		t.Fatalf("resolve session route for %s returned error: %v", session.id, err)
+	}
+	if route != session.route {
+		t.Fatalf("resolve session route for %s = %+v, want %+v", session.id, route, session.route)
+	}
+}
+
+func assertStressOwner(
+	t *testing.T,
+	redisClient *appredis.Client,
+	session *signalingStressSession,
+	wantOwner string,
+) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), stressRedisOpTimeout)
+	defer cancel()
+	owner, err := redisClient.GetClient().Get(ctx, appredis.WebRTCOwnerKey(session.id, session.route)).Result()
+	if err != nil {
+		t.Fatalf("load owner for %s returned error: %v", session.id, err)
+	}
+	if owner != wantOwner {
+		t.Fatalf("owner for %s = %q, want %q", session.id, owner, wantOwner)
+	}
+}
+
+func assertStressOwnerMissing(
+	t *testing.T,
+	redisClient *appredis.Client,
+	session *signalingStressSession,
+) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), stressRedisOpTimeout)
+	defer cancel()
+	_, err := redisClient.GetClient().Get(ctx, appredis.WebRTCOwnerKey(session.id, session.route)).Result()
+	if err == nil {
+		t.Fatalf("owner for %s unexpectedly present", session.id)
+	}
+	if err != nil && err != redis.Nil {
+		t.Fatalf("load owner for %s returned unexpected error: %v", session.id, err)
+	}
+}
+
+func assertStressPendingLen(
+	t *testing.T,
+	redisClient *appredis.Client,
+	session *signalingStressSession,
+	want int,
+) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), stressRedisOpTimeout)
+	defer cancel()
+	got, err := redisClient.GetClient().LLen(ctx, appredis.WebRTCPendingKey(session.id, session.route)).Result()
+	if err != nil {
+		t.Fatalf("load pending length for %s returned error: %v", session.id, err)
+	}
+	if int(got) != want {
+		t.Fatalf("pending length for %s = %d, want %d", session.id, got, want)
 	}
 }
 
