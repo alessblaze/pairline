@@ -54,6 +54,7 @@ Pairline leverages Elixir's battle-tested concurrency model and Go's lightweight
 
 ## Additional docs
 
+- [ARCHITECTURE.md](./ARCHITECTURE.md) — system architecture diagrams and service topology
 - [frontend/client/README.md](./frontend/client/README.md)
 - [frontend/admin/README.md](./frontend/admin/README.md)
 - [backend/elixir/omegle_phoenix/README.md](./backend/elixir/omegle_phoenix/README.md)
