@@ -10,24 +10,51 @@ import (
 	"sync"
 	"time"
 
-	pionturn "github.com/pion/turn/v5"
-
 	appredis "github.com/anish/omegle/backend/golang/internal/redis"
+	"github.com/anish/omegle/backend/golang/internal/turncontrol"
+	pionturn "github.com/pion/turn/v5"
 )
 
 type Service struct {
 	config      Config
-	redis       *appredis.Client
 	server      *pionturn.Server
 	packetConns []net.PacketConn
 	listeners   []net.Listener
 	allocMu     sync.Mutex
 	allocations map[string]int
+	validator   Validator
 }
 
-func NewService(config Config, redisClient *appredis.Client) (*Service, error) {
-	if redisClient == nil {
-		return nil, fmt.Errorf("redis client is required")
+type Validator interface {
+	ValidateTURNUsername(context.Context, string) (ValidationResult, error)
+}
+
+type grpcValidator struct {
+	client turncontrol.ServiceClient
+}
+
+func (v *grpcValidator) ValidateTURNUsername(ctx context.Context, username string) (ValidationResult, error) {
+	resp, err := v.client.ValidateTurnUsername(ctx, &turncontrol.ValidateTurnUsernameRequest{Username: username})
+	if err != nil {
+		return ValidationResult{}, err
+	}
+	if !resp.Allowed {
+		return ValidationResult{}, validationErrorFromReason(resp.Reason)
+	}
+	route, err := appredis.DecodeSessionRoute(resp.Route)
+	if err != nil {
+		return ValidationResult{}, fmt.Errorf("decode turn control route: %w", err)
+	}
+	return ValidationResult{
+		SessionID: resp.SessionID,
+		Route:     route,
+		MatchedID: resp.MatchedID,
+	}, nil
+}
+
+func NewService(config Config, validator Validator) (*Service, error) {
+	if validator == nil {
+		return nil, fmt.Errorf("turn validator is required")
 	}
 	if err := config.ValidateForRelay(); err != nil {
 		return nil, err
@@ -35,8 +62,8 @@ func NewService(config Config, redisClient *appredis.Client) (*Service, error) {
 
 	svc := &Service{
 		config:      config,
-		redis:       redisClient,
 		allocations: make(map[string]int),
+		validator:   validator,
 	}
 
 	packetConfigs := make([]pionturn.PacketConnConfig, 0, 1)
@@ -156,7 +183,7 @@ func (s *Service) authHandler(ra *pionturn.RequestAttributes) (string, []byte, b
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	result, err := ValidateTURNUsername(ctx, s.redis.GetClient(), ra.Username)
+	result, err := s.validator.ValidateTURNUsername(ctx, ra.Username)
 	if err != nil {
 		log.Printf("TURN auth denied src=%v reason=%v", ra.SrcAddr, err)
 		return "", nil, false
@@ -208,5 +235,31 @@ func relayAddressGenerator(config Config) pionturn.RelayAddressGenerator {
 		MinPort:      uint16(config.RelayMinPort),
 		MaxPort:      uint16(config.RelayMaxPort),
 		MaxRetries:   64,
+	}
+}
+
+func NewGRPCValidator(ctx context.Context, config Config) (Validator, func() error, error) {
+	conn, err := turncontrol.NewAuthenticatedClientConn(ctx, config.ControlGRPCAddress, config.ControlGRPCSecret)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return &grpcValidator{client: turncontrol.NewServiceClient(conn)}, conn.Close, nil
+}
+
+func validationErrorFromReason(reason string) error {
+	switch reason {
+	case "invalid_session_identity":
+		return ErrInvalidSessionIdentity
+	case "session_not_found":
+		return ErrSessionNotFound
+	case "session_inactive":
+		return ErrSessionInactive
+	case "session_unmatched":
+		return ErrSessionUnmatched
+	case "session_banned":
+		return ErrSessionBanned
+	default:
+		return fmt.Errorf("turn control validation failed: %s", reason)
 	}
 }

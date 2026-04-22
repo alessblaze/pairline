@@ -5,7 +5,7 @@ This folder contains a local end-to-end Docker Compose stack for testing:
 - a 3-node Elixir/Phoenix cluster
 - a 2-node public Go backend
 - a separate admin Go backend
-- dedicated turn-only Go relay containers
+- dedicated turn-only Go relay processes
 - a 6-node Valkey/Redis Cluster
 - Postgres
 - Nginx ingress ports split by backend
@@ -27,8 +27,19 @@ This folder contains a local end-to-end Docker Compose stack for testing:
 - `golang-turn-1`
 - `golang-turn-2`
 
-Nginx is the only exposed ingress layer. Phoenix and Go stay internal to the
-Docker network, while host access is split cleanly by port.
+The stack uses one HTTP ingress container:
+
+- `nginx` for Phoenix and Go HTTP/WebSocket traffic
+
+TURN listeners are bound directly by the host-networked turn-only processes.
+
+TURN in this stack follows one model consistently:
+
+- `golang-public-*` own Redis-backed TURN validation semantics
+- `golang-public-*` expose authenticated internal TURN control-plane gRPC ports on `50051` and `50052`
+- `golang-turn-*` run on host networking and validate sessions through that gRPC control plane
+- `TURN_SERVER_URLS` should point at the host IP and listener ports the turn-only processes bind directly
+- `TURN_PUBLIC_IP` on each turn-only backend should be that same public IP so relayed candidates match the address clients dial
 
 All Phoenix nodes share:
 
@@ -56,8 +67,6 @@ Static IP assignments on `172.30.0.0/24`:
 - `golang-public-1` -> `172.30.0.40`
 - `golang-public-2` -> `172.30.0.42`
 - `golang-admin` -> `172.30.0.41`
-- `golang-turn-1` -> `172.30.0.43`
-- `golang-turn-2` -> `172.30.0.44`
 
 Internal app ports:
 
@@ -67,14 +76,22 @@ Internal app ports:
 - `golang-public-1` -> `8081`
 - `golang-public-2` -> `8081`
 - `golang-admin` -> `8082`
+- `golang-public-1` -> internal TURN control-plane gRPC `50051`
+- `golang-public-2` -> internal TURN control-plane gRPC `50052`
 - `golang-turn-1` -> TURN `53478` plus relay range `55000-55099`, health `8090`
 - `golang-turn-2` -> TURN `53479` plus relay range `55100-55199`, health `8091`
 - `nginx` -> exposed on host `8080` and `8081`
 
-Direct TURN ingress is exposed on the host for local browser testing:
+TURN ingress is exposed directly by the host-networked turn-only processes:
 
 - `127.0.0.1:53478` UDP/TCP via `golang-turn-1`
 - `127.0.0.1:53479` UDP/TCP via `golang-turn-2`
+- `127.0.0.1:55000-55199` UDP/TCP relay allocations from the turn-only processes
+
+TURN control-plane validation is reachable on the host through:
+
+- `127.0.0.1:50051` -> `golang-public-1`
+- `127.0.0.1:50052` -> `golang-public-2`
 
 All Go services share the same Redis Cluster and Postgres backing services.
 
@@ -90,6 +107,19 @@ Or detached:
 
 ```bash
 docker compose -f docker/docker-compose.yml up -d
+```
+
+For the Elixir cluster variants under `docker/`:
+
+- `docker/elixir-cluster-compose.yml` is the integrated native TURN stack
+- `docker/elixir-cluster-compose-cf.yml` is the Cloudflare-only fallback stack
+
+The helper script can launch either:
+
+```bash
+./docker/start.sh
+./docker/start.sh --cf
+./docker/start.sh --default
 ```
 
 ## Check cluster health
@@ -113,6 +143,14 @@ docker compose -f docker/docker-compose.yml exec golang-public-1 curl -s http://
 docker compose -f docker/docker-compose.yml exec golang-public-2 curl -s http://localhost:8081/health
 docker compose -f docker/docker-compose.yml exec golang-turn-1 curl -s http://localhost:8090/health
 docker compose -f docker/docker-compose.yml exec golang-turn-2 curl -s http://localhost:8091/health
+```
+
+From another container on the app network, the admin service reaches the
+host-networked turn-only health endpoints through the host gateway:
+
+```bash
+docker compose -f docker/docker-compose.yml exec golang-admin curl -s http://host.docker.internal:8090/health
+docker compose -f docker/docker-compose.yml exec golang-admin curl -s http://host.docker.internal:8091/health
 ```
 
 The authenticated cross-service infra summary lives on the admin API:

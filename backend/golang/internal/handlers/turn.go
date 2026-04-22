@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -32,11 +33,15 @@ import (
 	internalredis "github.com/anish/omegle/backend/golang/internal/redis"
 	"github.com/anish/omegle/backend/golang/internal/turnservice"
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 )
 
 var turnHTTPClient = &http.Client{Timeout: 5 * time.Second}
+
+const maxTurnCredentialsRequestBytes int64 = 4096
+const providerErrorLogLimit = 256
 
 type cloudflareCredentialsRequest struct {
 	TTL int `json:"ttl"`
@@ -73,7 +78,8 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 		span := startHandlerSpan(c, "webrtc.turn.credentials")
 		defer span.End()
 
-		if c.Request.ContentLength > 4096 {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxTurnCredentialsRequestBytes)
+		if c.Request.ContentLength > maxTurnCredentialsRequestBytes {
 			span.SetStatus(codes.Error, "request too large")
 			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "Request too large"})
 			return
@@ -109,13 +115,7 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 			return
 		}
 
-		if turnConfig.Mode == turnservice.ModeIntegrated {
-			if _, err := turnservice.ValidateMatchedSession(ctx, redisClient.GetClient(), sessionID, sessionToken); err != nil {
-				span.SetStatus(codes.Error, "invalid or unmatched session")
-				c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid session"})
-				return
-			}
-		} else if !verifySessionTokenWebRTC(ctx, redisClient.GetClient(), sessionID, sessionToken) {
+		if err := validateTurnBootstrapSession(ctx, redisClient.GetClient(), turnConfig.Mode, sessionID, sessionToken); err != nil {
 			span.SetStatus(codes.Error, "invalid session")
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid session"})
 			return
@@ -134,7 +134,7 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 		}
 
 		// Cache TURN credentials briefly to reduce Cloudflare API QPS during reconnect storms.
-		cacheKey := "webrtc:turn:cache:" + sessionID
+		cacheKey := cloudflareTurnCacheKey(sessionID, sessionToken)
 		if cached, err := redisClient.GetClient().Get(ctx, cacheKey).Result(); err == nil && cached != "" {
 			cacheHit = true
 			span.SetAttributes(attribute.Bool("webrtc.turn.cache_hit", true))
@@ -144,14 +144,12 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 		}
 		span.SetAttributes(attribute.Bool("webrtc.turn.cache_hit", false))
 
-		keyID := os.Getenv("CLOUDFLARE_TURN_KEY_ID")
-		apiToken := os.Getenv("CLOUDFLARE_TURN_API_TOKEN")
-
-		if keyID == "" || apiToken == "" {
-			log.Println("CLOUDFLARE_TURN_KEY_ID or CLOUDFLARE_TURN_API_TOKEN not configured")
-			span.SetAttributes(attribute.Bool("webrtc.turn.fallback_stun_only", true))
-			observability.RecordTURNRequest(c.Request.Context(), time.Since(startedAt), "stun_fallback", cacheHit)
-			c.JSON(http.StatusOK, turnConfig.BootstrapResponse(sessionID, sessionToken))
+		keyID, apiToken, err := cloudflareTurnProviderConfig()
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "turn provider misconfigured")
+			log.Printf("Cloudflare TURN bootstrap misconfigured: %v", err)
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "turn provider unavailable"})
 			return
 		}
 
@@ -195,7 +193,7 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 			span.SetAttributes(attribute.Int("webrtc.turn.status_code", resp.StatusCode))
 			span.SetStatus(codes.Error, "turn provider error")
 			observability.RecordTURNRequest(c.Request.Context(), time.Since(startedAt), "provider_error", cacheHit)
-			log.Printf("Cloudflare TURN API error %d: %s", resp.StatusCode, string(body))
+			log.Printf("Cloudflare TURN API error %d: %s", resp.StatusCode, summarizeProviderErrorBody(body))
 			c.JSON(http.StatusBadGateway, gin.H{"error": "Cloudflare TURN API returned an error"})
 			return
 		}
@@ -206,6 +204,13 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 			span.SetStatus(codes.Error, "failed to parse turn response")
 			log.Printf("Failed to parse Cloudflare TURN response: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse TURN credentials"})
+			return
+		}
+		if err := validateCloudflareCredentialsResponse(cfResp); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "turn provider returned invalid credentials")
+			log.Printf("Cloudflare TURN response missing required fields: %v", err)
+			c.JSON(http.StatusBadGateway, gin.H{"error": "Cloudflare TURN API returned invalid credentials"})
 			return
 		}
 
@@ -230,4 +235,54 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 
 		c.Data(http.StatusOK, "application/json", responseBody)
 	}
+}
+
+func validateTurnBootstrapSession(ctx context.Context, redisClient redis.UniversalClient, mode turnservice.Mode, sessionID, sessionToken string) error {
+	if mode == turnservice.ModeIntegrated || mode == turnservice.ModeCloudflare {
+		_, err := turnservice.ValidateMatchedSession(ctx, redisClient, sessionID, sessionToken)
+		return err
+	}
+
+	if !verifySessionTokenWebRTC(ctx, redisClient, sessionID, sessionToken) {
+		return turnservice.ErrInvalidSessionIdentity
+	}
+
+	return nil
+}
+
+func cloudflareTurnProviderConfig() (string, string, error) {
+	keyID := os.Getenv("CLOUDFLARE_TURN_KEY_ID")
+	apiToken := os.Getenv("CLOUDFLARE_TURN_API_TOKEN")
+	if keyID == "" || apiToken == "" {
+		return "", "", errors.New("CLOUDFLARE_TURN_KEY_ID and CLOUDFLARE_TURN_API_TOKEN must be configured when TURN_MODE=cloudflare")
+	}
+	return keyID, apiToken, nil
+}
+
+func cloudflareTurnCacheKey(sessionID, sessionToken string) string {
+	return "webrtc:turn:cache:cloudflare:" + turnservice.BuildUsername(sessionID, sessionToken)
+}
+
+func summarizeProviderErrorBody(body []byte) string {
+	trimmed := string(bytes.TrimSpace(body))
+	if trimmed == "" {
+		return "<empty>"
+	}
+	if len(trimmed) > providerErrorLogLimit {
+		return trimmed[:providerErrorLogLimit] + "..."
+	}
+	return trimmed
+}
+
+func validateCloudflareCredentialsResponse(resp cloudflareCredentialsResponse) error {
+	if len(resp.IceServers.URLs) == 0 {
+		return errors.New("missing urls")
+	}
+	if resp.IceServers.Username == "" {
+		return errors.New("missing username")
+	}
+	if resp.IceServers.Credential == "" {
+		return errors.New("missing credential")
+	}
+	return nil
 }

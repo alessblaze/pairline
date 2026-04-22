@@ -559,8 +559,18 @@ services:
       TURN_MODE: integrated
       TURN_REALM: pairline
       TURN_STATIC_AUTH_SECRET: pairline-dev-turn-session
+      TURN_CONTROL_GRPC_LISTEN_ADDRESS: 0.0.0.0:50051
+      TURN_CONTROL_GRPC_SHARED_SECRET: pairline-dev-turn-control
       TURN_STUN_SERVERS: stun:stun.cloudflare.com:3478,stun:stun.l.google.com:19302
       TURN_SERVER_URLS: turn:127.0.0.1:53478?transport=udp,turn:127.0.0.1:53478?transport=tcp,turn:127.0.0.1:53479?transport=udp,turn:127.0.0.1:53479?transport=tcp
+    ports:
+      - "50051:50051"
+    healthcheck:
+      test: ["CMD", "bash", "-lc", "exec 3<>/dev/tcp/127.0.0.1/8081 && printf 'GET /health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
     networks:
       pairline_cluster:
         ipv4_address: 172.30.0.40
@@ -609,8 +619,18 @@ services:
       TURN_MODE: integrated
       TURN_REALM: pairline
       TURN_STATIC_AUTH_SECRET: pairline-dev-turn-session
+      TURN_CONTROL_GRPC_LISTEN_ADDRESS: 0.0.0.0:50052
+      TURN_CONTROL_GRPC_SHARED_SECRET: pairline-dev-turn-control
       TURN_STUN_SERVERS: stun:stun.cloudflare.com:3478,stun:stun.l.google.com:19302
       TURN_SERVER_URLS: turn:127.0.0.1:53478?transport=udp,turn:127.0.0.1:53478?transport=tcp,turn:127.0.0.1:53479?transport=udp,turn:127.0.0.1:53479?transport=tcp
+    ports:
+      - "50052:50052"
+    healthcheck:
+      test: ["CMD", "bash", "-lc", "exec 3<>/dev/tcp/127.0.0.1/8081 && printf 'GET /health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
     networks:
       pairline_cluster:
         ipv4_address: 172.30.0.42
@@ -658,7 +678,7 @@ services:
       OTEL_ENVIRONMENT: docker
       ADMIN_HEALTH_PHOENIX_URLS: http://phoenix1:8080/api/health,http://phoenix2:8080/api/health,http://phoenix3:8080/api/health
       ADMIN_HEALTH_GO_URLS: http://golang-admin:8082/health,http://golang-public-1:8081/health,http://golang-public-2:8081/health
-      ADMIN_HEALTH_TURN_URLS: http://golang-turn-1:8090/health,http://golang-turn-2:8091/health
+      ADMIN_HEALTH_TURN_URLS: http://host.docker.internal:8090/health,http://host.docker.internal:8091/health
       OTEL_COLLECTOR_HEALTH_URL: http://otel-collector:13133/
       AUTO_MODERATION_ENABLED: "false"
       # NIM_API_KEY: ""
@@ -675,6 +695,8 @@ services:
     networks:
       pairline_cluster:
         ipv4_address: 172.30.0.41
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ../backend/golang:/app
       - golang_mod_cache:/go/pkg/mod
@@ -691,11 +713,9 @@ services:
     container_name: pairline-golang-turn-1
     working_dir: /app
     depends_on:
-      redis-cluster-init:
-        condition: service_completed_successfully
+      golang-public-1:
+        condition: service_healthy
     environment:
-      REDIS_CLUSTER_NODES: redis-node-1:7000,redis-node-2:7001,redis-node-3:7002
-      REDIS_PASSWORD: pairline-dev-redis-password
       GOCACHE: /tmp/go-build
       REDIS_MAINT_NOTIFICATIONS_MODE: disabled
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
@@ -704,6 +724,8 @@ services:
       TURN_MODE: integrated
       TURN_REALM: pairline
       TURN_STATIC_AUTH_SECRET: pairline-dev-turn-session
+      TURN_CONTROL_GRPC_ADDRESS: 127.0.0.1:50051
+      TURN_CONTROL_GRPC_SHARED_SECRET: pairline-dev-turn-control
       TURN_PUBLIC_IP: 127.0.0.1
       TURN_UDP_LISTEN_ADDRESS: :53478
       TURN_TCP_LISTEN_ADDRESS: :53478
@@ -711,14 +733,7 @@ services:
       TURN_RELAY_ADDRESS: 0.0.0.0
       TURN_RELAY_MIN_PORT: "55000"
       TURN_RELAY_MAX_PORT: "55099"
-    ports:
-      - "53478:53478/udp"
-      - "53478:53478/tcp"
-      - "55000-55099:55000-55099/udp"
-      - "55000-55099:55000-55099/tcp"
-    networks:
-      pairline_cluster:
-        ipv4_address: 172.30.0.43
+    network_mode: host
     volumes:
       - ../backend/golang:/app
       - golang_mod_cache:/go/pkg/mod
@@ -735,11 +750,9 @@ services:
     container_name: pairline-golang-turn-2
     working_dir: /app
     depends_on:
-      redis-cluster-init:
-        condition: service_completed_successfully
+      golang-public-2:
+        condition: service_healthy
     environment:
-      REDIS_CLUSTER_NODES: redis-node-1:7000,redis-node-2:7001,redis-node-3:7002
-      REDIS_PASSWORD: pairline-dev-redis-password
       GOCACHE: /tmp/go-build
       REDIS_MAINT_NOTIFICATIONS_MODE: disabled
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
@@ -748,6 +761,8 @@ services:
       TURN_MODE: integrated
       TURN_REALM: pairline
       TURN_STATIC_AUTH_SECRET: pairline-dev-turn-session
+      TURN_CONTROL_GRPC_ADDRESS: 127.0.0.1:50052
+      TURN_CONTROL_GRPC_SHARED_SECRET: pairline-dev-turn-control
       TURN_PUBLIC_IP: 127.0.0.1
       TURN_UDP_LISTEN_ADDRESS: :53479
       TURN_TCP_LISTEN_ADDRESS: :53479
@@ -755,14 +770,7 @@ services:
       TURN_RELAY_ADDRESS: 0.0.0.0
       TURN_RELAY_MIN_PORT: "55100"
       TURN_RELAY_MAX_PORT: "55199"
-    ports:
-      - "53479:53479/udp"
-      - "53479:53479/tcp"
-      - "55100-55199:55100-55199/udp"
-      - "55100-55199:55100-55199/tcp"
-    networks:
-      pairline_cluster:
-        ipv4_address: 172.30.0.44
+    network_mode: host
     volumes:
       - ../backend/golang:/app
       - golang_mod_cache:/go/pkg/mod

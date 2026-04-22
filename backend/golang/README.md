@@ -23,8 +23,11 @@ The legacy combined binary defaults to port `8082`.
   - `POST /api/v1/moderation/report`
   - `GET /api/v1/webrtc/ws`
   - `POST /api/v1/webrtc/turn`
+  - optional internal TURN control-plane gRPC when `TURN_CONTROL_GRPC_LISTEN_ADDRESS` is set
 - `go run ./cmd/turn`
   Starts the dedicated Pion TURN relay binary. It requires `TURN_MODE=integrated`.
+  When `TURN_CONTROL_GRPC_ADDRESS` is set, the relay validates sessions through
+  the public Go service instead of reading Redis directly.
 - `go run ./cmd/admin`
   Starts the admin binary only:
   - `GET /health`
@@ -76,6 +79,10 @@ Set `IGNORE_DOTENV=1` (or any non-empty value) to skip loading a local `.env` fi
 - `integrated` returns Pairline-managed TURN credentials from `/api/v1/webrtc/turn` and enables `go run ./cmd/turn`.
 - `off` disables relay credentials and returns STUN-only ICE servers.
 When `TURN_MODE=integrated`, the bootstrap endpoint now fails closed if no usable TURN URLs are configured instead of silently returning an empty relay config.
+When `TURN_MODE=cloudflare`, the bootstrap endpoint now also fails closed if the Cloudflare TURN credentials are not configured or the provider returns an invalid credential payload.
+`TURN_CONTROL_GRPC_LISTEN_ADDRESS` enables an internal authenticated gRPC control-plane API on the public Go service for TURN validation.
+`TURN_CONTROL_GRPC_ADDRESS` tells the turn-only binary to use that internal control-plane API instead of connecting to Redis directly.
+`TURN_CONTROL_GRPC_SHARED_SECRET` must match on both sides when the TURN control-plane gRPC path is enabled.
 
 ## Useful commands
 

@@ -39,6 +39,8 @@ type Config struct {
 	RelayMinPort        int
 	RelayMaxPort        int
 	AllocationQuota     int
+	ControlGRPCAddress  string
+	ControlGRPCSecret   string
 }
 
 type IceServer struct {
@@ -70,6 +72,8 @@ func LoadConfigFromEnv() Config {
 		RelayMinPort:        envIntOrDefault("TURN_RELAY_MIN_PORT", 49152),
 		RelayMaxPort:        envIntOrDefault("TURN_RELAY_MAX_PORT", 49252),
 		AllocationQuota:     envIntOrDefault("TURN_MAX_ALLOCATIONS_PER_SESSION", 4),
+		ControlGRPCAddress:  strings.TrimSpace(os.Getenv("TURN_CONTROL_GRPC_ADDRESS")),
+		ControlGRPCSecret:   strings.TrimSpace(os.Getenv("TURN_CONTROL_GRPC_SHARED_SECRET")),
 	}
 
 	if cfg.UDPListenAddress == "" {

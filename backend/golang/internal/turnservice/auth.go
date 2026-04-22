@@ -125,3 +125,20 @@ func ValidateTURNUsername(ctx context.Context, redisClient redis.UniversalClient
 		MatchedID: matchedID,
 	}, nil
 }
+
+func ValidationErrorReason(err error) string {
+	switch {
+	case errors.Is(err, ErrInvalidSessionIdentity):
+		return "invalid_session_identity"
+	case errors.Is(err, ErrSessionNotFound):
+		return "session_not_found"
+	case errors.Is(err, ErrSessionInactive):
+		return "session_inactive"
+	case errors.Is(err, ErrSessionUnmatched):
+		return "session_unmatched"
+	case errors.Is(err, ErrSessionBanned):
+		return "session_banned"
+	default:
+		return "internal_error"
+	}
+}

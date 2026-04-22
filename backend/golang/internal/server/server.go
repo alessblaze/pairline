@@ -20,7 +20,9 @@ package server
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -37,6 +39,7 @@ import (
 	"github.com/anish/omegle/backend/golang/internal/observability"
 	appredis "github.com/anish/omegle/backend/golang/internal/redis"
 	"github.com/anish/omegle/backend/golang/internal/storage"
+	"github.com/anish/omegle/backend/golang/internal/turncontrol"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -45,6 +48,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/grpc"
 	"gorm.io/gorm"
 )
 
@@ -63,26 +67,29 @@ type Server struct {
 }
 
 type Capabilities struct {
-	EnableAdminAPI      bool
-	EnableModerationAPI bool
-	EnableSignalingWS   bool
-	EnableTurnBootstrap bool
+	EnableAdminAPI       bool
+	EnableModerationAPI  bool
+	EnableSignalingWS    bool
+	EnableTurnBootstrap  bool
+	EnableTurnControlAPI bool
 }
 
 func NewServer() *Server {
 	return newServer(Capabilities{
-		EnableAdminAPI:      true,
-		EnableModerationAPI: true,
-		EnableSignalingWS:   true,
-		EnableTurnBootstrap: true,
+		EnableAdminAPI:       true,
+		EnableModerationAPI:  true,
+		EnableSignalingWS:    true,
+		EnableTurnBootstrap:  true,
+		EnableTurnControlAPI: true,
 	}, "pairline-go-service")
 }
 
 func NewPublicServer() *Server {
 	return newServer(Capabilities{
-		EnableModerationAPI: true,
-		EnableSignalingWS:   true,
-		EnableTurnBootstrap: true,
+		EnableModerationAPI:  true,
+		EnableSignalingWS:    true,
+		EnableTurnBootstrap:  true,
+		EnableTurnControlAPI: true,
 	}, "pairline-go-public")
 }
 
@@ -787,6 +794,39 @@ func AdminCSRFMiddleware(allowedOrigins []string) gin.HandlerFunc {
 }
 
 func (s *Server) Run(addr string) error {
+	var (
+		grpcServer   *grpc.Server
+		grpcListener net.Listener
+	)
+
+	if s.capabilities.EnableTurnControlAPI {
+		grpcAddr := strings.TrimSpace(os.Getenv("TURN_CONTROL_GRPC_LISTEN_ADDRESS"))
+		if grpcAddr != "" {
+			grpcSecret := strings.TrimSpace(os.Getenv("TURN_CONTROL_GRPC_SHARED_SECRET"))
+			if grpcSecret == "" {
+				return errors.New("TURN_CONTROL_GRPC_SHARED_SECRET is required when TURN_CONTROL_GRPC_LISTEN_ADDRESS is set")
+			}
+
+			listener, err := net.Listen("tcp", grpcAddr)
+			if err != nil {
+				return err
+			}
+
+			grpcListener = listener
+			grpcServer = grpc.NewServer(
+				grpc.ForceServerCodec(turncontrol.JSONCodec),
+				grpc.UnaryInterceptor(turncontrol.AuthUnaryServerInterceptor(grpcSecret)),
+			)
+			turncontrol.RegisterServiceServer(grpcServer, newTurnControlValidationServer(s.redis.GetClient()))
+			go func() {
+				log.Printf("Starting TURN control gRPC server on %s\n", grpcAddr)
+				if err := grpcServer.Serve(listener); err != nil {
+					log.Printf("TURN control gRPC server stopped with error: %v", err)
+				}
+			}()
+		}
+	}
+
 	server := &http.Server{
 		Addr:         addr,
 		Handler:      s.router,
@@ -798,6 +838,12 @@ func (s *Server) Run(addr string) error {
 	cleanup := func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		if grpcServer != nil {
+			grpcServer.GracefulStop()
+		}
+		if grpcListener != nil {
+			_ = grpcListener.Close()
+		}
 		if s.stopBackground != nil {
 			s.stopBackground()
 		}

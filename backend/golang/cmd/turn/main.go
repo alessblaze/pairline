@@ -20,20 +20,41 @@ func main() {
 	config.LoadDotEnvIfEnabled()
 
 	cfg := turnservice.LoadConfigFromEnv()
-	redisClient := appredis.NewClient()
-	defer func() {
-		if err := redisClient.Close(); err != nil {
-			log.Printf("Failed to close Redis: %v", err)
-		}
-	}()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
-	svc, err := turnservice.NewService(cfg, redisClient)
+	var (
+		validator      turnservice.Validator
+		validatorClose func() error
+		err            error
+	)
+
+	if cfg.ControlGRPCAddress != "" {
+		validator, validatorClose, err = turnservice.NewGRPCValidator(ctx, cfg)
+		if err != nil {
+			log.Fatal("TURN control-plane client failed to initialize:", err)
+		}
+		defer func() {
+			if validatorClose != nil {
+				if err := validatorClose(); err != nil {
+					log.Printf("Failed to close TURN control-plane client: %v", err)
+				}
+			}
+		}()
+	} else {
+		redisClient := appredis.NewClient()
+		defer func() {
+			if err := redisClient.Close(); err != nil {
+				log.Printf("Failed to close Redis: %v", err)
+			}
+		}()
+		validator = &redisValidator{redisClient: redisClient}
+	}
+
+	svc, err := turnservice.NewService(cfg, validator)
 	if err != nil {
 		log.Fatal("TURN relay failed to initialize:", err)
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	if cfg.HealthListenAddress != "" {
 		healthServer := &http.Server{
@@ -71,4 +92,12 @@ func main() {
 	}
 
 	log.Printf("TURN relay exited cleanly on signal from pid=%d", os.Getpid())
+}
+
+type redisValidator struct {
+	redisClient *appredis.Client
+}
+
+func (v *redisValidator) ValidateTURNUsername(ctx context.Context, username string) (turnservice.ValidationResult, error) {
+	return turnservice.ValidateTURNUsername(ctx, v.redisClient.GetClient(), username)
 }
