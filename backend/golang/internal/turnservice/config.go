@@ -1,6 +1,8 @@
 package turnservice
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"os"
@@ -182,7 +184,8 @@ func (c Config) AdvertisedTURNURLs() []string {
 }
 
 func BuildUsername(sessionID, sessionToken string) string {
-	return sessionID + integratedUsernameSeparator + sessionToken
+	tokenHash := sha256.Sum256([]byte(sessionToken))
+	return sessionID + integratedUsernameSeparator + hex.EncodeToString(tokenHash[:])
 }
 
 func ParseUsername(username string) (string, string, error) {
@@ -192,12 +195,23 @@ func ParseUsername(username string) (string, string, error) {
 	}
 
 	sessionID := strings.TrimSpace(parts[0])
-	sessionToken := strings.TrimSpace(parts[1])
-	if sessionID == "" || sessionToken == "" {
+	tokenDigest := strings.TrimSpace(parts[1])
+	if sessionID == "" || tokenDigest == "" {
 		return "", "", fmt.Errorf("invalid integrated TURN username")
 	}
+	if len(tokenDigest) != sha256.Size*2 {
+		return "", "", fmt.Errorf("invalid integrated TURN username")
+	}
+	for _, char := range tokenDigest {
+		switch {
+		case char >= '0' && char <= '9':
+		case char >= 'a' && char <= 'f':
+		default:
+			return "", "", fmt.Errorf("invalid integrated TURN username")
+		}
+	}
 
-	return sessionID, sessionToken, nil
+	return sessionID, tokenDigest, nil
 }
 
 func parseCSV(raw string) []string {

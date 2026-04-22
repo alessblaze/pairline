@@ -158,7 +158,7 @@ func (s *Service) authHandler(ra *pionturn.RequestAttributes) (string, []byte, b
 
 	result, err := ValidateTURNUsername(ctx, s.redis.GetClient(), ra.Username)
 	if err != nil {
-		log.Printf("TURN auth denied user=%q src=%v reason=%v", ra.Username, ra.SrcAddr, err)
+		log.Printf("TURN auth denied src=%v reason=%v", ra.SrcAddr, err)
 		return "", nil, false
 	}
 

@@ -76,10 +76,52 @@ func ValidateMatchedSession(ctx context.Context, redisClient redis.UniversalClie
 }
 
 func ValidateTURNUsername(ctx context.Context, redisClient redis.UniversalClient, username string) (ValidationResult, error) {
-	sessionID, sessionToken, err := ParseUsername(username)
+	sessionID, tokenDigest, err := ParseUsername(username)
 	if err != nil {
 		return ValidationResult{}, fmt.Errorf("%w: %v", ErrInvalidSessionIdentity, err)
 	}
 
-	return ValidateMatchedSession(ctx, redisClient, sessionID, sessionToken)
+	if sessionID == "" || tokenDigest == "" {
+		return ValidationResult{}, ErrInvalidSessionIdentity
+	}
+
+	route, err := appredis.ResolveSessionRoute(ctx, redisClient, sessionID)
+	if err != nil {
+		return ValidationResult{}, ErrSessionNotFound
+	}
+
+	expectedToken, err := redisClient.Get(ctx, appredis.SessionTokenKey(sessionID, route)).Result()
+	if err != nil || expectedToken == "" {
+		return ValidationResult{}, ErrSessionInactive
+	}
+
+	if subtle.ConstantTimeCompare([]byte(expectedToken), []byte(tokenDigest)) != 1 {
+		return ValidationResult{}, ErrInvalidSessionIdentity
+	}
+
+	sessionExists, err := redisClient.Exists(ctx, appredis.SessionDataKey(sessionID, route)).Result()
+	if err != nil || sessionExists == 0 {
+		return ValidationResult{}, ErrSessionInactive
+	}
+
+	if banned, err := redisClient.Exists(ctx, appredis.BanSessionKey(sessionID)).Result(); err == nil && banned > 0 {
+		return ValidationResult{}, ErrSessionBanned
+	}
+
+	if sessionIP, err := redisClient.Get(ctx, appredis.SessionIPKey(sessionID, route)).Result(); err == nil && strings.TrimSpace(sessionIP) != "" {
+		if banned, banErr := redisClient.Exists(ctx, appredis.BanIPKey(sessionIP)).Result(); banErr == nil && banned > 0 {
+			return ValidationResult{}, ErrSessionBanned
+		}
+	}
+
+	matchedID, err := redisClient.Get(ctx, appredis.MatchKey(sessionID, route)).Result()
+	if err != nil || strings.TrimSpace(matchedID) == "" {
+		return ValidationResult{}, ErrSessionUnmatched
+	}
+
+	return ValidationResult{
+		SessionID: sessionID,
+		Route:     route,
+		MatchedID: matchedID,
+	}, nil
 }

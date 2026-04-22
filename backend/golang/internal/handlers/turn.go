@@ -115,7 +115,7 @@ func GetTURNCredentials(redisClient *internalredis.Client) gin.HandlerFunc {
 				c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid session"})
 				return
 			}
-		} else if !verifySessionToken(ctx, redisClient.GetClient(), sessionID, sessionToken) {
+		} else if !verifySessionTokenWebRTC(ctx, redisClient.GetClient(), sessionID, sessionToken) {
 			span.SetStatus(codes.Error, "invalid session")
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid session"})
 			return

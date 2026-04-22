@@ -1,6 +1,11 @@
 package turnservice
 
-import "testing"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"strings"
+	"testing"
+)
 
 func TestParseModeDefaultsToCloudflare(t *testing.T) {
 	if got := ParseMode(""); got != ModeCloudflare {
@@ -26,7 +31,9 @@ func TestBootstrapResponseIntegratedIncludesRelayCredentials(t *testing.T) {
 	if len(response.IceServers) != 2 {
 		t.Fatalf("ice server count = %d, want 2", len(response.IceServers))
 	}
-	if response.IceServers[1].Username != "session-1|token-1" {
+	expectedHash := sha256.Sum256([]byte("token-1"))
+	expectedUsername := "session-1|" + hex.EncodeToString(expectedHash[:])
+	if response.IceServers[1].Username != expectedUsername {
 		t.Fatalf("username = %q", response.IceServers[1].Username)
 	}
 	if response.IceServers[1].Credential != "pairline-test" {
@@ -35,12 +42,21 @@ func TestBootstrapResponseIntegratedIncludesRelayCredentials(t *testing.T) {
 }
 
 func TestParseUsername(t *testing.T) {
-	sessionID, sessionToken, err := ParseUsername("abc|def")
+	tokenHash := sha256.Sum256([]byte("def"))
+	username := "abc|" + hex.EncodeToString(tokenHash[:])
+	sessionID, tokenDigest, err := ParseUsername(username)
 	if err != nil {
 		t.Fatalf("ParseUsername returned error: %v", err)
 	}
-	if sessionID != "abc" || sessionToken != "def" {
-		t.Fatalf("ParseUsername returned %q %q", sessionID, sessionToken)
+	if sessionID != "abc" || tokenDigest != hex.EncodeToString(tokenHash[:]) {
+		t.Fatalf("ParseUsername returned %q %q", sessionID, tokenDigest)
+	}
+}
+
+func TestBuildUsernameDoesNotExposeRawToken(t *testing.T) {
+	username := BuildUsername("session-1", "token-1")
+	if strings.Contains(username, "token-1") {
+		t.Fatalf("BuildUsername() leaked raw token in %q", username)
 	}
 }
 

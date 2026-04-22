@@ -67,14 +67,14 @@ Internal app ports:
 - `golang-public-1` -> `8081`
 - `golang-public-2` -> `8081`
 - `golang-admin` -> `8082`
-- `golang-turn-1` -> TURN `3478` plus relay range `49152-49252`, health `8090`
-- `golang-turn-2` -> TURN `3479` plus relay range `49253-49353`, health `8091`
+- `golang-turn-1` -> TURN `53478` plus relay range `55000-55099`, health `8090`
+- `golang-turn-2` -> TURN `53479` plus relay range `55100-55199`, health `8091`
 - `nginx` -> exposed on host `8080` and `8081`
 
 Direct TURN ingress is exposed on the host for local browser testing:
 
-- `127.0.0.1:3478` UDP/TCP via `golang-turn-1`
-- `127.0.0.1:3479` UDP/TCP via `golang-turn-2`
+- `127.0.0.1:53478` UDP/TCP via `golang-turn-1`
+- `127.0.0.1:53479` UDP/TCP via `golang-turn-2`
 
 All Go services share the same Redis Cluster and Postgres backing services.
 

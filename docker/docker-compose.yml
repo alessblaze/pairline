@@ -560,7 +560,7 @@ services:
       TURN_REALM: pairline
       TURN_STATIC_AUTH_SECRET: pairline-dev-turn-session
       TURN_STUN_SERVERS: stun:stun.cloudflare.com:3478,stun:stun.l.google.com:19302
-      TURN_SERVER_URLS: turn:127.0.0.1:3478?transport=udp,turn:127.0.0.1:3478?transport=tcp,turn:127.0.0.1:3479?transport=udp,turn:127.0.0.1:3479?transport=tcp
+      TURN_SERVER_URLS: turn:127.0.0.1:53478?transport=udp,turn:127.0.0.1:53478?transport=tcp,turn:127.0.0.1:53479?transport=udp,turn:127.0.0.1:53479?transport=tcp
     networks:
       pairline_cluster:
         ipv4_address: 172.30.0.40
@@ -610,7 +610,7 @@ services:
       TURN_REALM: pairline
       TURN_STATIC_AUTH_SECRET: pairline-dev-turn-session
       TURN_STUN_SERVERS: stun:stun.cloudflare.com:3478,stun:stun.l.google.com:19302
-      TURN_SERVER_URLS: turn:127.0.0.1:3478?transport=udp,turn:127.0.0.1:3478?transport=tcp,turn:127.0.0.1:3479?transport=udp,turn:127.0.0.1:3479?transport=tcp
+      TURN_SERVER_URLS: turn:127.0.0.1:53478?transport=udp,turn:127.0.0.1:53478?transport=tcp,turn:127.0.0.1:53479?transport=udp,turn:127.0.0.1:53479?transport=tcp
     networks:
       pairline_cluster:
         ipv4_address: 172.30.0.42
@@ -705,17 +705,17 @@ services:
       TURN_REALM: pairline
       TURN_STATIC_AUTH_SECRET: pairline-dev-turn-session
       TURN_PUBLIC_IP: 127.0.0.1
-      TURN_UDP_LISTEN_ADDRESS: :3478
-      TURN_TCP_LISTEN_ADDRESS: :3478
+      TURN_UDP_LISTEN_ADDRESS: :53478
+      TURN_TCP_LISTEN_ADDRESS: :53478
       TURN_HEALTH_LISTEN_ADDRESS: :8090
       TURN_RELAY_ADDRESS: 0.0.0.0
-      TURN_RELAY_MIN_PORT: "49152"
-      TURN_RELAY_MAX_PORT: "49252"
+      TURN_RELAY_MIN_PORT: "55000"
+      TURN_RELAY_MAX_PORT: "55099"
     ports:
-      - "3478:3478/udp"
-      - "3478:3478/tcp"
-      - "49152-49252:49152-49252/udp"
-      - "49152-49252:49152-49252/tcp"
+      - "53478:53478/udp"
+      - "53478:53478/tcp"
+      - "55000-55099:55000-55099/udp"
+      - "55000-55099:55000-55099/tcp"
     networks:
       pairline_cluster:
         ipv4_address: 172.30.0.43
@@ -749,17 +749,17 @@ services:
       TURN_REALM: pairline
       TURN_STATIC_AUTH_SECRET: pairline-dev-turn-session
       TURN_PUBLIC_IP: 127.0.0.1
-      TURN_UDP_LISTEN_ADDRESS: :3479
-      TURN_TCP_LISTEN_ADDRESS: :3479
+      TURN_UDP_LISTEN_ADDRESS: :53479
+      TURN_TCP_LISTEN_ADDRESS: :53479
       TURN_HEALTH_LISTEN_ADDRESS: :8091
       TURN_RELAY_ADDRESS: 0.0.0.0
-      TURN_RELAY_MIN_PORT: "49253"
-      TURN_RELAY_MAX_PORT: "49353"
+      TURN_RELAY_MIN_PORT: "55100"
+      TURN_RELAY_MAX_PORT: "55199"
     ports:
-      - "3479:3479/udp"
-      - "3479:3479/tcp"
-      - "49253-49353:49253-49353/udp"
-      - "49253-49353:49253-49353/tcp"
+      - "53479:53479/udp"
+      - "53479:53479/tcp"
+      - "55100-55199:55100-55199/udp"
+      - "55100-55199:55100-55199/tcp"
     networks:
       pairline_cluster:
         ipv4_address: 172.30.0.44
