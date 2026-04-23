@@ -47,6 +47,10 @@ var (
 	webRTCDisconnectsTotal   metric.Int64Counter
 	turnRequestsTotal        metric.Int64Counter
 	turnRequestDuration      metric.Float64Histogram
+	turnRelayAuthTotal       metric.Int64Counter
+	turnRelayAuthDuration    metric.Float64Histogram
+	turnRelayQuotaTotal      metric.Int64Counter
+	turnRelayReleaseTotal    metric.Int64Counter
 	banSyncDuration          metric.Float64Histogram
 	banSyncKeysTotal         metric.Int64Counter
 	runtimeHeapAlloc         metric.Int64ObservableGauge
@@ -68,6 +72,12 @@ var (
 	runtimeCPULastTotalSecs float64
 	runtimeCPULastUsagePct  float64
 )
+
+func init() {
+	if err := initInstruments(); err != nil {
+		panic("observability: failed to initialize noop instruments: " + err.Error())
+	}
+}
 
 func InitMetrics(ctx context.Context, serviceName string) (func(context.Context) error, error) {
 	if !metricsEnabled() {
@@ -156,6 +166,26 @@ func initInstruments() error {
 	}
 
 	banSyncKeysTotal, err = meter.Int64Counter("pairline.ban_sync.keys_total")
+	if err != nil {
+		return err
+	}
+
+	turnRelayAuthTotal, err = meter.Int64Counter("pairline.turn.relay.auth_total")
+	if err != nil {
+		return err
+	}
+
+	turnRelayAuthDuration, err = meter.Float64Histogram("pairline.turn.relay.auth.duration_ms", metric.WithUnit("ms"))
+	if err != nil {
+		return err
+	}
+
+	turnRelayQuotaTotal, err = meter.Int64Counter("pairline.turn.relay.quota_total")
+	if err != nil {
+		return err
+	}
+
+	turnRelayReleaseTotal, err = meter.Int64Counter("pairline.turn.relay.release_total")
 	if err != nil {
 		return err
 	}
@@ -301,6 +331,29 @@ func RecordTURNRequest(ctx context.Context, duration time.Duration, outcome stri
 func RecordBanSync(ctx context.Context, duration time.Duration, keys int) {
 	banSyncDuration.Record(ctx, durationMilliseconds(duration))
 	banSyncKeysTotal.Add(ctx, int64(keys))
+}
+
+func RecordTURNRelayAuth(ctx context.Context, duration time.Duration, allowed bool, denialReason string) {
+	attrs := metric.WithAttributes(
+		attribute.Bool("turn.relay.allowed", allowed),
+		attribute.String("turn.relay.denial_reason", denialReason),
+	)
+	turnRelayAuthTotal.Add(ctx, 1, attrs)
+	turnRelayAuthDuration.Record(ctx, durationMilliseconds(duration), attrs)
+}
+
+func RecordTURNRelayQuota(ctx context.Context, allowed bool) {
+	attrs := metric.WithAttributes(
+		attribute.Bool("turn.relay.quota.allowed", allowed),
+	)
+	turnRelayQuotaTotal.Add(ctx, 1, attrs)
+}
+
+func RecordTURNRelayRelease(ctx context.Context, success bool) {
+	attrs := metric.WithAttributes(
+		attribute.Bool("turn.relay.release.success", success),
+	)
+	turnRelayReleaseTotal.Add(ctx, 1, attrs)
 }
 
 func durationMilliseconds(duration time.Duration) float64 {

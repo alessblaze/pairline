@@ -194,6 +194,7 @@ This file focuses on **what each variable changes in runtime behavior**, not jus
 - **`TURN_TCP_LISTEN_ADDRESS`** (default: unset): optional TCP TURN listener.
 - **`TURN_TLS_LISTEN_ADDRESS`** (default: unset): optional TLS/TURNS listener.
 - **`TURN_HEALTH_LISTEN_ADDRESS`** (default: unset): optional internal HTTP bind for the turn-only binary health endpoint (`/health`), useful for Docker infra-health checks.
+- **`GOLANG_TURN_SHARED_SECRET`** (default: unset): optional shared secret for the turn-only `/health` endpoint. When set, callers must send it as `x-shared-secret`; the admin binary must use the same value when polling `ADMIN_HEALTH_TURN_URLS`.
 - **`TURN_TLS_CERT_FILE`** / **`TURN_TLS_KEY_FILE`**: required when `TURN_TLS_LISTEN_ADDRESS` is set.
 - **`TURN_RELAY_MIN_PORT`** / **`TURN_RELAY_MAX_PORT`** (defaults: `49152` / `49252`): relay allocation port range for the integrated relay.
 - **`TURN_MAX_ALLOCATIONS_PER_SESSION`** (default: `4`): coarse integrated relay allocation cap used to avoid runaway allocation growth.
@@ -216,12 +217,14 @@ When the TURN relay runs as a standalone process (the `cmd/turn` binary), it can
 - **`ADMIN_HEALTH_PHOENIX_URLS`** (default: unset in code): comma-separated Phoenix health endpoints the Go admin service should poll for topology and node details. In Docker, set this explicitly on the admin service.
 - **`ADMIN_HEALTH_GO_URLS`** (default: unset in code): comma-separated Go service health endpoints the admin dashboard should poll. In Docker, set this explicitly on the admin service.
 - **`ADMIN_HEALTH_TURN_URLS`** (default: unset in code): optional comma-separated turn-only health endpoints the admin dashboard should poll alongside the rest of the Go fleet.
+- If `ADMIN_HEALTH_TURN_URLS` points at TURN health endpoints protected by `GOLANG_TURN_SHARED_SECRET`, set the same secret on the admin binary so it can attach the required `x-shared-secret` header.
 - **`OTEL_COLLECTOR_HEALTH_URL`** (default: unset in code): health endpoint used to confirm the OTLP collector is reachable from the admin service. In Docker, set this explicitly on the admin service.
 
 ### OpenTelemetry tracing
 - **`OTEL_EXPORTER_OTLP_ENDPOINT`** (default: unset): base OTLP endpoint for traces and metrics, typically your collector such as `http://otel-collector:4318`. When unset, Go telemetry stays disabled.
 - **`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`** (default: unset): trace-specific endpoint, for example `http://otel-collector:4318/v1/traces`. This is useful when your collector uses a non-default path.
 - **`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`** (default: unset): metric-specific endpoint, for example `http://otel-collector:4318/v1/metrics`.
+- **`OTEL_EXPORTER_OTLP_HEADERS`** (default: unset): optional comma-separated OTLP export headers such as `Authorization=Bearer <token>`. Use this when your collector requires authenticated trace and metric ingestion.
 - If you send traces directly to Jaeger, prefer `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` instead of pointing the shared base endpoint at Jaeger, because metrics should still go to an OTLP collector.
 - **`OTEL_EXPORTER_OTLP_INSECURE`** (default: exporter default; common dev value: `true`): use plaintext HTTP for local/dev collectors.
 - **`OTEL_ENVIRONMENT`** (default: `development`): emitted as `deployment.environment` on spans.

@@ -103,12 +103,51 @@ The TURN service is configured via environment variables.
 
 ## Observability
 
-The TURN worker emits OpenTelemetry traces and Prometheus metrics (see `OTEL_EXPORTER_OTLP_ENDPOINT`).
+The TURN relay initializes OpenTelemetry tracing and metrics on startup via the shared `observability` package, registering as service name `pairline-go-turn`.
 
-Key metrics:
-- Allocation limits and usage
-- Denial categories (unmatched session, banned session, invalid token)
-- Transport mix (UDP, TCP, TLS)
-- Bytes relayed
+### Trace Spans
 
-*Note on Docker Host Networking: When running the TURN worker in Docker with `network_mode: host`, the worker cannot resolve internal Docker bridge DNS names (like `otel-collector`). The `OTEL_EXPORTER_OTLP_ENDPOINT` must be set to `http://127.0.0.1:4318` assuming the collector publishes that port to the host.*
+The relay emits distributed traces for every critical decision point in the TURN data path:
+
+| Span Name | Kind | Description |
+|-----------|------|-------------|
+| `turn.auth` | Server | Fires on every STUN/TURN auth request. Records the `turn.username`, `turn.src_addr`, and on success the resolved `turn.session_id` and `turn.matched_id`. On denial, the `turn.auth.denial_reason` attribute is set and the span status is `Error`. |
+| `turn.quota.reserve` | Internal | Fires when the allocation quota handler reserves a slot. Records `turn.username`, `turn.src_addr`, `turn.allocation_quota`, and the boolean `turn.quota.allowed` result. |
+| `turn.allocation.release` | Internal | Fires when a TURN allocation is deleted (client disconnect or timeout). Records the `turn.username` and release success/failure. |
+
+These spans propagate context through the gRPC control-plane call, so a single `turn.auth` span in Jaeger will show the full chain: relay → Nginx → `cmd/public` → Redis.
+
+### Relay Metrics
+
+The relay records the following metrics via the shared `observability` package:
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `pairline.turn.relay.auth_total` | Counter | Total auth attempts, labeled by `turn.relay.allowed` and `turn.relay.denial_reason`. |
+| `pairline.turn.relay.auth.duration_ms` | Histogram | Latency of auth validation calls (includes gRPC round-trip to control plane). |
+| `pairline.turn.relay.quota_total` | Counter | Total quota reservation attempts, labeled by `turn.relay.quota.allowed`. |
+| `pairline.turn.relay.release_total` | Counter | Total allocation releases, labeled by `turn.relay.release.success`. |
+
+Standard runtime metrics (`pairline.runtime.*`) for heap, goroutines, CPU, and GC are also emitted.
+
+### Health Endpoint Authentication
+
+The TURN relay health endpoint (`/health`) is protected by `GOLANG_TURN_SHARED_SECRET`. When this environment variable is set, any request must include a matching `x-shared-secret` header or receive a `401 Unauthorized` response.
+
+The admin dashboard reads `GOLANG_TURN_SHARED_SECRET` from its own environment and attaches it automatically when polling `ADMIN_HEALTH_TURN_URLS`.
+
+### OTLP Export Authentication
+
+All services (including TURN workers) authenticate their trace and metric exports to the OpenTelemetry Collector using bearer token authentication.
+
+- **Collector side:** The `bearertokenauth` extension is configured on the OTLP gRPC (`:4317`) and HTTP (`:4318`) receivers. The expected token is read from `OTEL_COLLECTOR_SHARED_SECRET`.
+- **Client side:** Each service sets `OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer <token>`. The Go and Elixir OpenTelemetry SDKs parse this standard environment variable and attach the header to every export payload automatically.
+
+### Host Networking Caveat
+
+When running the TURN worker in Docker with `network_mode: host`, the worker cannot resolve internal Docker bridge DNS names (like `otel-collector`). There are two deployment options:
+
+1. **Expose the collector OTLP ports to localhost:** Add `127.0.0.1:4318:4318` to the collector's `ports:` mapping and set `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318` on the TURN workers. If you also have host-side OTLP/gRPC clients, expose `127.0.0.1:4317:4317` on the collector too. This is safe because the collector's `bearertokenauth` extension rejects unauthenticated requests.
+2. **Route through an external tunnel:** Point `OTEL_EXPORTER_OTLP_ENDPOINT` at an authenticated external URL (e.g. a Cloudflare tunnel fronting the collector). In this case, remove `OTEL_EXPORTER_OTLP_INSECURE=true` to enforce strict TLS verification.
+
+The checked-in local `docker/docker-compose.yml` uses option 1 for the host-network TURN workers.

@@ -11,10 +11,17 @@ import (
 	"time"
 
 	appredis "github.com/anish/omegle/backend/golang/internal/redis"
+	"github.com/anish/omegle/backend/golang/internal/observability"
 	"github.com/anish/omegle/backend/golang/internal/turncontrol"
 	pionturn "github.com/pion/turn/v5"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 )
+
+var turnTracer = otel.Tracer("pairline/turn")
 
 type Service struct {
 	config      Config
@@ -181,8 +188,19 @@ func NewService(config Config, validator Validator) (*Service, error) {
 				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 				defer cancel()
 
+				ctx, span := turnTracer.Start(ctx, "turn.allocation.release",
+					trace.WithSpanKind(trace.SpanKindInternal),
+					trace.WithAttributes(attribute.String("turn.username", userID)),
+				)
+				defer span.End()
+
 				if err := svc.validator.ReleaseTURNAllocation(ctx, userID); err != nil {
+					span.RecordError(err)
+					span.SetStatus(codes.Error, err.Error())
+					observability.RecordTURNRelayRelease(ctx, false)
 					log.Printf("TURN allocation release failed user=%q reason=%v", userID, err)
+				} else {
+					observability.RecordTURNRelayRelease(ctx, true)
 				}
 			},
 		},
@@ -231,12 +249,31 @@ func (s *Service) authHandler(ra *pionturn.RequestAttributes) (string, []byte, b
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
+	startedAt := time.Now()
+	ctx, span := turnTracer.Start(ctx, "turn.auth",
+		trace.WithSpanKind(trace.SpanKindServer),
+		trace.WithAttributes(
+			attribute.String("turn.username", ra.Username),
+			attribute.String("turn.src_addr", ra.SrcAddr.String()),
+		),
+	)
+	defer span.End()
+
 	result, err := s.validator.ValidateTURNUsername(ctx, ra.Username)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		span.SetAttributes(attribute.String("turn.auth.denial_reason", err.Error()))
+		observability.RecordTURNRelayAuth(ctx, time.Since(startedAt), false, err.Error())
 		log.Printf("TURN auth denied src=%v reason=%v", ra.SrcAddr, err)
 		return "", nil, false
 	}
 
+	span.SetAttributes(
+		attribute.String("turn.session_id", result.SessionID),
+		attribute.String("turn.matched_id", result.MatchedID),
+	)
+	observability.RecordTURNRelayAuth(ctx, time.Since(startedAt), true, "")
 	log.Printf("TURN auth allowed session=%s matched=%s src=%v", result.SessionID, result.MatchedID, ra.SrcAddr)
 	return ra.Username, pionturn.GenerateAuthKey(ra.Username, ra.Realm, s.config.Credential), true
 }
@@ -249,11 +286,27 @@ func (s *Service) quotaHandler(username, realm string, srcAddr net.Addr) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
+	ctx, span := turnTracer.Start(ctx, "turn.quota.reserve",
+		trace.WithSpanKind(trace.SpanKindInternal),
+		trace.WithAttributes(
+			attribute.String("turn.username", username),
+			attribute.String("turn.src_addr", srcAddr.String()),
+			attribute.Int("turn.allocation_quota", s.config.AllocationQuota),
+		),
+	)
+	defer span.End()
+
 	allowed, err := s.validator.ReserveTURNAllocation(ctx, username, s.config.AllocationQuota)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		observability.RecordTURNRelayQuota(ctx, false)
 		log.Printf("TURN allocation quota validation failed user=%q src=%v reason=%v", username, srcAddr, err)
 		return false
 	}
+
+	span.SetAttributes(attribute.Bool("turn.quota.allowed", allowed))
+	observability.RecordTURNRelayQuota(ctx, allowed)
 	return allowed
 }
 

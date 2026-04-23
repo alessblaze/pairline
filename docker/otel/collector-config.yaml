@@ -3,10 +3,17 @@ receivers:
     protocols:
       grpc:
         endpoint: 0.0.0.0:4317
+        auth:
+          authenticator: bearertokenauth
       http:
         endpoint: 0.0.0.0:4318
+        auth:
+          authenticator: bearertokenauth
 
 extensions:
+  bearertokenauth:
+    scheme: "Bearer"
+    token: "${env:OTEL_COLLECTOR_SHARED_SECRET}"
   health_check:
     endpoint: 0.0.0.0:13133
 
@@ -39,7 +46,7 @@ processors:
     limit_mib: 512
 
 service:
-  extensions: [health_check]
+  extensions: [bearertokenauth, health_check]
   pipelines:
     metrics:
       receivers: [otlp, spanmetrics]

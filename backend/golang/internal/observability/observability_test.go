@@ -1,6 +1,10 @@
 package observability
 
-import "testing"
+import (
+	"context"
+	"testing"
+	"time"
+)
 
 func TestMetricsEnabledUsesMetricsOrGenericEndpoint(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
@@ -57,4 +61,35 @@ func TestEnvOrDefaultAndServiceInstanceID(t *testing.T) {
 	if got := serviceInstanceID(); got != "instance-123" {
 		t.Fatalf("serviceInstanceID() = %q, want %q", got, "instance-123")
 	}
+}
+
+func TestRecordHelpersDoNotPanicWithoutMetricsExporter(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+	t.Setenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "")
+
+	ctx := context.Background()
+
+	assertNotPanics(t, func() {
+		RecordHTTPRequest(ctx, "GET", "/health", 200, 10*time.Millisecond)
+		RecordTURNRequest(ctx, 10*time.Millisecond, "success", false)
+		RecordTURNRelayAuth(ctx, 10*time.Millisecond, true, "")
+		RecordTURNRelayQuota(ctx, true)
+		RecordTURNRelayRelease(ctx, true)
+		AddHTTPInflight(ctx, 1, "GET", "/health")
+		AddWebRTCConnection(ctx, 1)
+		RecordWebRTCConnectionClosed(ctx, 10*time.Millisecond, "test")
+		RecordBanSync(ctx, 10*time.Millisecond, 1)
+	})
+}
+
+func assertNotPanics(t *testing.T, fn func()) {
+	t.Helper()
+
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("unexpected panic: %v", recovered)
+		}
+	}()
+
+	fn()
 }

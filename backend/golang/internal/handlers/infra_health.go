@@ -455,8 +455,8 @@ func fetchConfiguredServiceHealth(ctx context.Context) []RemoteServiceHealth {
 	}
 
 	goTargets := parseURLListEnv("ADMIN_HEALTH_GO_URLS", nil)
-	goTargets = append(goTargets, parseURLListEnv("ADMIN_HEALTH_TURN_URLS", nil)...)
-	if len(goTargets) == 0 {
+	turnTargets := parseURLListEnv("ADMIN_HEALTH_TURN_URLS", nil)
+	if len(goTargets) == 0 && len(turnTargets) == 0 {
 		targets = append(targets, probeTarget{
 			name:   "ADMIN_HEALTH_GO_URLS,ADMIN_HEALTH_TURN_URLS",
 			kind:   "config",
@@ -465,9 +465,24 @@ func fetchConfiguredServiceHealth(ctx context.Context) []RemoteServiceHealth {
 	}
 	for _, targetURL := range goTargets {
 		targets = append(targets, probeTarget{
-			name:   inferServiceName(targetURL),
-			kind:   "go",
-			rawURL: targetURL,
+			name:    inferServiceName(targetURL),
+			kind:    "go",
+			rawURL:  targetURL,
+			headers: headers,
+		})
+	}
+
+	turnSecret := strings.TrimSpace(os.Getenv("GOLANG_TURN_SHARED_SECRET"))
+	turnHeaders := map[string]string{}
+	if turnSecret != "" {
+		turnHeaders["x-shared-secret"] = turnSecret
+	}
+	for _, targetURL := range turnTargets {
+		targets = append(targets, probeTarget{
+			name:    inferServiceName(targetURL),
+			kind:    "go",
+			rawURL:  targetURL,
+			headers: turnHeaders,
 		})
 	}
 

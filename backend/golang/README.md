@@ -73,7 +73,7 @@ Go services are Redis Cluster only and require `REDIS_CLUSTER_NODES`.
 `REDIS_POOL_SIZE` optionally overrides the go-redis cluster pool size per node when you need predictable tuning across deployments.
 Go startup schema work is now serialized with a Postgres advisory lock so concurrent combined/public/admin boots do not all run migrations at once.
 Set `IGNORE_DOTENV=1` (or any non-empty value) to skip loading a local `.env` file even if one is present in the working directory.
-`ADMIN_HEALTH_PHOENIX_URLS`, `ADMIN_HEALTH_GO_URLS`, `ADMIN_HEALTH_TURN_URLS`, and `OTEL_COLLECTOR_HEALTH_URL` are used by the admin binary to build the authenticated infra-health summary consumed by the admin dashboard.
+`ADMIN_HEALTH_PHOENIX_URLS`, `ADMIN_HEALTH_GO_URLS`, `ADMIN_HEALTH_TURN_URLS`, and `OTEL_COLLECTOR_HEALTH_URL` are used by the admin binary to build the authenticated infra-health summary consumed by the admin dashboard. If the turn-only `/health` endpoints are protected, set the same `GOLANG_TURN_SHARED_SECRET` on the admin and turn-only services.
 `TURN_MODE` controls relay behavior across the public bootstrap endpoint and the turn-only binary:
 - `cloudflare` keeps the existing Cloudflare Calls credential flow.
 - `integrated` returns Pairline-managed TURN credentials from `/api/v1/webrtc/turn` and enables `go run ./cmd/turn`.

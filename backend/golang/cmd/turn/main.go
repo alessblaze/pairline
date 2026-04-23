@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/anish/omegle/backend/golang/internal/config"
+	"github.com/anish/omegle/backend/golang/internal/observability"
 	appredis "github.com/anish/omegle/backend/golang/internal/redis"
 	"github.com/anish/omegle/backend/golang/internal/turnservice"
 )
@@ -28,6 +29,34 @@ func main() {
 		validatorClose func() error
 		err            error
 	)
+
+	traceShutdown := func(context.Context) error { return nil }
+	if shutdown, initErr := observability.InitTracing(ctx, "pairline-go-turn"); initErr != nil {
+		log.Printf("Failed to initialize tracing for TURN relay: %v", initErr)
+	} else {
+		traceShutdown = shutdown
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := traceShutdown(shutdownCtx); err != nil {
+			log.Printf("Error shutting down TURN tracing: %v", err)
+		}
+	}()
+
+	metricsShutdown := func(context.Context) error { return nil }
+	if shutdown, initErr := observability.InitMetrics(ctx, "pairline-go-turn"); initErr != nil {
+		log.Printf("Failed to initialize metrics for TURN relay: %v", initErr)
+	} else {
+		metricsShutdown = shutdown
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := metricsShutdown(shutdownCtx); err != nil {
+			log.Printf("Error shutting down TURN metrics: %v", err)
+		}
+	}()
 
 	if cfg.ControlGRPCAddress != "" {
 		validator, validatorClose, err = turnservice.NewGRPCValidator(ctx, cfg)
@@ -57,6 +86,7 @@ func main() {
 	}
 
 	if cfg.HealthListenAddress != "" {
+		sharedSecret := os.Getenv("GOLANG_TURN_SHARED_SECRET")
 		healthServer := &http.Server{
 			Addr: cfg.HealthListenAddress,
 			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -64,6 +94,12 @@ func main() {
 					http.NotFound(w, r)
 					return
 				}
+
+				if sharedSecret != "" && r.Header.Get("x-shared-secret") != sharedSecret {
+					http.Error(w, "Unauthorized", http.StatusUnauthorized)
+					return
+				}
+
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write([]byte(`{"status":"ok","service":"pairline-go-turn","timestamp":` + strconv.FormatInt(time.Now().UnixMilli(), 10) + `}`))
 			}),
