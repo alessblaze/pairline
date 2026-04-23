@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	appredis "github.com/anish/omegle/backend/golang/internal/redis"
 	"github.com/anish/omegle/backend/golang/internal/observability"
+	appredis "github.com/anish/omegle/backend/golang/internal/redis"
 	"github.com/anish/omegle/backend/golang/internal/turncontrol"
 	pionturn "github.com/pion/turn/v5"
 	"go.opentelemetry.io/otel"
@@ -265,7 +265,7 @@ func (s *Service) authHandler(ra *pionturn.RequestAttributes) (string, []byte, b
 		span.SetStatus(codes.Error, err.Error())
 		span.SetAttributes(attribute.String("turn.auth.denial_reason", err.Error()))
 		observability.RecordTURNRelayAuth(ctx, time.Since(startedAt), false, err.Error())
-		log.Printf("TURN auth denied src=%v reason=%v", ra.SrcAddr, err)
+		log.Printf("TURN auth denied peer_addr=%v reason=%v", ra.SrcAddr, err)
 		return "", nil, false
 	}
 
@@ -274,7 +274,7 @@ func (s *Service) authHandler(ra *pionturn.RequestAttributes) (string, []byte, b
 		attribute.String("turn.matched_id", result.MatchedID),
 	)
 	observability.RecordTURNRelayAuth(ctx, time.Since(startedAt), true, "")
-	log.Printf("TURN auth allowed session=%s matched=%s src=%v", result.SessionID, result.MatchedID, ra.SrcAddr)
+	log.Printf("TURN auth allowed session=%s matched=%s peer_addr=%v", result.SessionID, result.MatchedID, ra.SrcAddr)
 	return ra.Username, pionturn.GenerateAuthKey(ra.Username, ra.Realm, s.config.Credential), true
 }
 
@@ -301,7 +301,7 @@ func (s *Service) quotaHandler(username, realm string, srcAddr net.Addr) bool {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		observability.RecordTURNRelayQuota(ctx, false)
-		log.Printf("TURN allocation quota validation failed user=%q src=%v reason=%v", username, srcAddr, err)
+		log.Printf("TURN allocation quota validation failed user=%q peer_addr=%v reason=%v", username, srcAddr, err)
 		return false
 	}
 
