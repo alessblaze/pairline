@@ -2,6 +2,7 @@ package turnservice
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/anish/omegle/backend/golang/internal/turncontrol"
@@ -38,6 +39,7 @@ func TestGRPCValidatorValidateTURNUsername(t *testing.T) {
 			SessionID: "session-1",
 			Route:     "video|3",
 			MatchedID: "session-2",
+			SessionIP: "203.0.113.24",
 		},
 	}}
 
@@ -53,6 +55,48 @@ func TestGRPCValidatorValidateTURNUsername(t *testing.T) {
 	}
 	if result.MatchedID != "session-2" {
 		t.Fatalf("MatchedID = %q, want %q", result.MatchedID, "session-2")
+	}
+	if result.SessionIP != "203.0.113.24" {
+		t.Fatalf("SessionIP = %q, want %q", result.SessionIP, "203.0.113.24")
+	}
+}
+
+func TestGRPCValidatorValidateTURNUsernameIncludesSessionIPOnDeniedResponse(t *testing.T) {
+	validator := &grpcValidator{client: &fakeTurnControlClient{
+		response: &turncontrol.ValidationResponse{
+			Allowed:   false,
+			Reason:    "session_banned",
+			SessionIP: "203.0.113.24",
+		},
+	}}
+
+	_, err := validator.ValidateTURNUsername(context.Background(), "session-1|digest")
+	if err == nil {
+		t.Fatal("ValidateTURNUsername() error = nil, want banned error")
+	}
+	if !errors.Is(err, ErrSessionBanned) {
+		t.Fatalf("ValidateTURNUsername() error = %v, want %v", err, ErrSessionBanned)
+	}
+	if got := ValidationErrorSessionIP(err); got != "203.0.113.24" {
+		t.Fatalf("ValidationErrorSessionIP() = %q, want %q", got, "203.0.113.24")
+	}
+}
+
+func TestGRPCValidatorValidateTURNUsernamePreservesSessionIPOnUnknownDeniedReason(t *testing.T) {
+	validator := &grpcValidator{client: &fakeTurnControlClient{
+		response: &turncontrol.ValidationResponse{
+			Allowed:   false,
+			Reason:    "upstream_policy_denied",
+			SessionIP: "203.0.113.24",
+		},
+	}}
+
+	_, err := validator.ValidateTURNUsername(context.Background(), "session-1|digest")
+	if err == nil {
+		t.Fatal("ValidateTURNUsername() error = nil, want denial error")
+	}
+	if got := ValidationErrorSessionIP(err); got != "203.0.113.24" {
+		t.Fatalf("ValidationErrorSessionIP() = %q, want %q", got, "203.0.113.24")
 	}
 }
 

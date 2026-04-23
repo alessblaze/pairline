@@ -40,6 +40,7 @@ type ValidationResponse struct {
 	SessionID string `json:"session_id,omitempty"`
 	Route     string `json:"route,omitempty"`
 	MatchedID string `json:"matched_id,omitempty"`
+	SessionIP string `json:"session_ip,omitempty"`
 }
 
 type ServiceServer interface {

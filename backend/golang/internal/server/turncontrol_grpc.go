@@ -60,12 +60,14 @@ func validationSuccessResponse(result turnservice.ValidationResult) *turncontrol
 		SessionID: result.SessionID,
 		Route:     fmt.Sprintf("%s|%d", result.Route.Mode, result.Route.Shard),
 		MatchedID: result.MatchedID,
+		SessionIP: result.SessionIP,
 	}
 }
 
 func validationErrorResponse(err error) *turncontrol.ValidationResponse {
 	return &turncontrol.ValidationResponse{
-		Allowed: false,
-		Reason:  turnservice.ValidationErrorReason(err),
+		Allowed:   false,
+		Reason:    turnservice.ValidationErrorReason(err),
+		SessionIP: turnservice.ValidationErrorSessionIP(err),
 	}
 }

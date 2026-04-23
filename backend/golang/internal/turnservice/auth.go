@@ -54,6 +54,24 @@ type ValidationResult struct {
 	SessionID string
 	Route     appredis.SessionRoute
 	MatchedID string
+	SessionIP string
+}
+
+type ValidationError struct {
+	cause     error
+	sessionIP string
+}
+
+func (e *ValidationError) Error() string {
+	return e.cause.Error()
+}
+
+func (e *ValidationError) Unwrap() error {
+	return e.cause
+}
+
+func (e *ValidationError) SessionIP() string {
+	return e.sessionIP
 }
 
 func ValidateMatchedSession(ctx context.Context, redisClient redis.UniversalClient, sessionID, providedToken string) (ValidationResult, error) {
@@ -122,26 +140,30 @@ func validateMatchedRouteSession(
 		return ValidationResult{}, ErrSessionInactive
 	}
 
-	banned, err := redisClient.Exists(ctx, appredis.BanSessionKey(sessionID)).Result()
-	if err != nil {
-		return ValidationResult{}, ErrValidationBackend
-	}
-	if banned > 0 {
-		return ValidationResult{}, ErrSessionBanned
-	}
-
 	sessionIP, err := redisClient.Get(ctx, appredis.SessionIPKey(sessionID, route)).Result()
 	switch {
 	case errors.Is(err, redis.Nil):
 	case err != nil:
 		return ValidationResult{}, ErrValidationBackend
-	case strings.TrimSpace(sessionIP) != "":
+	default:
+		sessionIP = strings.TrimSpace(sessionIP)
+	}
+
+	banned, err := redisClient.Exists(ctx, appredis.BanSessionKey(sessionID)).Result()
+	if err != nil {
+		return ValidationResult{}, ErrValidationBackend
+	}
+	if banned > 0 {
+		return ValidationResult{}, validationErrorWithSessionIP(ErrSessionBanned, sessionIP)
+	}
+
+	if sessionIP != "" {
 		ipBanned, banErr := redisClient.Exists(ctx, appredis.BanIPKey(sessionIP)).Result()
 		if banErr != nil {
 			return ValidationResult{}, ErrValidationBackend
 		}
 		if ipBanned > 0 {
-			return ValidationResult{}, ErrSessionBanned
+			return ValidationResult{}, validationErrorWithSessionIP(ErrSessionBanned, sessionIP)
 		}
 	}
 
@@ -185,6 +207,7 @@ func validateMatchedRouteSession(
 		SessionID: sessionID,
 		Route:     route,
 		MatchedID: matchedID,
+		SessionIP: sessionIP,
 	}, nil
 }
 
@@ -257,4 +280,19 @@ func ValidationErrorReason(err error) string {
 	default:
 		return "internal_error"
 	}
+}
+
+func ValidationErrorSessionIP(err error) string {
+	var validationErr *ValidationError
+	if errors.As(err, &validationErr) {
+		return validationErr.SessionIP()
+	}
+	return ""
+}
+
+func validationErrorWithSessionIP(err error, sessionIP string) error {
+	if strings.TrimSpace(sessionIP) == "" {
+		return err
+	}
+	return &ValidationError{cause: err, sessionIP: strings.TrimSpace(sessionIP)}
 }

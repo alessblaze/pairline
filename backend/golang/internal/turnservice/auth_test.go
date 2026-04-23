@@ -185,6 +185,23 @@ func TestValidateMatchedSessionRejectsBanLookupErrors(t *testing.T) {
 	}
 }
 
+func TestValidateMatchedSessionIncludesSessionIPOnBanErrors(t *testing.T) {
+	route := appredis.SessionRoute{Mode: "video", Shard: 3}
+	redisClient := newFakeRedisClient()
+	seedMatchedSession(redisClient, route, "session-1", "token-1", "session-2")
+	seedPeerSession(redisClient, route, "session-2", "session-1")
+	redisClient.strings[appredis.SessionIPKey("session-1", route)] = "203.0.113.24"
+	redisClient.exists[appredis.BanSessionKey("session-1")] = true
+
+	_, err := ValidateMatchedSession(context.Background(), redisClient, "session-1", "token-1")
+	if !errors.Is(err, ErrSessionBanned) {
+		t.Fatalf("ValidateMatchedSession() error = %v, want %v", err, ErrSessionBanned)
+	}
+	if got := ValidationErrorSessionIP(err); got != "203.0.113.24" {
+		t.Fatalf("ValidationErrorSessionIP() = %q, want %q", got, "203.0.113.24")
+	}
+}
+
 func TestValidateMatchedSessionRejectsNonReciprocalMatches(t *testing.T) {
 	route := appredis.SessionRoute{Mode: "video", Shard: 3}
 	redisClient := newFakeRedisClient()

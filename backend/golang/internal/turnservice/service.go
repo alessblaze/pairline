@@ -52,7 +52,7 @@ func (v *grpcValidator) ValidateTURNUsername(ctx context.Context, username strin
 		return ValidationResult{}, err
 	}
 	if !resp.Allowed {
-		return ValidationResult{}, validationErrorFromReason(resp.Reason)
+		return ValidationResult{}, validationErrorWithSessionIP(validationErrorFromReason(resp.Reason), resp.SessionIP)
 	}
 	route, err := appredis.DecodeSessionRoute(resp.Route)
 	if err != nil {
@@ -62,6 +62,7 @@ func (v *grpcValidator) ValidateTURNUsername(ctx context.Context, username strin
 		SessionID: resp.SessionID,
 		Route:     route,
 		MatchedID: resp.MatchedID,
+		SessionIP: resp.SessionIP,
 	}, nil
 }
 
@@ -261,11 +262,19 @@ func (s *Service) authHandler(ra *pionturn.RequestAttributes) (string, []byte, b
 
 	result, err := s.validator.ValidateTURNUsername(ctx, ra.Username)
 	if err != nil {
+		sessionIP := ValidationErrorSessionIP(err)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		span.SetAttributes(attribute.String("turn.auth.denial_reason", err.Error()))
+		if sessionIP != "" {
+			span.SetAttributes(attribute.String("turn.session_ip", sessionIP))
+		}
 		observability.RecordTURNRelayAuth(ctx, time.Since(startedAt), false, err.Error())
-		log.Printf("TURN auth denied peer_addr=%v reason=%v", ra.SrcAddr, err)
+		if sessionIP != "" {
+			log.Printf("TURN auth denied peer_addr=%v session_ip=%s reason=%v", ra.SrcAddr, sessionIP, err)
+		} else {
+			log.Printf("TURN auth denied peer_addr=%v reason=%v", ra.SrcAddr, err)
+		}
 		return "", nil, false
 	}
 
@@ -273,8 +282,15 @@ func (s *Service) authHandler(ra *pionturn.RequestAttributes) (string, []byte, b
 		attribute.String("turn.session_id", result.SessionID),
 		attribute.String("turn.matched_id", result.MatchedID),
 	)
+	if result.SessionIP != "" {
+		span.SetAttributes(attribute.String("turn.session_ip", result.SessionIP))
+	}
 	observability.RecordTURNRelayAuth(ctx, time.Since(startedAt), true, "")
-	log.Printf("TURN auth allowed session=%s matched=%s peer_addr=%v", result.SessionID, result.MatchedID, ra.SrcAddr)
+	if result.SessionIP != "" {
+		log.Printf("TURN auth allowed session=%s matched=%s peer_addr=%v session_ip=%s", result.SessionID, result.MatchedID, ra.SrcAddr, result.SessionIP)
+	} else {
+		log.Printf("TURN auth allowed session=%s matched=%s peer_addr=%v", result.SessionID, result.MatchedID, ra.SrcAddr)
+	}
 	return ra.Username, pionturn.GenerateAuthKey(ra.Username, ra.Realm, s.config.Credential), true
 }
 
