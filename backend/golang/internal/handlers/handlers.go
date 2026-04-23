@@ -2043,6 +2043,24 @@ func SeedReportsHandlerGin(enqueueAutoModeration func(string)) gin.HandlerFunc {
 					{ID: uuid.New().String(), Text: "nice, enjoy", Sender: "me", Timestamp: now.UnixMilli()},
 				},
 			},
+			{
+				Reason:      "Finance Scam Attempt.",
+				Description: "Reporter was found to be attempting to scam peer with promises of money in exchange for inappropriate content",
+				Messages: []chatLogMessage{
+					{ID: uuid.New().String(), Text: "Hi there, I need 5000 can you send me? I give you bathwater.", Sender: "me", Timestamp: now.Add(-2 * time.Minute).UnixMilli()},
+					{ID: uuid.New().String(), Text: "Yes, I love bathwater.", Sender: "peer", Timestamp: now.Add(-1 * time.Minute).UnixMilli()},
+					{ID: uuid.New().String(), Text: "Aww sweetipie, i will send you the money.", Sender: "me", Timestamp: now.UnixMilli()},
+				},
+			},
+			{
+				Reason:      "Mutual Disagreement.",
+				Description: "Neither party violated terms. Reporter just didn't like peer's attitude and reported them.",
+				Messages: []chatLogMessage{
+					{ID: uuid.New().String(), Text: "Hi there, Can you help with my college course.", Sender: "me", Timestamp: now.Add(-2 * time.Minute).UnixMilli()},
+					{ID: uuid.New().String(), Text: "Of Course not! I am here to talk and give excuses about things i cannot do and fool you to believe that i actually care about you while i never was able to offer you anyting where you ever needed anything.", Sender: "peer", Timestamp: now.Add(-1 * time.Minute).UnixMilli()},
+					{ID: uuid.New().String(), Text: "That is completely okay, i expect you not to poke your nose into my personal matters, i will finish my studies elsewhere. I will also get same things as everyone else is getting.", Sender: "me", Timestamp: now.UnixMilli()},
+				},
+			},
 		}
 
 		var createdIds []string
