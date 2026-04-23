@@ -202,6 +202,24 @@ func TestValidateMatchedSessionIncludesSessionIPOnBanErrors(t *testing.T) {
 	}
 }
 
+func TestCheckBannedSessionIPs(t *testing.T) {
+	redisClient := newFakeRedisClient()
+	redisClient.exists[appredis.BanIPKey("203.0.113.24")] = true
+
+	got, err := CheckBannedSessionIPs(context.Background(), redisClient, []string{
+		"203.0.113.24",
+		"198.51.100.8",
+		"203.0.113.24",
+		" ",
+	})
+	if err != nil {
+		t.Fatalf("CheckBannedSessionIPs() error = %v", err)
+	}
+	if len(got) != 1 || got[0] != "203.0.113.24" {
+		t.Fatalf("CheckBannedSessionIPs() = %#v, want only banned IP", got)
+	}
+}
+
 func TestValidateMatchedSessionRejectsNonReciprocalMatches(t *testing.T) {
 	route := appredis.SessionRoute{Mode: "video", Shard: 3}
 	redisClient := newFakeRedisClient()

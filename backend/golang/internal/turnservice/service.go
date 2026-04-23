@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -24,15 +25,20 @@ import (
 var turnTracer = otel.Tracer("pairline/turn")
 
 type Service struct {
-	config      Config
-	server      *pionturn.Server
-	packetConns []net.PacketConn
-	listeners   []net.Listener
-	validator   Validator
+	config            Config
+	server            *pionturn.Server
+	packetConns       []net.PacketConn
+	listeners         []net.Listener
+	validator         Validator
+	mu                sync.Mutex
+	activeAllocations map[string]activeAllocation
+	sessionIPByUserID map[string]rememberedSessionIP
+	revokeAllocation  func(activeAllocation) error
 }
 
 type Validator interface {
 	ValidateTURNUsername(context.Context, string) (ValidationResult, error)
+	CheckBannedSessionIPs(context.Context, []string) ([]string, error)
 	ReserveTURNAllocation(context.Context, string, int) (bool, error)
 	ReleaseTURNAllocation(context.Context, string) error
 }
@@ -83,6 +89,14 @@ func (v *grpcValidator) ReserveTURNAllocation(ctx context.Context, username stri
 	return true, nil
 }
 
+func (v *grpcValidator) CheckBannedSessionIPs(ctx context.Context, sessionIPs []string) ([]string, error) {
+	resp, err := v.client.CheckBannedSessionIPs(ctx, &turncontrol.CheckBannedSessionIPsRequest{SessionIPs: sessionIPs})
+	if err != nil {
+		return nil, err
+	}
+	return append([]string(nil), resp.BannedIPs...), nil
+}
+
 func (v *grpcValidator) ReleaseTURNAllocation(ctx context.Context, username string) error {
 	resp, err := v.client.ReleaseAllocation(ctx, &turncontrol.ReleaseAllocationRequest{Username: username})
 	if err != nil {
@@ -111,6 +125,10 @@ func (v *pooledGRPCValidator) ReserveTURNAllocation(ctx context.Context, usernam
 	return (&grpcValidator{client: v.pickClient()}).ReserveTURNAllocation(ctx, username, limit)
 }
 
+func (v *pooledGRPCValidator) CheckBannedSessionIPs(ctx context.Context, sessionIPs []string) ([]string, error) {
+	return (&grpcValidator{client: v.pickClient()}).CheckBannedSessionIPs(ctx, sessionIPs)
+}
+
 func (v *pooledGRPCValidator) ReleaseTURNAllocation(ctx context.Context, username string) error {
 	return (&grpcValidator{client: v.pickClient()}).ReleaseTURNAllocation(ctx, username)
 }
@@ -124,8 +142,10 @@ func NewService(config Config, validator Validator) (*Service, error) {
 	}
 
 	svc := &Service{
-		config:    config,
-		validator: validator,
+		config:            config,
+		validator:         validator,
+		activeAllocations: make(map[string]activeAllocation),
+		sessionIPByUserID: make(map[string]rememberedSessionIP),
 	}
 
 	packetConfigs := make([]pionturn.PacketConnConfig, 0, 1)
@@ -185,7 +205,11 @@ func NewService(config Config, validator Validator) (*Service, error) {
 		AuthHandler:       svc.authHandler,
 		QuotaHandler:      svc.quotaHandler,
 		EventHandler: pionturn.EventHandler{
-			OnAllocationDeleted: func(_, _ net.Addr, _, userID, _ string) {
+			OnAllocationCreated: func(srcAddr, dstAddr net.Addr, protocol, userID, _ string, _ net.Addr, _ int) {
+				svc.trackActiveAllocation(srcAddr, dstAddr, protocol, userID)
+			},
+			OnAllocationDeleted: func(srcAddr, dstAddr net.Addr, protocol, userID, _ string) {
+				svc.untrackActiveAllocation(srcAddr, dstAddr, protocol)
 				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 				defer cancel()
 
@@ -212,6 +236,9 @@ func NewService(config Config, validator Validator) (*Service, error) {
 	}
 
 	svc.server = server
+	svc.revokeAllocation = func(allocation activeAllocation) error {
+		return revokeTurnAllocation(svc.server, allocation)
+	}
 	return svc, nil
 }
 
@@ -228,6 +255,8 @@ func (s *Service) Run(ctx context.Context) error {
 		s.config.PublicIP,
 		s.config.AdvertisedTURNURLs(),
 	)
+
+	go s.runBanSweep(ctx)
 
 	<-ctx.Done()
 	return s.Close()
@@ -283,6 +312,7 @@ func (s *Service) authHandler(ra *pionturn.RequestAttributes) (string, []byte, b
 		attribute.String("turn.matched_id", result.MatchedID),
 	)
 	if result.SessionIP != "" {
+		s.rememberSessionIP(ra.Username, result.SessionIP)
 		span.SetAttributes(attribute.String("turn.session_ip", result.SessionIP))
 	}
 	observability.RecordTURNRelayAuth(ctx, time.Since(startedAt), true, "")

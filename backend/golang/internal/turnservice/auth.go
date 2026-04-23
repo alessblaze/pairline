@@ -290,6 +290,39 @@ func ValidationErrorSessionIP(err error) string {
 	return ""
 }
 
+func CheckBannedSessionIPs(ctx context.Context, redisClient redis.UniversalClient, sessionIPs []string) ([]string, error) {
+	if len(sessionIPs) == 0 {
+		return nil, nil
+	}
+
+	normalized := make([]string, 0, len(sessionIPs))
+	seen := make(map[string]struct{}, len(sessionIPs))
+	for _, sessionIP := range sessionIPs {
+		sessionIP = strings.TrimSpace(sessionIP)
+		if sessionIP == "" {
+			continue
+		}
+		if _, ok := seen[sessionIP]; ok {
+			continue
+		}
+		seen[sessionIP] = struct{}{}
+		normalized = append(normalized, sessionIP)
+	}
+
+	banned := make([]string, 0, len(normalized))
+	for _, sessionIP := range normalized {
+		exists, err := redisClient.Exists(ctx, appredis.BanIPKey(sessionIP)).Result()
+		if err != nil {
+			return nil, ErrValidationBackend
+		}
+		if exists > 0 {
+			banned = append(banned, sessionIP)
+		}
+	}
+
+	return banned, nil
+}
+
 func validationErrorWithSessionIP(err error, sessionIP string) error {
 	if strings.TrimSpace(sessionIP) == "" {
 		return err

@@ -20,9 +20,17 @@ type ReserveAllocationRequest struct {
 	Limit    int32  `json:"limit"`
 }
 
+type CheckBannedSessionIPsRequest struct {
+	SessionIPs []string `json:"session_ips"`
+}
+
 type ReserveAllocationResponse struct {
 	Allowed bool   `json:"allowed"`
 	Reason  string `json:"reason,omitempty"`
+}
+
+type CheckBannedSessionIPsResponse struct {
+	BannedIPs []string `json:"banned_ips,omitempty"`
 }
 
 type ReleaseAllocationRequest struct {
@@ -46,6 +54,7 @@ type ValidationResponse struct {
 type ServiceServer interface {
 	ValidateMatchedSession(context.Context, *ValidateMatchedSessionRequest) (*ValidationResponse, error)
 	ValidateTurnUsername(context.Context, *ValidateTurnUsernameRequest) (*ValidationResponse, error)
+	CheckBannedSessionIPs(context.Context, *CheckBannedSessionIPsRequest) (*CheckBannedSessionIPsResponse, error)
 	ReserveAllocation(context.Context, *ReserveAllocationRequest) (*ReserveAllocationResponse, error)
 	ReleaseAllocation(context.Context, *ReleaseAllocationRequest) (*ReleaseAllocationResponse, error)
 }
@@ -53,6 +62,7 @@ type ServiceServer interface {
 type ServiceClient interface {
 	ValidateMatchedSession(context.Context, *ValidateMatchedSessionRequest, ...grpc.CallOption) (*ValidationResponse, error)
 	ValidateTurnUsername(context.Context, *ValidateTurnUsernameRequest, ...grpc.CallOption) (*ValidationResponse, error)
+	CheckBannedSessionIPs(context.Context, *CheckBannedSessionIPsRequest, ...grpc.CallOption) (*CheckBannedSessionIPsResponse, error)
 	ReserveAllocation(context.Context, *ReserveAllocationRequest, ...grpc.CallOption) (*ReserveAllocationResponse, error)
 	ReleaseAllocation(context.Context, *ReleaseAllocationRequest, ...grpc.CallOption) (*ReleaseAllocationResponse, error)
 }
@@ -77,6 +87,15 @@ func (c *serviceClient) ValidateMatchedSession(ctx context.Context, in *Validate
 func (c *serviceClient) ValidateTurnUsername(ctx context.Context, in *ValidateTurnUsernameRequest, opts ...grpc.CallOption) (*ValidationResponse, error) {
 	out := new(ValidationResponse)
 	err := c.cc.Invoke(ctx, "/pairline.turncontrol.Service/ValidateTurnUsername", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *serviceClient) CheckBannedSessionIPs(ctx context.Context, in *CheckBannedSessionIPsRequest, opts ...grpc.CallOption) (*CheckBannedSessionIPsResponse, error) {
+	out := new(CheckBannedSessionIPsResponse)
+	err := c.cc.Invoke(ctx, "/pairline.turncontrol.Service/CheckBannedSessionIPs", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -113,6 +132,10 @@ func RegisterServiceServer(s grpc.ServiceRegistrar, srv ServiceServer) {
 			{
 				MethodName: "ValidateTurnUsername",
 				Handler:    validateTurnUsernameHandler,
+			},
+			{
+				MethodName: "CheckBannedSessionIPs",
+				Handler:    checkBannedSessionIPsHandler,
 			},
 			{
 				MethodName: "ReserveAllocation",
@@ -160,6 +183,24 @@ func validateTurnUsernameHandler(srv interface{}, ctx context.Context, dec func(
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ServiceServer).ValidateTurnUsername(ctx, req.(*ValidateTurnUsernameRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func checkBannedSessionIPsHandler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CheckBannedSessionIPsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ServiceServer).CheckBannedSessionIPs(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/pairline.turncontrol.Service/CheckBannedSessionIPs",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ServiceServer).CheckBannedSessionIPs(ctx, req.(*CheckBannedSessionIPsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }

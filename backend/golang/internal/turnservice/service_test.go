@@ -3,17 +3,20 @@ package turnservice
 import (
 	"context"
 	"errors"
+	"net"
 	"testing"
+	"time"
 
 	"github.com/anish/omegle/backend/golang/internal/turncontrol"
 	"google.golang.org/grpc"
 )
 
 type fakeTurnControlClient struct {
-	response        *turncontrol.ValidationResponse
-	reserveResponse *turncontrol.ReserveAllocationResponse
-	releaseResponse *turncontrol.ReleaseAllocationResponse
-	err             error
+	response          *turncontrol.ValidationResponse
+	bannedIPsResponse *turncontrol.CheckBannedSessionIPsResponse
+	reserveResponse   *turncontrol.ReserveAllocationResponse
+	releaseResponse   *turncontrol.ReleaseAllocationResponse
+	err               error
 }
 
 func (c *fakeTurnControlClient) ValidateMatchedSession(context.Context, *turncontrol.ValidateMatchedSessionRequest, ...grpc.CallOption) (*turncontrol.ValidationResponse, error) {
@@ -22,6 +25,10 @@ func (c *fakeTurnControlClient) ValidateMatchedSession(context.Context, *turncon
 
 func (c *fakeTurnControlClient) ValidateTurnUsername(context.Context, *turncontrol.ValidateTurnUsernameRequest, ...grpc.CallOption) (*turncontrol.ValidationResponse, error) {
 	return c.response, c.err
+}
+
+func (c *fakeTurnControlClient) CheckBannedSessionIPs(context.Context, *turncontrol.CheckBannedSessionIPsRequest, ...grpc.CallOption) (*turncontrol.CheckBannedSessionIPsResponse, error) {
+	return c.bannedIPsResponse, c.err
 }
 
 func (c *fakeTurnControlClient) ReserveAllocation(context.Context, *turncontrol.ReserveAllocationRequest, ...grpc.CallOption) (*turncontrol.ReserveAllocationResponse, error) {
@@ -100,6 +107,22 @@ func TestGRPCValidatorValidateTURNUsernamePreservesSessionIPOnUnknownDeniedReaso
 	}
 }
 
+func TestGRPCValidatorCheckBannedSessionIPs(t *testing.T) {
+	validator := &grpcValidator{client: &fakeTurnControlClient{
+		bannedIPsResponse: &turncontrol.CheckBannedSessionIPsResponse{
+			BannedIPs: []string{"203.0.113.24"},
+		},
+	}}
+
+	got, err := validator.CheckBannedSessionIPs(context.Background(), []string{"203.0.113.24", "198.51.100.8"})
+	if err != nil {
+		t.Fatalf("CheckBannedSessionIPs() error = %v", err)
+	}
+	if len(got) != 1 || got[0] != "203.0.113.24" {
+		t.Fatalf("CheckBannedSessionIPs() = %#v, want only banned IP", got)
+	}
+}
+
 func TestGRPCValidatorReserveAndReleaseTURNAllocation(t *testing.T) {
 	validator := &grpcValidator{client: &fakeTurnControlClient{
 		reserveResponse: &turncontrol.ReserveAllocationResponse{Allowed: true},
@@ -155,5 +178,141 @@ func TestPooledGRPCValidatorCyclesClients(t *testing.T) {
 	}
 	if second.Route.Shard != 2 {
 		t.Fatalf("second shard = %d, want 2", second.Route.Shard)
+	}
+}
+
+type fakeValidator struct {
+	bannedIPs []string
+}
+
+func (v *fakeValidator) ValidateTURNUsername(context.Context, string) (ValidationResult, error) {
+	return ValidationResult{}, nil
+}
+
+func (v *fakeValidator) CheckBannedSessionIPs(context.Context, []string) ([]string, error) {
+	return append([]string(nil), v.bannedIPs...), nil
+}
+
+func (v *fakeValidator) ReserveTURNAllocation(context.Context, string, int) (bool, error) {
+	return true, nil
+}
+
+func (v *fakeValidator) ReleaseTURNAllocation(context.Context, string) error {
+	return nil
+}
+
+func TestServiceRevokeBannedAllocations(t *testing.T) {
+	revoked := make([]activeAllocation, 0, 1)
+	svc := &Service{
+		validator: &fakeValidator{bannedIPs: []string{"203.0.113.24"}},
+		activeAllocations: map[string]activeAllocation{
+			activeAllocationKey(&net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 1111}, &net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 3478}, "UDP"): {
+				Username:  "ignored",
+				SessionIP: "203.0.113.24",
+				SrcAddr:   &net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 1111},
+				DstAddr:   &net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 3478},
+				Protocol:  "UDP",
+			},
+			activeAllocationKey(&net.UDPAddr{IP: net.ParseIP("10.0.0.3"), Port: 2222}, &net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 3478}, "UDP"): {
+				Username:  "ignored-2",
+				SessionIP: "198.51.100.8",
+				SrcAddr:   &net.UDPAddr{IP: net.ParseIP("10.0.0.3"), Port: 2222},
+				DstAddr:   &net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 3478},
+				Protocol:  "UDP",
+			},
+		},
+		revokeAllocation: func(allocation activeAllocation) error {
+			revoked = append(revoked, allocation)
+			return nil
+		},
+	}
+
+	if err := svc.revokeBannedAllocations(context.Background()); err != nil {
+		t.Fatalf("revokeBannedAllocations() error = %v", err)
+	}
+	if len(revoked) != 1 {
+		t.Fatalf("len(revoked) = %d, want 1", len(revoked))
+	}
+	if revoked[0].SessionIP != "203.0.113.24" {
+		t.Fatalf("revoked session IP = %q, want banned IP", revoked[0].SessionIP)
+	}
+}
+
+func TestServiceUntrackActiveAllocationCleansSessionIPCache(t *testing.T) {
+	svc := &Service{
+		activeAllocations: map[string]activeAllocation{
+			activeAllocationKey(&net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 1111}, &net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 3478}, "UDP"): {
+				Username:  "user-1",
+				SessionIP: "203.0.113.24",
+				SrcAddr:   &net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 1111},
+				DstAddr:   &net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 3478},
+				Protocol:  "UDP",
+			},
+		},
+		sessionIPByUserID: map[string]rememberedSessionIP{
+			"user-1": {IP: "203.0.113.24", SeenAt: time.Now()},
+		},
+	}
+
+	svc.untrackActiveAllocation(
+		&net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 1111},
+		&net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 3478},
+		"UDP",
+	)
+
+	if _, ok := svc.sessionIPByUserID["user-1"]; ok {
+		t.Fatal("sessionIPByUserID still contains user after final allocation removal")
+	}
+}
+
+func TestRememberSessionIPUpdatesTrackedAllocations(t *testing.T) {
+	svc := &Service{
+		activeAllocations: map[string]activeAllocation{
+			activeAllocationKey(&net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 1111}, &net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 3478}, "UDP"): {
+				Username:  "user-1",
+				SessionIP: "",
+				SrcAddr:   &net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 1111},
+				DstAddr:   &net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 3478},
+				Protocol:  "UDP",
+			},
+		},
+		sessionIPByUserID: make(map[string]rememberedSessionIP),
+	}
+
+	svc.rememberSessionIP("user-1", "203.0.113.24")
+
+	for _, allocation := range svc.activeAllocations {
+		if allocation.SessionIP != "203.0.113.24" {
+			t.Fatalf("allocation.SessionIP = %q, want %q", allocation.SessionIP, "203.0.113.24")
+		}
+	}
+}
+
+func TestCleanupRememberedSessionIPsDropsStaleEntriesWithoutAllocations(t *testing.T) {
+	svc := &Service{
+		activeAllocations: map[string]activeAllocation{},
+		sessionIPByUserID: map[string]rememberedSessionIP{
+			"user-1": {
+				IP:     "203.0.113.24",
+				SeenAt: time.Now().Add(-rememberedSessionIPTTL - time.Second),
+			},
+		},
+	}
+
+	svc.mu.Lock()
+	svc.cleanupRememberedSessionIPsLocked(time.Now())
+	svc.mu.Unlock()
+
+	if _, ok := svc.sessionIPByUserID["user-1"]; ok {
+		t.Fatal("stale remembered session IP was not cleaned up")
+	}
+}
+
+func TestTurnAllocationProtocol(t *testing.T) {
+	if got := turnAllocationProtocol("UDP"); got != 0 {
+		t.Fatalf("turnAllocationProtocol(UDP) = %d, want 0", got)
+	}
+	if got := turnAllocationProtocol("TCP"); got != 1 {
+		t.Fatalf("turnAllocationProtocol(TCP) = %d, want 1", got)
 	}
 }

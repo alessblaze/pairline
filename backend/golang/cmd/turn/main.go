@@ -138,6 +138,10 @@ func (v *redisValidator) ValidateTURNUsername(ctx context.Context, username stri
 	return turnservice.ValidateTURNUsername(ctx, v.redisClient.GetClient(), username)
 }
 
+func (v *redisValidator) CheckBannedSessionIPs(ctx context.Context, sessionIPs []string) ([]string, error) {
+	return turnservice.CheckBannedSessionIPs(ctx, v.redisClient.GetClient(), sessionIPs)
+}
+
 func (v *redisValidator) ReserveTURNAllocation(ctx context.Context, username string, limit int) (bool, error) {
 	return turnservice.ReserveAllocationSlot(ctx, v.redisClient.GetClient(), username, limit)
 }

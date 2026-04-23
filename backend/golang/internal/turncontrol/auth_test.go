@@ -24,6 +24,10 @@ func (s *testServiceServer) ValidateTurnUsername(ctx context.Context, req *Valid
 	return s.validateTurnUsername(ctx, req)
 }
 
+func (s *testServiceServer) CheckBannedSessionIPs(context.Context, *CheckBannedSessionIPsRequest) (*CheckBannedSessionIPsResponse, error) {
+	return &CheckBannedSessionIPsResponse{}, nil
+}
+
 func (s *testServiceServer) ReserveAllocation(context.Context, *ReserveAllocationRequest) (*ReserveAllocationResponse, error) {
 	return &ReserveAllocationResponse{Allowed: true}, nil
 }

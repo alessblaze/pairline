@@ -33,6 +33,14 @@ func (s *turnControlValidationServer) ValidateTurnUsername(ctx context.Context, 
 	return validationSuccessResponse(result), nil
 }
 
+func (s *turnControlValidationServer) CheckBannedSessionIPs(ctx context.Context, req *turncontrol.CheckBannedSessionIPsRequest) (*turncontrol.CheckBannedSessionIPsResponse, error) {
+	bannedIPs, err := turnservice.CheckBannedSessionIPs(ctx, s.redisClient, req.SessionIPs)
+	if err != nil {
+		return nil, err
+	}
+	return &turncontrol.CheckBannedSessionIPsResponse{BannedIPs: bannedIPs}, nil
+}
+
 func (s *turnControlValidationServer) ReserveAllocation(ctx context.Context, req *turncontrol.ReserveAllocationRequest) (*turncontrol.ReserveAllocationResponse, error) {
 	allowed, err := turnservice.ReserveAllocationSlot(ctx, s.redisClient, req.Username, int(req.Limit))
 	if err != nil {
