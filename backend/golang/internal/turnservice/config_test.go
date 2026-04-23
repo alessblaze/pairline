@@ -85,6 +85,15 @@ func TestValidateForBootstrapAcceptsExplicitServerURLs(t *testing.T) {
 	}
 }
 
+func TestLoadConfigFromEnvDefaultsControlGRPCPoolSize(t *testing.T) {
+	t.Setenv("TURN_CONTROL_GRPC_POOL_SIZE", "")
+
+	cfg := LoadConfigFromEnv()
+	if cfg.ControlGRPCPoolSize != 4 {
+		t.Fatalf("ControlGRPCPoolSize = %d, want 4", cfg.ControlGRPCPoolSize)
+	}
+}
+
 func cfgBootstrapResponse(cfg Config, sessionID, sessionToken string) BootstrapResponse {
 	return cfg.BootstrapResponse(sessionID, sessionToken)
 }

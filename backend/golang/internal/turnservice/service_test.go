@@ -74,3 +74,42 @@ func TestGRPCValidatorReserveAndReleaseTURNAllocation(t *testing.T) {
 		t.Fatalf("ReleaseTURNAllocation() error = %v", err)
 	}
 }
+
+func TestPooledGRPCValidatorCyclesClients(t *testing.T) {
+	clientOne := &fakeTurnControlClient{
+		response: &turncontrol.ValidationResponse{
+			Allowed:   true,
+			SessionID: "session-1",
+			Route:     "video|1",
+			MatchedID: "peer-1",
+		},
+	}
+	clientTwo := &fakeTurnControlClient{
+		response: &turncontrol.ValidationResponse{
+			Allowed:   true,
+			SessionID: "session-2",
+			Route:     "video|2",
+			MatchedID: "peer-2",
+		},
+	}
+
+	validator := &pooledGRPCValidator{
+		clients: []turncontrol.ServiceClient{clientOne, clientTwo},
+	}
+
+	first, err := validator.ValidateTURNUsername(context.Background(), "session-1|digest")
+	if err != nil {
+		t.Fatalf("first ValidateTURNUsername() error = %v", err)
+	}
+	second, err := validator.ValidateTURNUsername(context.Background(), "session-2|digest")
+	if err != nil {
+		t.Fatalf("second ValidateTURNUsername() error = %v", err)
+	}
+
+	if first.Route.Shard != 1 {
+		t.Fatalf("first shard = %d, want 1", first.Route.Shard)
+	}
+	if second.Route.Shard != 2 {
+		t.Fatalf("second shard = %d, want 2", second.Route.Shard)
+	}
+}

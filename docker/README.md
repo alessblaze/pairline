@@ -37,6 +37,7 @@ TURN in this stack follows one model consistently:
 
 - `golang-public-*` own Redis-backed TURN validation semantics
 - `golang-public-*` expose authenticated internal TURN control-plane gRPC ports on `50051` and `50052`
+- `nginx` exposes a single internal TURN control-plane gRPC upstream on `50050` and balances those public Go validators
 - `golang-turn-*` run on host networking and validate sessions through that gRPC control plane
 - `TURN_SERVER_URLS` should point at the host IP and listener ports the turn-only processes bind directly
 - `TURN_PUBLIC_IP` on each turn-only backend should be that same public IP so relayed candidates match the address clients dial
@@ -78,6 +79,7 @@ Internal app ports:
 - `golang-admin` -> `8082`
 - `golang-public-1` -> internal TURN control-plane gRPC `50051`
 - `golang-public-2` -> internal TURN control-plane gRPC `50052`
+- `nginx` -> internal TURN control-plane gRPC upstream `50050`
 - `golang-turn-1` -> TURN `53478` plus relay range `55000-55099`, health `8090`
 - `golang-turn-2` -> TURN `53479` plus relay range `55100-55199`, health `8091`
 - `nginx` -> exposed on host `8080` and `8081`
@@ -90,8 +92,7 @@ TURN ingress is exposed directly by the host-networked turn-only processes:
 
 TURN control-plane validation is reachable on the host through:
 
-- `127.0.0.1:50051` -> `golang-public-1`
-- `127.0.0.1:50052` -> `golang-public-2`
+- `127.0.0.1:50050` -> Nginx gRPC upstream -> `golang-public-1:50051` / `golang-public-2:50052`
 
 All Go services share the same Redis Cluster and Postgres backing services.
 

@@ -63,8 +63,8 @@ graph TB
     PX1 & PX2 & PX3 -->|"session state, matchmaking"| Redis
     GP1 & GP2 -->|"session validation, bans"| Redis
     GA -->|"ban sync, config"| Redis
-    GT1 -->|"gRPC :50051"| GP1
-    GT2 -->|"gRPC :50052"| GP2
+    GT1 & GT2 -->|"gRPC :50050"| Nginx
+    Nginx -->|"grpc_pass (least_conn)"| GP1 & GP2
 
     GA -->|"reports, bans, accounts"| Postgres
     GP1 & GP2 -->|"reports, bans"| Postgres
@@ -145,8 +145,12 @@ graph LR
         TurnQuota["quotaHandler()"]
     end
 
+    subgraph "Nginx Ingress"
+        NginxProxy["gRPC Upstream<br/>:50050"]
+    end
+
     subgraph "Go Public Service"
-        GRPC["gRPC Server<br/>:50051"]
+        GRPC["gRPC Server<br/>:50051 / :50052"]
         ValServer["turnControlValidationServer"]
         AuthLogic["turnservice.ValidateTURNUsername()"]
         QuotaLogic["turnservice.ReserveAllocationSlot()"]
@@ -161,8 +165,10 @@ graph LR
         AllocKey["turn:allocations:{id}"]
     end
 
-    TurnAuth -->|"gRPC + shared secret"| GRPC
-    TurnQuota -->|"gRPC ReserveAllocation"| GRPC
+    TurnAuth -->|"gRPC pool + secret"| NginxProxy
+    TurnQuota -->|"gRPC pool + secret"| NginxProxy
+    NginxProxy -->|"grpc_pass"| GRPC
+    
     GRPC --> ValServer
     ValServer --> AuthLogic
     ValServer --> QuotaLogic
@@ -643,7 +649,7 @@ Production-like layout (gitignored, contains secrets). Same topology as default 
 | 8082 | Go Combined (direct) | HTTP+WS | localhost |
 | 7000–7005 | Redis Cluster | TCP | localhost |
 | 5432 | PostgreSQL | TCP | localhost |
-| 50051–50052 | TURN Control gRPC | TCP | internal |
+| 50050–50052 | TURN Control gRPC | TCP | internal |
 | 53478–53479 | TURN Relay | UDP+TCP | host network |
 | 16686 | Jaeger UI | HTTP | localhost |
 | 9090 | Prometheus | HTTP | localhost |

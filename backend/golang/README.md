@@ -81,7 +81,8 @@ Set `IGNORE_DOTENV=1` (or any non-empty value) to skip loading a local `.env` fi
 When `TURN_MODE=integrated`, the bootstrap endpoint now fails closed if no usable TURN URLs are configured instead of silently returning an empty relay config.
 When `TURN_MODE=cloudflare`, the bootstrap endpoint now also fails closed if the Cloudflare TURN credentials are not configured or the provider returns an invalid credential payload.
 `TURN_CONTROL_GRPC_LISTEN_ADDRESS` enables an internal authenticated gRPC control-plane API on the public Go service for TURN validation.
-`TURN_CONTROL_GRPC_ADDRESS` tells the turn-only binary to use that internal control-plane API instead of connecting to Redis directly.
+`TURN_CONTROL_GRPC_ADDRESS` tells the turn-only binary to use that internal control-plane API instead of connecting to Redis directly. In multi-node setups, point this at an internal load balancer or Nginx gRPC upstream instead of a single public Go node.
+`TURN_CONTROL_GRPC_POOL_SIZE` controls how many gRPC client connections each turn-only process opens to that control-plane endpoint. The default is `4`.
 `TURN_CONTROL_GRPC_SHARED_SECRET` must match on both sides when the TURN control-plane gRPC path is enabled.
 
 ## Useful commands

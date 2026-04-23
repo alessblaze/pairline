@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sync/atomic"
 	"time"
 
 	appredis "github.com/anish/omegle/backend/golang/internal/redis"
 	"github.com/anish/omegle/backend/golang/internal/turncontrol"
 	pionturn "github.com/pion/turn/v5"
+	"google.golang.org/grpc"
 )
 
 type Service struct {
@@ -30,6 +32,11 @@ type Validator interface {
 
 type grpcValidator struct {
 	client turncontrol.ServiceClient
+}
+
+type pooledGRPCValidator struct {
+	clients []turncontrol.ServiceClient
+	next    atomic.Uint64
 }
 
 func (v *grpcValidator) ValidateTURNUsername(ctx context.Context, username string) (ValidationResult, error) {
@@ -77,6 +84,27 @@ func (v *grpcValidator) ReleaseTURNAllocation(ctx context.Context, username stri
 		return validationErrorFromReason(resp.Reason)
 	}
 	return nil
+}
+
+func (v *pooledGRPCValidator) pickClient() turncontrol.ServiceClient {
+	if len(v.clients) == 1 {
+		return v.clients[0]
+	}
+
+	index := v.next.Add(1) - 1
+	return v.clients[index%uint64(len(v.clients))]
+}
+
+func (v *pooledGRPCValidator) ValidateTURNUsername(ctx context.Context, username string) (ValidationResult, error) {
+	return (&grpcValidator{client: v.pickClient()}).ValidateTURNUsername(ctx, username)
+}
+
+func (v *pooledGRPCValidator) ReserveTURNAllocation(ctx context.Context, username string, limit int) (bool, error) {
+	return (&grpcValidator{client: v.pickClient()}).ReserveTURNAllocation(ctx, username, limit)
+}
+
+func (v *pooledGRPCValidator) ReleaseTURNAllocation(ctx context.Context, username string) error {
+	return (&grpcValidator{client: v.pickClient()}).ReleaseTURNAllocation(ctx, username)
 }
 
 func NewService(config Config, validator Validator) (*Service, error) {
@@ -265,12 +293,43 @@ func relayAddressGenerator(config Config) pionturn.RelayAddressGenerator {
 }
 
 func NewGRPCValidator(ctx context.Context, config Config) (Validator, func() error, error) {
-	conn, err := turncontrol.NewAuthenticatedClientConn(ctx, config.ControlGRPCAddress, config.ControlGRPCSecret)
-	if err != nil {
-		return nil, nil, err
+	poolSize := config.ControlGRPCPoolSize
+	if poolSize <= 0 {
+		poolSize = 1
 	}
 
-	return &grpcValidator{client: turncontrol.NewServiceClient(conn)}, conn.Close, nil
+	clients := make([]turncontrol.ServiceClient, 0, poolSize)
+	conns := make([]*grpc.ClientConn, 0, poolSize)
+	for i := 0; i < poolSize; i++ {
+		conn, err := turncontrol.NewAuthenticatedClientConn(ctx, config.ControlGRPCAddress, config.ControlGRPCSecret)
+		if err != nil {
+			for _, openedConn := range conns {
+				_ = openedConn.Close()
+			}
+			return nil, nil, err
+		}
+		clients = append(clients, turncontrol.NewServiceClient(conn))
+		conns = append(conns, conn)
+	}
+
+	closeAll := func() error {
+		var errs []error
+		for _, conn := range conns {
+			if conn == nil {
+				continue
+			}
+			if err := conn.Close(); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		return errors.Join(errs...)
+	}
+
+	if len(clients) == 1 {
+		return &grpcValidator{client: clients[0]}, closeAll, nil
+	}
+
+	return &pooledGRPCValidator{clients: clients}, closeAll, nil
 }
 
 func validationErrorFromReason(reason string) error {

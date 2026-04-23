@@ -198,6 +198,17 @@ This file focuses on **what each variable changes in runtime behavior**, not jus
 - **`TURN_RELAY_MIN_PORT`** / **`TURN_RELAY_MAX_PORT`** (defaults: `49152` / `49252`): relay allocation port range for the integrated relay.
 - **`TURN_MAX_ALLOCATIONS_PER_SESSION`** (default: `4`): coarse integrated relay allocation cap used to avoid runaway allocation growth.
 
+### TURN control-plane gRPC
+
+When the TURN relay runs as a standalone process (the `cmd/turn` binary), it cannot access Redis directly. Instead it validates every TURN allocation request over a gRPC control-plane API hosted by the Go public service and load-balanced through Nginx.
+
+- **`TURN_CONTROL_GRPC_LISTEN_ADDRESS`** (default: unset): bind address for the gRPC validation server on the **public Go service** (e.g. `0.0.0.0:50051`). Leave unset if this instance does not serve TURN control-plane traffic.
+- **`TURN_CONTROL_GRPC_ADDRESS`** (default: unset): target address the **turn-only binary** dials to reach the control plane. In the Docker cluster this points at the Nginx gRPC upstream (`127.0.0.1:50050`). In standalone dev it can point directly at a public Go service port.
+- **`TURN_CONTROL_GRPC_SHARED_SECRET`** (required when control-plane is active): symmetric secret used to authenticate gRPC calls between turn-only services and the public Go service. Must match on both sides.
+- **`TURN_CONTROL_GRPC_POOL_SIZE`** (default: `4`): number of gRPC client connections each turn-only process opens to the control-plane endpoint. A small pool keeps validation traffic flowing when many concurrent TURN allocations and auth checks occur. With Nginx load-balancing, each connection in the pool may land on a different backend.
+
+> **Docker topology:** Nginx listens on `:50050` (exposed to the host) and distributes gRPC traffic across `golang-public-1:50051` and `golang-public-2:50052` using `random two least_conn`. Retry on upstream failure is **disabled** (`grpc_next_upstream off`) because `ReserveAllocation` mutates Redis counters — replaying a timed-out request would double-count.
+
 ### Redis client compatibility
 - **`REDIS_MAINT_NOTIFICATIONS_MODE`** (default: `disabled`): controls whether the Go Redis client sends `CLIENT MAINT_NOTIFICATIONS` on connect. Use `disabled` for Valkey or older Redis servers, `auto` to probe support safely, or `enabled` only when you know the server supports it.
 

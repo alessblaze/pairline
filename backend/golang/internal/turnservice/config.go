@@ -41,6 +41,7 @@ type Config struct {
 	AllocationQuota     int
 	ControlGRPCAddress  string
 	ControlGRPCSecret   string
+	ControlGRPCPoolSize int
 }
 
 type IceServer struct {
@@ -74,6 +75,7 @@ func LoadConfigFromEnv() Config {
 		AllocationQuota:     envIntOrDefault("TURN_MAX_ALLOCATIONS_PER_SESSION", 4),
 		ControlGRPCAddress:  strings.TrimSpace(os.Getenv("TURN_CONTROL_GRPC_ADDRESS")),
 		ControlGRPCSecret:   strings.TrimSpace(os.Getenv("TURN_CONTROL_GRPC_SHARED_SECRET")),
+		ControlGRPCPoolSize: envIntOrDefault("TURN_CONTROL_GRPC_POOL_SIZE", 4),
 	}
 
 	if cfg.UDPListenAddress == "" {
