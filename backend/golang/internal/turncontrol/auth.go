@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -32,6 +33,7 @@ func newAuthenticatedClientConn(ctx context.Context, addr, sharedSecret string, 
 	opts := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithDefaultCallOptions(grpc.ForceCodec(JSONCodec)),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 		grpc.WithUnaryInterceptor(clientAuthInterceptor(sharedSecret)),
 	}
 	opts = append(opts, extraOpts...)

@@ -43,6 +43,7 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -815,6 +816,7 @@ func (s *Server) Run(addr string) error {
 			grpcListener = listener
 			grpcServer = grpc.NewServer(
 				grpc.ForceServerCodec(turncontrol.JSONCodec),
+				grpc.StatsHandler(otelgrpc.NewServerHandler()),
 				grpc.UnaryInterceptor(turncontrol.AuthUnaryServerInterceptor(grpcSecret)),
 			)
 			turncontrol.RegisterServiceServer(grpcServer, newTurnControlValidationServer(s.redis.GetClient()))
