@@ -49,6 +49,10 @@ return remaining
 
 var reserveAllocationSlotScript = redis.NewScript(reserveAllocationSlotScriptSource)
 var releaseAllocationSlotScript = redis.NewScript(releaseAllocationSlotScriptSource)
+var allocationScripts = []*redis.Script{
+	reserveAllocationSlotScript,
+	releaseAllocationSlotScript,
+}
 
 type ValidationResult struct {
 	SessionID string
@@ -224,6 +228,16 @@ func validationRouteError(err error) error {
 
 func turnAllocationKey(sessionID string) string {
 	return "turn:allocations:" + sessionID
+}
+
+func PreloadAllocationScripts(ctx context.Context, redisClient redis.UniversalClient) error {
+	for _, script := range allocationScripts {
+		if err := script.Load(ctx, redisClient).Err(); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func ReserveAllocationSlot(ctx context.Context, redisClient redis.UniversalClient, username string, limit int) (bool, error) {

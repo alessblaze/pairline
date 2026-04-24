@@ -14,6 +14,14 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+type fakeRedisError string
+
+func (e fakeRedisError) Error() string {
+	return string(e)
+}
+
+func (fakeRedisError) RedisError() {}
+
 type fakeRedisClient struct {
 	redis.UniversalClient
 	strings   map[string]string
@@ -41,8 +49,6 @@ func newFakeRedisClient() *fakeRedisClient {
 		decrErr:   map[string]error{},
 		delErr:    map[string]error{},
 	}
-	client.scriptSHA[reserveAllocationSlotScript.Hash()] = reserveAllocationSlotScriptSource
-	client.scriptSHA[releaseAllocationSlotScript.Hash()] = releaseAllocationSlotScriptSource
 	return client
 }
 
@@ -101,6 +107,8 @@ func (f *fakeRedisClient) Del(_ context.Context, keys ...string) *redis.IntCmd {
 }
 
 func (f *fakeRedisClient) Eval(ctx context.Context, script string, keys []string, args ...interface{}) *redis.Cmd {
+	f.scriptSHA[redis.NewScript(script).Hash()] = script
+
 	switch script {
 	case reserveAllocationSlotScriptSource:
 		if len(keys) != 1 || len(args) != 2 {
@@ -161,7 +169,7 @@ func (f *fakeRedisClient) Eval(ctx context.Context, script string, keys []string
 func (f *fakeRedisClient) EvalSha(ctx context.Context, sha1 string, keys []string, args ...interface{}) *redis.Cmd {
 	script, ok := f.scriptSHA[sha1]
 	if !ok {
-		return redis.NewCmdResult(nil, redis.Nil)
+		return redis.NewCmdResult(nil, fakeRedisError("NOSCRIPT No matching script."))
 	}
 	return f.Eval(ctx, script, keys, args...)
 }
@@ -258,6 +266,36 @@ func TestReserveAndReleaseAllocationSlot(t *testing.T) {
 
 	if got := redisClient.ints[turnAllocationKey("session-1")]; got != 0 {
 		t.Fatalf("allocation counter = %d, want 0", got)
+	}
+}
+
+func TestPreloadAllocationScriptsLoadsScriptHashes(t *testing.T) {
+	redisClient := newFakeRedisClient()
+
+	if err := PreloadAllocationScripts(context.Background(), redisClient); err != nil {
+		t.Fatalf("PreloadAllocationScripts() error = %v", err)
+	}
+
+	for _, script := range allocationScripts {
+		if _, ok := redisClient.scriptSHA[script.Hash()]; !ok {
+			t.Fatalf("script %s was not preloaded", script.Hash())
+		}
+	}
+}
+
+func TestReserveAllocationSlotRecoversFromNOSCRIPT(t *testing.T) {
+	redisClient := newFakeRedisClient()
+	username := BuildUsername("session-1", "token-1")
+
+	allowed, err := ReserveAllocationSlot(context.Background(), redisClient, username, 1)
+	if err != nil {
+		t.Fatalf("ReserveAllocationSlot() error = %v", err)
+	}
+	if !allowed {
+		t.Fatal("ReserveAllocationSlot() = false, want true")
+	}
+	if _, ok := redisClient.scriptSHA[reserveAllocationSlotScript.Hash()]; !ok {
+		t.Fatalf("reserve allocation script hash %s was not cached after NOSCRIPT fallback", reserveAllocationSlotScript.Hash())
 	}
 }
 

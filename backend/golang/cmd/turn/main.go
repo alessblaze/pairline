@@ -72,6 +72,11 @@ func main() {
 		}()
 	} else {
 		redisClient := appredis.NewClient()
+		preloadCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		if err := turnservice.PreloadAllocationScripts(preloadCtx, redisClient.GetClient()); err != nil {
+			log.Printf("Failed to preload TURN allocation Redis scripts: %v", err)
+		}
+		cancel()
 		defer func() {
 			if err := redisClient.Close(); err != nil {
 				log.Printf("Failed to close Redis: %v", err)

@@ -40,6 +40,7 @@ import (
 	appredis "github.com/anish/omegle/backend/golang/internal/redis"
 	"github.com/anish/omegle/backend/golang/internal/storage"
 	"github.com/anish/omegle/backend/golang/internal/turncontrol"
+	"github.com/anish/omegle/backend/golang/internal/turnservice"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -131,6 +132,14 @@ func newServer(capabilities Capabilities, serviceName string) *Server {
 		shutdownOTel: func(context.Context) error { return nil },
 	}
 	s.backgroundCtx, s.stopBackground = context.WithCancel(context.Background())
+
+	if capabilities.EnableTurnControlAPI {
+		preloadCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := turnservice.PreloadAllocationScripts(preloadCtx, redisClient.GetClient()); err != nil {
+			log.Printf("Failed to preload TURN allocation Redis scripts: %v", err)
+		}
+		cancel()
+	}
 
 	if err := storage.RunWithStartupMigrationLock(db.GetDB(), func(tx *gorm.DB) error {
 		return bots.AutoMigrate(tx)
