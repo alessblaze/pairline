@@ -36,6 +36,8 @@ type fakeRedisClient struct {
 	incrErr    map[string]error
 	decrErr    map[string]error
 	delErr     map[string]error
+	hsetErr    map[string]error
+	hdelErr    map[string]error
 }
 
 func newFakeRedisClient() *fakeRedisClient {
@@ -52,6 +54,8 @@ func newFakeRedisClient() *fakeRedisClient {
 		incrErr:    map[string]error{},
 		decrErr:    map[string]error{},
 		delErr:     map[string]error{},
+		hsetErr:    map[string]error{},
+		hdelErr:    map[string]error{},
 	}
 	return client
 }
@@ -108,11 +112,15 @@ func (f *fakeRedisClient) Del(_ context.Context, keys ...string) *redis.IntCmd {
 		delete(f.expiry, key)
 		delete(f.releaseOps, key)
 		delete(f.hashes, key)
+		delete(f.strings, key)
 	}
 	return redis.NewIntResult(int64(len(keys)), nil)
 }
 
 func (f *fakeRedisClient) HSet(_ context.Context, key string, values ...interface{}) *redis.IntCmd {
+	if err, ok := f.hsetErr[key]; ok {
+		return redis.NewIntResult(0, err)
+	}
 	if len(values)%2 != 0 {
 		return redis.NewIntResult(0, fmt.Errorf("unexpected hset values"))
 	}
@@ -139,6 +147,9 @@ func (f *fakeRedisClient) HSet(_ context.Context, key string, values ...interfac
 }
 
 func (f *fakeRedisClient) HDel(_ context.Context, key string, fields ...string) *redis.IntCmd {
+	if err, ok := f.hdelErr[key]; ok {
+		return redis.NewIntResult(0, err)
+	}
 	if f.hashes[key] == nil {
 		return redis.NewIntResult(0, nil)
 	}
@@ -330,6 +341,22 @@ func TestValidateMatchedSessionIncludesSessionIPOnBanErrors(t *testing.T) {
 	seedPeerSession(redisClient, route, "session-2", "session-1")
 	redisClient.strings[appredis.SessionIPKey("session-1", route)] = "203.0.113.24"
 	redisClient.exists[appredis.BanSessionKey("session-1")] = true
+
+	_, err := ValidateMatchedSession(context.Background(), redisClient, "session-1", "token-1")
+	if !errors.Is(err, ErrSessionBanned) {
+		t.Fatalf("ValidateMatchedSession() error = %v, want %v", err, ErrSessionBanned)
+	}
+	if got := ValidationErrorSessionIP(err); got != "203.0.113.24" {
+		t.Fatalf("ValidationErrorSessionIP() = %q, want %q", got, "203.0.113.24")
+	}
+}
+
+func TestValidateMatchedSessionPrefersSessionBanOverMissingPeerRoute(t *testing.T) {
+	route := appredis.SessionRoute{Mode: "video", Shard: 3}
+	redisClient := newFakeRedisClient()
+	seedMatchedSession(redisClient, route, "session-1", "token-1", "session-2")
+	redisClient.strings[appredis.SessionIPKey("session-1", route)] = "203.0.113.24"
+	redisClient.exists[appredis.BanIPKey("203.0.113.24")] = true
 
 	_, err := ValidateMatchedSession(context.Background(), redisClient, "session-1", "token-1")
 	if !errors.Is(err, ErrSessionBanned) {
@@ -545,15 +572,17 @@ func TestReleaseAllocationSlotOnMissingKeyStillProtectsFutureGeneration(t *testi
 
 func TestPendingReleasesRoundTrip(t *testing.T) {
 	redisClient := newFakeRedisClient()
+	firstUsername := BuildUsername("session-1", "token-1")
+	secondUsername := BuildUsername("session-2", "token-2")
 
-	if err := QueuePendingRelease(context.Background(), redisClient, BuildUsername("session-2", "token-2"), "release-2"); err != nil {
+	if err := QueuePendingRelease(context.Background(), redisClient, secondUsername, "release-2"); err != nil {
 		t.Fatalf("QueuePendingRelease(second) error = %v", err)
 	}
-	if err := QueuePendingRelease(context.Background(), redisClient, BuildUsername("session-1", "token-1"), "release-1"); err != nil {
+	if err := QueuePendingRelease(context.Background(), redisClient, firstUsername, "release-1"); err != nil {
 		t.Fatalf("QueuePendingRelease(first) error = %v", err)
 	}
 
-	filtered, err := PendingReleases(context.Background(), redisClient, BuildUsername("session-1", "token-1"))
+	filtered, err := PendingReleases(context.Background(), redisClient, firstUsername)
 	if err != nil {
 		t.Fatalf("PendingReleases(filtered) error = %v", err)
 	}
@@ -569,7 +598,7 @@ func TestPendingReleasesRoundTrip(t *testing.T) {
 		t.Fatalf("len(PendingReleases(all)) = %d, want 2", len(all))
 	}
 
-	if err := CompletePendingRelease(context.Background(), redisClient, BuildUsername("session-1", "token-1"), "release-1"); err != nil {
+	if err := CompletePendingRelease(context.Background(), redisClient, firstUsername, "release-1"); err != nil {
 		t.Fatalf("CompletePendingRelease() error = %v", err)
 	}
 	all, err = PendingReleases(context.Background(), redisClient, "")
@@ -579,6 +608,24 @@ func TestPendingReleasesRoundTrip(t *testing.T) {
 	if len(all) != 1 || all[0].OperationID != "release-2" {
 		t.Fatalf("PendingReleases(after complete) = %#v, want only release-2", all)
 	}
+
+	userKey, err := pendingReleaseUserKey(firstUsername)
+	if err != nil {
+		t.Fatalf("pendingReleaseUserKey() error = %v", err)
+	}
+	if _, ok := redisClient.hashes[userKey]; ok {
+		t.Fatalf("user-specific pending release index still exists after completion: %#v", redisClient.hashes[userKey])
+	}
+}
+
+func pendingReleaseUserKeyMust(t *testing.T, username string) string {
+	t.Helper()
+
+	userKey, err := pendingReleaseUserKey(username)
+	if err != nil {
+		t.Fatalf("pendingReleaseUserKey() error = %v", err)
+	}
+	return userKey
 }
 
 func toInt64(value interface{}) (int64, bool) {

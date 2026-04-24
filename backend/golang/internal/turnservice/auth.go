@@ -279,14 +279,14 @@ func validateMatchedRouteSession(
 		})
 	}
 	err = runConcurrent(tasks...)
+	if ipBanned > 0 {
+		return ValidationResult{}, validationErrorWithSessionIP(ErrSessionBanned, sessionIP)
+	}
 	switch {
 	case errors.Is(err, errPeerNotFound):
 		return ValidationResult{}, ErrSessionUnmatched
 	case err != nil:
 		return ValidationResult{}, ErrValidationBackend
-	}
-	if ipBanned > 0 {
-		return ValidationResult{}, validationErrorWithSessionIP(ErrSessionBanned, sessionIP)
 	}
 
 	peerValues, err := peerValidationSnapshotScript.Run(
@@ -390,6 +390,18 @@ func pendingReleaseField(username, operationID string) (string, error) {
 		base64.RawURLEncoding.EncodeToString([]byte(operationID)), nil
 }
 
+func pendingReleaseUserKey(username string) (string, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return "", ErrInvalidSessionIdentity
+	}
+	if _, _, err := ParseUsername(username); err != nil {
+		return "", ErrInvalidSessionIdentity
+	}
+
+	return turnPendingReleaseIndexKey + ":" + base64.RawURLEncoding.EncodeToString([]byte(username)), nil
+}
+
 func pendingReleaseFieldPrefix(username string) (string, error) {
 	username = strings.TrimSpace(username)
 	if username == "" {
@@ -399,6 +411,28 @@ func pendingReleaseFieldPrefix(username string) (string, error) {
 		return "", ErrInvalidSessionIdentity
 	}
 	return base64.RawURLEncoding.EncodeToString([]byte(username)) + ":", nil
+}
+
+func pendingReleaseOperationField(operationID string) (string, error) {
+	operationID = strings.TrimSpace(operationID)
+	if operationID == "" {
+		return "", ErrInvalidSessionIdentity
+	}
+
+	return base64.RawURLEncoding.EncodeToString([]byte(operationID)), nil
+}
+
+func decodePendingReleaseOperationField(field string) (string, error) {
+	operationBytes, err := base64.RawURLEncoding.DecodeString(field)
+	if err != nil {
+		return "", ErrValidationBackend
+	}
+
+	operationID := strings.TrimSpace(string(operationBytes))
+	if _, err := pendingReleaseOperationField(operationID); err != nil {
+		return "", ErrValidationBackend
+	}
+	return operationID, nil
 }
 
 func decodePendingReleaseField(field string) (PendingRelease, error) {
@@ -488,7 +522,18 @@ func QueuePendingRelease(ctx context.Context, redisClient redis.UniversalClient,
 	if err != nil {
 		return err
 	}
+	userKey, err := pendingReleaseUserKey(username)
+	if err != nil {
+		return err
+	}
+	operationField, err := pendingReleaseOperationField(operationID)
+	if err != nil {
+		return err
+	}
 	if err := redisClient.HSet(ctx, turnPendingReleaseIndexKey, field, "1").Err(); err != nil {
+		return ErrValidationBackend
+	}
+	if err := redisClient.HSet(ctx, userKey, operationField, "1").Err(); err != nil {
 		return ErrValidationBackend
 	}
 	return nil
@@ -499,21 +544,73 @@ func CompletePendingRelease(ctx context.Context, redisClient redis.UniversalClie
 	if err != nil {
 		return err
 	}
+	userKey, err := pendingReleaseUserKey(username)
+	if err != nil {
+		return err
+	}
+	operationField, err := pendingReleaseOperationField(operationID)
+	if err != nil {
+		return err
+	}
 	if err := redisClient.HDel(ctx, turnPendingReleaseIndexKey, field).Err(); err != nil {
+		return ErrValidationBackend
+	}
+	if err := redisClient.HDel(ctx, userKey, operationField).Err(); err != nil {
 		return ErrValidationBackend
 	}
 	return nil
 }
 
 func PendingReleases(ctx context.Context, redisClient redis.UniversalClient, username string) ([]PendingRelease, error) {
-	prefix, err := pendingReleaseFieldPrefix(username)
-	if err != nil {
-		return nil, err
+	username = strings.TrimSpace(username)
+	if username != "" {
+		userKey, err := pendingReleaseUserKey(username)
+		if err != nil {
+			return nil, err
+		}
+
+		fields, err := redisClient.HGetAll(ctx, userKey).Result()
+		if err != nil {
+			return nil, ErrValidationBackend
+		}
+
+		releases, err := pendingReleasesFromUserFields(username, fields)
+		if err != nil {
+			return nil, err
+		}
+		return releases, nil
 	}
 
 	fields, err := redisClient.HGetAll(ctx, turnPendingReleaseIndexKey).Result()
 	if err != nil {
 		return nil, ErrValidationBackend
+	}
+	return pendingReleasesFromGlobalFields(fields, username)
+}
+
+func pendingReleasesFromUserFields(username string, fields map[string]string) ([]PendingRelease, error) {
+	releases := make([]PendingRelease, 0, len(fields))
+	for field := range fields {
+		operationID, decodeErr := decodePendingReleaseOperationField(field)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		releases = append(releases, PendingRelease{
+			Username:    username,
+			OperationID: operationID,
+		})
+	}
+
+	sort.Slice(releases, func(i, j int) bool {
+		return releases[i].OperationID < releases[j].OperationID
+	})
+	return releases, nil
+}
+
+func pendingReleasesFromGlobalFields(fields map[string]string, username string) ([]PendingRelease, error) {
+	prefix, err := pendingReleaseFieldPrefix(username)
+	if err != nil {
+		return nil, err
 	}
 
 	releases := make([]PendingRelease, 0, len(fields))

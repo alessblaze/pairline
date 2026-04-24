@@ -491,6 +491,28 @@ func TestServiceReleaseDeletedAllocationQueuesRetryOnFailure(t *testing.T) {
 	}
 }
 
+func TestServiceUntrackActiveAllocationReturnsReleaseFallback(t *testing.T) {
+	srcAddr := &net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 1111}
+	dstAddr := &net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 3478}
+	allocationKey := activeAllocationKey(srcAddr, dstAddr, "UDP")
+
+	svc := &Service{
+		activeAllocations:       make(map[string]activeAllocation),
+		allocationReleaseLookup: map[string]activeAllocation{allocationKey: {Username: "user-1", ReleaseOperationID: "release-1"}},
+	}
+
+	allocation, ok := svc.untrackActiveAllocation(srcAddr, dstAddr, "UDP")
+	if !ok {
+		t.Fatal("untrackActiveAllocation() = false, want true from release fallback")
+	}
+	if allocation.Username != "user-1" || allocation.ReleaseOperationID != "release-1" {
+		t.Fatalf("untrackActiveAllocation() = %#v, want fallback allocation metadata", allocation)
+	}
+	if _, ok := svc.allocationReleaseLookup[allocationKey]; ok {
+		t.Fatalf("allocationReleaseLookup[%q] still present after fallback untrack", allocationKey)
+	}
+}
+
 func TestServiceSnapshotPendingReleasesIncludesActiveSessions(t *testing.T) {
 	svc := &Service{
 		pendingReleases: map[string]map[string]struct{}{

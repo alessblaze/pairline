@@ -18,11 +18,11 @@ const banSweepInterval = 10 * time.Second
 const rememberedSessionIPTTL = time.Minute
 
 type activeAllocation struct {
-	Username  string
-	SessionIP string
-	SrcAddr   net.Addr
-	DstAddr   net.Addr
-	Protocol  string
+	Username           string
+	SessionIP          string
+	SrcAddr            net.Addr
+	DstAddr            net.Addr
+	Protocol           string
 	ReleaseOperationID string
 }
 
@@ -105,14 +105,18 @@ func (s *Service) trackActiveAllocation(srcAddr, dstAddr net.Addr, protocol, use
 	}
 
 	allocation := activeAllocation{
-		Username:  userID,
-		SessionIP: s.sessionIPByUserID[userID].IP,
-		SrcAddr:   cloneAddr(srcAddr),
-		DstAddr:   cloneAddr(dstAddr),
-		Protocol:  strings.ToUpper(strings.TrimSpace(protocol)),
+		Username:           userID,
+		SessionIP:          s.sessionIPByUserID[userID].IP,
+		SrcAddr:            cloneAddr(srcAddr),
+		DstAddr:            cloneAddr(dstAddr),
+		Protocol:           strings.ToUpper(strings.TrimSpace(protocol)),
 		ReleaseOperationID: s.nextReleaseOperationID(),
 	}
+	if s.allocationReleaseLookup == nil {
+		s.allocationReleaseLookup = make(map[string]activeAllocation)
+	}
 	s.activeAllocations[key] = allocation
+	s.allocationReleaseLookup[key] = allocation
 	s.addAllocationIndexesLocked(key, allocation)
 }
 
@@ -127,9 +131,15 @@ func (s *Service) untrackActiveAllocation(srcAddr, dstAddr net.Addr, protocol st
 
 	allocation, ok := s.activeAllocations[key]
 	if !ok {
-		return activeAllocation{}, false
+		fallback, ok := s.allocationReleaseLookup[key]
+		if !ok {
+			return activeAllocation{}, false
+		}
+		delete(s.allocationReleaseLookup, key)
+		return fallback, true
 	}
 	s.removeAllocationIndexesLocked(key, allocation)
+	delete(s.allocationReleaseLookup, key)
 	return allocation, true
 }
 

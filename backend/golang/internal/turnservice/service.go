@@ -50,6 +50,7 @@ type Service struct {
 	validator               Validator
 	mu                      sync.Mutex
 	activeAllocations       map[string]activeAllocation
+	allocationReleaseLookup map[string]activeAllocation
 	allocationKeysByUserID  map[string]map[string]struct{}
 	allocationKeysBySession map[string]map[string]struct{}
 	allocationCountByUserID map[string]int
@@ -230,6 +231,7 @@ func NewService(config Config, validator Validator) (*Service, error) {
 		config:                  config,
 		validator:               validator,
 		activeAllocations:       make(map[string]activeAllocation),
+		allocationReleaseLookup: make(map[string]activeAllocation),
 		allocationKeysByUserID:  make(map[string]map[string]struct{}),
 		allocationKeysBySession: make(map[string]map[string]struct{}),
 		allocationCountByUserID: make(map[string]int),
@@ -301,7 +303,7 @@ func NewService(config Config, validator Validator) (*Service, error) {
 			OnAllocationDeleted: func(srcAddr, dstAddr net.Addr, protocol, userID, _ string) {
 				allocation, ok := svc.untrackActiveAllocation(srcAddr, dstAddr, protocol)
 				if !ok {
-					return
+					allocation = activeAllocation{Username: userID}
 				}
 				svc.releaseDeletedAllocation(allocation, userID)
 			},
