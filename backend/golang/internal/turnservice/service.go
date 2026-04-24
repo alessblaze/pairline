@@ -2,11 +2,15 @@ package turnservice
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
 	"net"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,6 +28,20 @@ import (
 
 var turnTracer = otel.Tracer("pairline/turn")
 
+const releaseAttemptTimeout = 750 * time.Millisecond
+const releaseRepairInterval = 2 * time.Second
+
+type PendingRelease struct {
+	Username    string
+	OperationID string
+}
+
+type pendingReleaseState struct {
+	PendingRelease
+	local   bool
+	durable bool
+}
+
 type Service struct {
 	config                  Config
 	server                  *pionturn.Server
@@ -36,6 +54,9 @@ type Service struct {
 	allocationKeysBySession map[string]map[string]struct{}
 	allocationCountByUserID map[string]int
 	sessionIPByUserID       map[string]rememberedSessionIP
+	pendingReleases         map[string]map[string]struct{}
+	releaseSignal           chan struct{}
+	releaseSequence         atomic.Uint64
 	revokeAllocation        func(activeAllocation) error
 }
 
@@ -43,7 +64,10 @@ type Validator interface {
 	ValidateTURNUsername(context.Context, string) (ValidationResult, error)
 	CheckBannedSessionIPs(context.Context, []string) ([]string, error)
 	ReserveTURNAllocation(context.Context, string, int) (bool, error)
-	ReleaseTURNAllocation(context.Context, string) error
+	ReleaseTURNAllocation(context.Context, string, string) error
+	QueuePendingTURNRelease(context.Context, string, string) error
+	PendingTURNReleases(context.Context, string) ([]PendingRelease, error)
+	CompletePendingTURNRelease(context.Context, string, string) error
 }
 
 type grpcValidator struct {
@@ -100,12 +124,58 @@ func (v *grpcValidator) CheckBannedSessionIPs(ctx context.Context, sessionIPs []
 	return append([]string(nil), resp.BannedIPs...), nil
 }
 
-func (v *grpcValidator) ReleaseTURNAllocation(ctx context.Context, username string) error {
-	resp, err := v.client.ReleaseAllocation(ctx, &turncontrol.ReleaseAllocationRequest{Username: username})
+func (v *grpcValidator) ReleaseTURNAllocation(ctx context.Context, username, operationID string) error {
+	resp, err := v.client.ReleaseAllocation(ctx, &turncontrol.ReleaseAllocationRequest{
+		Username:    username,
+		OperationID: operationID,
+	})
 	if err != nil {
 		return err
 	}
 	if !resp.Released && resp.Reason != "" {
+		return validationErrorFromReason(resp.Reason)
+	}
+	return nil
+}
+
+func (v *grpcValidator) QueuePendingTURNRelease(ctx context.Context, username, operationID string) error {
+	resp, err := v.client.QueuePendingRelease(ctx, &turncontrol.QueuePendingReleaseRequest{
+		Username:    username,
+		OperationID: operationID,
+	})
+	if err != nil {
+		return err
+	}
+	if !resp.Queued && resp.Reason != "" {
+		return validationErrorFromReason(resp.Reason)
+	}
+	return nil
+}
+
+func (v *grpcValidator) PendingTURNReleases(ctx context.Context, username string) ([]PendingRelease, error) {
+	resp, err := v.client.PendingReleases(ctx, &turncontrol.PendingReleasesRequest{Username: username})
+	if err != nil {
+		return nil, err
+	}
+	releases := make([]PendingRelease, 0, len(resp.Releases))
+	for _, release := range resp.Releases {
+		releases = append(releases, PendingRelease{
+			Username:    release.Username,
+			OperationID: release.OperationID,
+		})
+	}
+	return releases, nil
+}
+
+func (v *grpcValidator) CompletePendingTURNRelease(ctx context.Context, username, operationID string) error {
+	resp, err := v.client.CompletePendingRelease(ctx, &turncontrol.CompletePendingReleaseRequest{
+		Username:    username,
+		OperationID: operationID,
+	})
+	if err != nil {
+		return err
+	}
+	if !resp.Completed && resp.Reason != "" {
 		return validationErrorFromReason(resp.Reason)
 	}
 	return nil
@@ -132,8 +202,20 @@ func (v *pooledGRPCValidator) CheckBannedSessionIPs(ctx context.Context, session
 	return (&grpcValidator{client: v.pickClient()}).CheckBannedSessionIPs(ctx, sessionIPs)
 }
 
-func (v *pooledGRPCValidator) ReleaseTURNAllocation(ctx context.Context, username string) error {
-	return (&grpcValidator{client: v.pickClient()}).ReleaseTURNAllocation(ctx, username)
+func (v *pooledGRPCValidator) ReleaseTURNAllocation(ctx context.Context, username, operationID string) error {
+	return (&grpcValidator{client: v.pickClient()}).ReleaseTURNAllocation(ctx, username, operationID)
+}
+
+func (v *pooledGRPCValidator) QueuePendingTURNRelease(ctx context.Context, username, operationID string) error {
+	return (&grpcValidator{client: v.pickClient()}).QueuePendingTURNRelease(ctx, username, operationID)
+}
+
+func (v *pooledGRPCValidator) PendingTURNReleases(ctx context.Context, username string) ([]PendingRelease, error) {
+	return (&grpcValidator{client: v.pickClient()}).PendingTURNReleases(ctx, username)
+}
+
+func (v *pooledGRPCValidator) CompletePendingTURNRelease(ctx context.Context, username, operationID string) error {
+	return (&grpcValidator{client: v.pickClient()}).CompletePendingTURNRelease(ctx, username, operationID)
 }
 
 func NewService(config Config, validator Validator) (*Service, error) {
@@ -152,6 +234,8 @@ func NewService(config Config, validator Validator) (*Service, error) {
 		allocationKeysBySession: make(map[string]map[string]struct{}),
 		allocationCountByUserID: make(map[string]int),
 		sessionIPByUserID:       make(map[string]rememberedSessionIP),
+		pendingReleases:         make(map[string]map[string]struct{}),
+		releaseSignal:           make(chan struct{}, 1),
 	}
 
 	packetConfigs := make([]pionturn.PacketConnConfig, 0, 1)
@@ -215,8 +299,11 @@ func NewService(config Config, validator Validator) (*Service, error) {
 				svc.trackActiveAllocation(srcAddr, dstAddr, protocol, userID)
 			},
 			OnAllocationDeleted: func(srcAddr, dstAddr net.Addr, protocol, userID, _ string) {
-				svc.untrackActiveAllocation(srcAddr, dstAddr, protocol)
-				svc.releaseAllocationSlot(userID)
+				allocation, ok := svc.untrackActiveAllocation(srcAddr, dstAddr, protocol)
+				if !ok {
+					return
+				}
+				svc.releaseDeletedAllocation(allocation, userID)
 			},
 		},
 	})
@@ -247,6 +334,8 @@ func (s *Service) Run(ctx context.Context) error {
 	)
 
 	go s.runBanSweep(ctx)
+	go s.runReleaseWorker(ctx)
+	s.signalReleaseWorker()
 
 	<-ctx.Done()
 	return s.Close()
@@ -315,10 +404,7 @@ func (s *Service) quotaHandler(username, realm string, srcAddr net.Addr) bool {
 		return true
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	ctx, span := turnTracer.Start(ctx, "turn.quota.reserve",
+	ctx, span := turnTracer.Start(context.Background(), "turn.quota.reserve",
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(
 			attribute.String("turn.username", username),
@@ -328,7 +414,16 @@ func (s *Service) quotaHandler(username, realm string, srcAddr net.Addr) bool {
 	)
 	defer span.End()
 
-	allowed, err := s.validator.ReserveTURNAllocation(ctx, username, s.config.AllocationQuota)
+	flushCtx, flushCancel := context.WithTimeout(ctx, 2*time.Second)
+	defer flushCancel()
+	if err := s.flushPendingReleases(flushCtx, username); err != nil {
+		span.RecordError(err)
+		log.Printf("TURN pending release flush failed user=%q peer_addr=%v reason=%v", username, srcAddr, err)
+	}
+
+	reserveCtx, reserveCancel := context.WithTimeout(ctx, 2*time.Second)
+	defer reserveCancel()
+	allowed, err := s.validator.ReserveTURNAllocation(reserveCtx, username, s.config.AllocationQuota)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -436,25 +531,64 @@ func validationErrorFromReason(reason string) error {
 	}
 }
 
-func (s *Service) releaseAllocationSlot(username string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
+func (s *Service) releaseAllocationSlot(ctx context.Context, username, operationID string) error {
 	ctx, span := turnTracer.Start(ctx, "turn.allocation.release",
 		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(attribute.String("turn.username", username)),
+		trace.WithAttributes(
+			attribute.String("turn.username", username),
+			attribute.String("turn.release_operation_id", operationID),
+		),
 	)
 	defer span.End()
 
-	if err := s.validator.ReleaseTURNAllocation(ctx, username); err != nil {
+	if err := s.validator.ReleaseTURNAllocation(ctx, username, operationID); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		observability.RecordTURNRelayRelease(ctx, false)
-		log.Printf("TURN allocation release failed user=%q reason=%v", username, err)
-		return
+		return err
 	}
 
 	observability.RecordTURNRelayRelease(ctx, true)
+	return nil
+}
+
+func (s *Service) releaseDeletedAllocation(allocation activeAllocation, fallbackUsername string) {
+	releaseUserID := strings.TrimSpace(allocation.Username)
+	if releaseUserID == "" {
+		releaseUserID = strings.TrimSpace(fallbackUsername)
+	}
+	operationID := strings.TrimSpace(allocation.ReleaseOperationID)
+	if releaseUserID == "" || operationID == "" {
+		return
+	}
+
+	queueCtx, queueCancel := context.WithTimeout(context.Background(), releaseAttemptTimeout)
+	queueErr := s.validator.QueuePendingTURNRelease(queueCtx, releaseUserID, operationID)
+	queueCancel()
+	if queueErr != nil {
+		log.Printf("TURN allocation release persistence failed user=%q operation_id=%s reason=%v", releaseUserID, operationID, queueErr)
+		s.queueAllocationRelease(releaseUserID, operationID)
+	}
+
+	releaseCtx, cancel := context.WithTimeout(context.Background(), releaseAttemptTimeout)
+	err := s.releaseAllocationSlot(releaseCtx, releaseUserID, operationID)
+	cancel()
+	if err == nil {
+		if queueErr == nil {
+			completeCtx, completeCancel := context.WithTimeout(context.Background(), releaseAttemptTimeout)
+			completeErr := s.validator.CompletePendingTURNRelease(completeCtx, releaseUserID, operationID)
+			completeCancel()
+			if completeErr != nil {
+				log.Printf("TURN allocation release completion deferred user=%q operation_id=%s reason=%v", releaseUserID, operationID, completeErr)
+				s.signalReleaseWorker()
+			}
+		}
+		s.completePendingRelease(releaseUserID, operationID)
+		return
+	}
+
+	log.Printf("TURN allocation release retry scheduled user=%q operation_id=%s reason=%v", releaseUserID, operationID, err)
+	s.signalReleaseWorker()
 }
 
 func (s *Service) logAuthAllowed(result ValidationResult, srcAddr net.Addr) {
@@ -463,4 +597,187 @@ func (s *Service) logAuthAllowed(result ValidationResult, srcAddr net.Addr) {
 		return
 	}
 	log.Printf("TURN auth allowed session=%s matched=%s peer_addr=%v", result.SessionID, result.MatchedID, srcAddr)
+}
+
+func (s *Service) queueAllocationRelease(username, operationID string) {
+	username = strings.TrimSpace(username)
+	operationID = strings.TrimSpace(operationID)
+	if username == "" || operationID == "" {
+		return
+	}
+
+	s.mu.Lock()
+	if s.pendingReleases == nil {
+		s.pendingReleases = make(map[string]map[string]struct{})
+	}
+	if s.pendingReleases[username] == nil {
+		s.pendingReleases[username] = make(map[string]struct{})
+	}
+	s.pendingReleases[username][operationID] = struct{}{}
+	s.mu.Unlock()
+
+	s.signalReleaseWorker()
+}
+
+func (s *Service) signalReleaseWorker() {
+	select {
+	case s.releaseSignal <- struct{}{}:
+	default:
+	}
+}
+
+func (s *Service) flushPendingReleases(ctx context.Context, username string) error {
+	return s.processPendingReleases(ctx, username)
+}
+
+func (s *Service) runReleaseWorker(ctx context.Context) {
+	ticker := time.NewTicker(releaseRepairInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.releaseSignal:
+			if err := s.processPendingReleases(ctx, ""); err != nil {
+				log.Printf("TURN pending release processing failed: %v", err)
+			}
+		case <-ticker.C:
+			if err := s.processPendingReleases(ctx, ""); err != nil {
+				log.Printf("TURN pending release repair failed: %v", err)
+			}
+		}
+	}
+}
+
+func pendingReleaseCompositeKey(username, operationID string) string {
+	return username + "\x1f" + operationID
+}
+
+func (s *Service) pendingReleaseStates(ctx context.Context, username string) ([]pendingReleaseState, error) {
+	states := make(map[string]pendingReleaseState)
+	for _, release := range s.snapshotPendingReleases(username) {
+		key := pendingReleaseCompositeKey(release.Username, release.OperationID)
+		state := states[key]
+		state.PendingRelease = release
+		state.local = true
+		states[key] = state
+	}
+
+	durable, err := s.validator.PendingTURNReleases(ctx, username)
+	if err != nil && len(states) == 0 {
+		return nil, err
+	}
+	for _, release := range durable {
+		key := pendingReleaseCompositeKey(release.Username, release.OperationID)
+		state := states[key]
+		state.PendingRelease = release
+		state.durable = true
+		states[key] = state
+	}
+
+	releases := make([]pendingReleaseState, 0, len(states))
+	for _, state := range states {
+		releases = append(releases, state)
+	}
+	return releases, err
+}
+
+func (s *Service) processPendingReleases(ctx context.Context, username string) error {
+	states, stateErr := s.pendingReleaseStates(ctx, username)
+	if len(states) == 0 {
+		return stateErr
+	}
+
+	var processErr error
+	if stateErr != nil {
+		processErr = stateErr
+	}
+	for _, state := range states {
+		if state.local && !state.durable {
+			queueCtx, queueCancel := context.WithTimeout(ctx, releaseAttemptTimeout)
+			queueErr := s.validator.QueuePendingTURNRelease(queueCtx, state.Username, state.OperationID)
+			queueCancel()
+			if queueErr != nil {
+				processErr = errors.Join(processErr, queueErr)
+			} else {
+				state.durable = true
+			}
+		}
+
+		releaseCtx, cancel := context.WithTimeout(ctx, releaseAttemptTimeout)
+		err := s.releaseAllocationSlot(releaseCtx, state.Username, state.OperationID)
+		cancel()
+		if err != nil {
+			processErr = errors.Join(processErr, err)
+			log.Printf("TURN allocation release failed user=%q operation_id=%s reason=%v", state.Username, state.OperationID, err)
+			continue
+		}
+
+		if state.durable {
+			completeCtx, completeCancel := context.WithTimeout(ctx, releaseAttemptTimeout)
+			completeErr := s.validator.CompletePendingTURNRelease(completeCtx, state.Username, state.OperationID)
+			completeCancel()
+			if completeErr != nil {
+				processErr = errors.Join(processErr, completeErr)
+				log.Printf("TURN allocation release completion failed user=%q operation_id=%s reason=%v", state.Username, state.OperationID, completeErr)
+				continue
+			}
+		}
+
+		if state.local {
+			s.completePendingRelease(state.Username, state.OperationID)
+		}
+	}
+	return processErr
+}
+
+func (s *Service) snapshotPendingReleases(username string) []PendingRelease {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	username = strings.TrimSpace(username)
+	releases := make([]PendingRelease, 0)
+	appendPending := func(userID string, operations map[string]struct{}) {
+		for operationID := range operations {
+			releases = append(releases, PendingRelease{
+				Username:    userID,
+				OperationID: operationID,
+			})
+		}
+	}
+
+	if username != "" {
+		appendPending(username, s.pendingReleases[username])
+		return releases
+	}
+
+	for userID, operations := range s.pendingReleases {
+		appendPending(userID, operations)
+	}
+	return releases
+}
+
+func (s *Service) completePendingRelease(username, operationID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	operations := s.pendingReleases[username]
+	if operations == nil {
+		return
+	}
+	delete(operations, operationID)
+	if len(operations) == 0 {
+		delete(s.pendingReleases, username)
+	}
+}
+
+func (s *Service) nextReleaseOperationID() string {
+	var randomBytes [12]byte
+	if _, err := rand.Read(randomBytes[:]); err == nil {
+		return "turn-release-" + hex.EncodeToString(randomBytes[:])
+	}
+
+	sequence := s.releaseSequence.Add(1)
+	return "turn-release-fallback-" + strconv.FormatInt(time.Now().UnixNano(), 10) + "-" + strconv.FormatUint(sequence, 10)
 }

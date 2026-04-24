@@ -151,6 +151,18 @@ func (v *redisValidator) ReserveTURNAllocation(ctx context.Context, username str
 	return turnservice.ReserveAllocationSlot(ctx, v.redisClient.GetClient(), username, limit)
 }
 
-func (v *redisValidator) ReleaseTURNAllocation(ctx context.Context, username string) error {
-	return turnservice.ReleaseAllocationSlot(ctx, v.redisClient.GetClient(), username)
+func (v *redisValidator) ReleaseTURNAllocation(ctx context.Context, username, operationID string) error {
+	return turnservice.ReleaseAllocationSlot(ctx, v.redisClient.GetClient(), username, operationID)
+}
+
+func (v *redisValidator) QueuePendingTURNRelease(ctx context.Context, username, operationID string) error {
+	return turnservice.QueuePendingRelease(ctx, v.redisClient.GetClient(), username, operationID)
+}
+
+func (v *redisValidator) PendingTURNReleases(ctx context.Context, username string) ([]turnservice.PendingRelease, error) {
+	return turnservice.PendingReleases(ctx, v.redisClient.GetClient(), username)
+}
+
+func (v *redisValidator) CompletePendingTURNRelease(ctx context.Context, username, operationID string) error {
+	return turnservice.CompletePendingRelease(ctx, v.redisClient.GetClient(), username, operationID)
 }

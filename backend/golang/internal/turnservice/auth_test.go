@@ -24,30 +24,34 @@ func (fakeRedisError) RedisError() {}
 
 type fakeRedisClient struct {
 	redis.UniversalClient
-	strings   map[string]string
-	exists    map[string]bool
-	ints      map[string]int64
-	expiry    map[string]time.Duration
-	scriptSHA map[string]string
-	getErr    map[string]error
-	existsErr map[string]error
-	incrErr   map[string]error
-	decrErr   map[string]error
-	delErr    map[string]error
+	strings    map[string]string
+	hashes     map[string]map[string]string
+	exists     map[string]bool
+	ints       map[string]int64
+	expiry     map[string]time.Duration
+	releaseOps map[string]map[string]bool
+	scriptSHA  map[string]string
+	getErr     map[string]error
+	existsErr  map[string]error
+	incrErr    map[string]error
+	decrErr    map[string]error
+	delErr     map[string]error
 }
 
 func newFakeRedisClient() *fakeRedisClient {
 	client := &fakeRedisClient{
-		strings:   map[string]string{},
-		exists:    map[string]bool{},
-		ints:      map[string]int64{},
-		expiry:    map[string]time.Duration{},
-		scriptSHA: map[string]string{},
-		getErr:    map[string]error{},
-		existsErr: map[string]error{},
-		incrErr:   map[string]error{},
-		decrErr:   map[string]error{},
-		delErr:    map[string]error{},
+		strings:    map[string]string{},
+		hashes:     map[string]map[string]string{},
+		exists:     map[string]bool{},
+		ints:       map[string]int64{},
+		expiry:     map[string]time.Duration{},
+		releaseOps: map[string]map[string]bool{},
+		scriptSHA:  map[string]string{},
+		getErr:     map[string]error{},
+		existsErr:  map[string]error{},
+		incrErr:    map[string]error{},
+		decrErr:    map[string]error{},
+		delErr:     map[string]error{},
 	}
 	return client
 }
@@ -102,8 +106,62 @@ func (f *fakeRedisClient) Del(_ context.Context, keys ...string) *redis.IntCmd {
 		}
 		delete(f.ints, key)
 		delete(f.expiry, key)
+		delete(f.releaseOps, key)
+		delete(f.hashes, key)
 	}
 	return redis.NewIntResult(int64(len(keys)), nil)
+}
+
+func (f *fakeRedisClient) HSet(_ context.Context, key string, values ...interface{}) *redis.IntCmd {
+	if len(values)%2 != 0 {
+		return redis.NewIntResult(0, fmt.Errorf("unexpected hset values"))
+	}
+	if f.hashes[key] == nil {
+		f.hashes[key] = make(map[string]string)
+	}
+
+	var added int64
+	for i := 0; i < len(values); i += 2 {
+		field, ok := values[i].(string)
+		if !ok {
+			return redis.NewIntResult(0, fmt.Errorf("invalid hset field %v", values[i]))
+		}
+		value, ok := values[i+1].(string)
+		if !ok {
+			return redis.NewIntResult(0, fmt.Errorf("invalid hset value %v", values[i+1]))
+		}
+		if _, exists := f.hashes[key][field]; !exists {
+			added++
+		}
+		f.hashes[key][field] = value
+	}
+	return redis.NewIntResult(added, nil)
+}
+
+func (f *fakeRedisClient) HDel(_ context.Context, key string, fields ...string) *redis.IntCmd {
+	if f.hashes[key] == nil {
+		return redis.NewIntResult(0, nil)
+	}
+
+	var removed int64
+	for _, field := range fields {
+		if _, exists := f.hashes[key][field]; exists {
+			delete(f.hashes[key], field)
+			removed++
+		}
+	}
+	if len(f.hashes[key]) == 0 {
+		delete(f.hashes, key)
+	}
+	return redis.NewIntResult(removed, nil)
+}
+
+func (f *fakeRedisClient) HGetAll(_ context.Context, key string) *redis.MapStringStringCmd {
+	values := make(map[string]string, len(f.hashes[key]))
+	for field, value := range f.hashes[key] {
+		values[field] = value
+	}
+	return redis.NewMapStringStringResult(values, nil)
 }
 
 func (f *fakeRedisClient) Eval(ctx context.Context, script string, keys []string, args ...interface{}) *redis.Cmd {
@@ -132,9 +190,6 @@ func (f *fakeRedisClient) Eval(ctx context.Context, script string, keys []string
 		f.ints[key]++
 		f.expiry[key] = time.Duration(ttlMs) * time.Millisecond
 		if f.ints[key] > limit {
-			if err, ok := f.decrErr[key]; ok {
-				return redis.NewCmdResult(nil, err)
-			}
 			f.ints[key]--
 			if f.ints[key] <= 0 {
 				delete(f.ints, key)
@@ -145,21 +200,45 @@ func (f *fakeRedisClient) Eval(ctx context.Context, script string, keys []string
 		return redis.NewCmdResult(int64(1), nil)
 
 	case releaseAllocationSlotScriptSource:
-		if len(keys) != 1 {
+		if len(keys) != 1 || len(args) != 2 {
 			return redis.NewCmdResult(nil, fmt.Errorf("unexpected release script args"))
 		}
 
 		key := keys[0]
+		operationID, ok := args[0].(string)
+		if !ok || operationID == "" {
+			return redis.NewCmdResult(nil, fmt.Errorf("invalid release operation id %v", args[0]))
+		}
+		ttlMs, ok := toInt64(args[1])
+		if !ok {
+			return redis.NewCmdResult(nil, fmt.Errorf("invalid ttl arg %v", args[1]))
+		}
+
+		if f.releaseOps[key] == nil {
+			f.releaseOps[key] = make(map[string]bool)
+		}
+		if f.ints[key] <= 0 {
+			f.ints[key] = 0
+			f.releaseOps[key][operationID] = true
+			f.expiry[key] = time.Duration(ttlMs) * time.Millisecond
+			return redis.NewCmdResult(int64(0), nil)
+		}
+		if f.releaseOps[key][operationID] {
+			return redis.NewCmdResult(f.ints[key], nil)
+		}
+
 		if err, ok := f.decrErr[key]; ok {
 			return redis.NewCmdResult(nil, err)
 		}
 
+		f.releaseOps[key][operationID] = true
 		f.ints[key]--
 		if f.ints[key] <= 0 {
-			delete(f.ints, key)
-			delete(f.expiry, key)
+			f.ints[key] = 0
+			f.expiry[key] = time.Duration(ttlMs) * time.Millisecond
 			return redis.NewCmdResult(int64(0), nil)
 		}
+		f.expiry[key] = time.Duration(ttlMs) * time.Millisecond
 		return redis.NewCmdResult(f.ints[key], nil)
 	case sessionValidationSnapshotScriptSource:
 		if len(keys) != 4 {
@@ -193,6 +272,25 @@ func (f *fakeRedisClient) Eval(ctx context.Context, script string, keys []string
 		}
 		peerMatchedID := f.strings[keys[1]]
 		return redis.NewCmdResult([]interface{}{peerExists, peerMatchedID}, nil)
+	case checkBannedSessionIPsBatchScriptSource:
+		if len(keys) != len(args) {
+			return redis.NewCmdResult(nil, fmt.Errorf("unexpected banned session IP batch args"))
+		}
+		banned := make([]interface{}, 0, len(keys))
+		for index, key := range keys {
+			if err, ok := f.existsErr[key]; ok {
+				return redis.NewCmdResult(nil, err)
+			}
+			if !f.exists[key] {
+				continue
+			}
+			ipAddress, ok := args[index].(string)
+			if !ok {
+				return redis.NewCmdResult(nil, fmt.Errorf("invalid session ip arg %v", args[index]))
+			}
+			banned = append(banned, ipAddress)
+		}
+		return redis.NewCmdResult(banned, nil)
 	default:
 		return redis.NewCmdResult(nil, fmt.Errorf("unexpected script"))
 	}
@@ -292,7 +390,7 @@ func TestReserveAndReleaseAllocationSlot(t *testing.T) {
 		t.Fatal("ReserveAllocationSlot(second) = true, want false")
 	}
 
-	if err := ReleaseAllocationSlot(context.Background(), redisClient, username); err != nil {
+	if err := ReleaseAllocationSlot(context.Background(), redisClient, username, "release-1"); err != nil {
 		t.Fatalf("ReleaseAllocationSlot() error = %v", err)
 	}
 
@@ -345,6 +443,141 @@ func TestReserveAllocationSlotSetsSafetyTTL(t *testing.T) {
 
 	if got := redisClient.expiry[turnAllocationKey("session-1")]; got != turnAllocationCounterTTL {
 		t.Fatalf("allocation ttl = %s, want %s", got, turnAllocationCounterTTL)
+	}
+}
+
+func TestReleaseAllocationSlotIsIdempotentPerOperationID(t *testing.T) {
+	redisClient := newFakeRedisClient()
+	username := BuildUsername("session-1", "token-1")
+
+	allowed, err := ReserveAllocationSlot(context.Background(), redisClient, username, 2)
+	if err != nil {
+		t.Fatalf("ReserveAllocationSlot() error = %v", err)
+	}
+	if !allowed {
+		t.Fatal("ReserveAllocationSlot() = false, want true")
+	}
+
+	allowed, err = ReserveAllocationSlot(context.Background(), redisClient, username, 2)
+	if err != nil {
+		t.Fatalf("ReserveAllocationSlot(second) error = %v", err)
+	}
+	if !allowed {
+		t.Fatal("ReserveAllocationSlot(second) = false, want true")
+	}
+
+	if err := ReleaseAllocationSlot(context.Background(), redisClient, username, "release-1"); err != nil {
+		t.Fatalf("ReleaseAllocationSlot(first) error = %v", err)
+	}
+	if err := ReleaseAllocationSlot(context.Background(), redisClient, username, "release-1"); err != nil {
+		t.Fatalf("ReleaseAllocationSlot(retry) error = %v", err)
+	}
+	if got := redisClient.ints[turnAllocationKey("session-1")]; got != 1 {
+		t.Fatalf("allocation counter after duplicate release = %d, want 1", got)
+	}
+
+	if err := ReleaseAllocationSlot(context.Background(), redisClient, username, "release-2"); err != nil {
+		t.Fatalf("ReleaseAllocationSlot(second allocation) error = %v", err)
+	}
+	if got := redisClient.ints[turnAllocationKey("session-1")]; got != 0 {
+		t.Fatalf("allocation counter after distinct release = %d, want 0", got)
+	}
+}
+
+func TestReleaseAllocationSlotDoesNotTouchNewAllocationGeneration(t *testing.T) {
+	redisClient := newFakeRedisClient()
+	username := BuildUsername("session-1", "token-1")
+
+	allowed, err := ReserveAllocationSlot(context.Background(), redisClient, username, 1)
+	if err != nil {
+		t.Fatalf("ReserveAllocationSlot() error = %v", err)
+	}
+	if !allowed {
+		t.Fatal("ReserveAllocationSlot() = false, want true")
+	}
+
+	if err := ReleaseAllocationSlot(context.Background(), redisClient, username, "release-1"); err != nil {
+		t.Fatalf("ReleaseAllocationSlot(first generation) error = %v", err)
+	}
+
+	allowed, err = ReserveAllocationSlot(context.Background(), redisClient, username, 1)
+	if err != nil {
+		t.Fatalf("ReserveAllocationSlot(second generation) error = %v", err)
+	}
+	if !allowed {
+		t.Fatal("ReserveAllocationSlot(second generation) = false, want true")
+	}
+
+	if err := ReleaseAllocationSlot(context.Background(), redisClient, username, "release-1"); err != nil {
+		t.Fatalf("ReleaseAllocationSlot(retry) error = %v", err)
+	}
+	if got := redisClient.ints[turnAllocationKey("session-1")]; got != 1 {
+		t.Fatalf("allocation counter after retry against new generation = %d, want 1", got)
+	}
+}
+
+func TestReleaseAllocationSlotOnMissingKeyStillProtectsFutureGeneration(t *testing.T) {
+	redisClient := newFakeRedisClient()
+	username := BuildUsername("session-1", "token-1")
+
+	if err := ReleaseAllocationSlot(context.Background(), redisClient, username, "release-1"); err != nil {
+		t.Fatalf("ReleaseAllocationSlot(missing key) error = %v", err)
+	}
+	if got := redisClient.ints[turnAllocationKey("session-1")]; got != 0 {
+		t.Fatalf("allocation counter after missing-key release = %d, want 0", got)
+	}
+
+	allowed, err := ReserveAllocationSlot(context.Background(), redisClient, username, 1)
+	if err != nil {
+		t.Fatalf("ReserveAllocationSlot() error = %v", err)
+	}
+	if !allowed {
+		t.Fatal("ReserveAllocationSlot() = false, want true")
+	}
+
+	if err := ReleaseAllocationSlot(context.Background(), redisClient, username, "release-1"); err != nil {
+		t.Fatalf("ReleaseAllocationSlot(retry) error = %v", err)
+	}
+	if got := redisClient.ints[turnAllocationKey("session-1")]; got != 1 {
+		t.Fatalf("allocation counter after missing-key retry against new generation = %d, want 1", got)
+	}
+}
+
+func TestPendingReleasesRoundTrip(t *testing.T) {
+	redisClient := newFakeRedisClient()
+
+	if err := QueuePendingRelease(context.Background(), redisClient, BuildUsername("session-2", "token-2"), "release-2"); err != nil {
+		t.Fatalf("QueuePendingRelease(second) error = %v", err)
+	}
+	if err := QueuePendingRelease(context.Background(), redisClient, BuildUsername("session-1", "token-1"), "release-1"); err != nil {
+		t.Fatalf("QueuePendingRelease(first) error = %v", err)
+	}
+
+	filtered, err := PendingReleases(context.Background(), redisClient, BuildUsername("session-1", "token-1"))
+	if err != nil {
+		t.Fatalf("PendingReleases(filtered) error = %v", err)
+	}
+	if len(filtered) != 1 || filtered[0].OperationID != "release-1" {
+		t.Fatalf("PendingReleases(filtered) = %#v, want only release-1", filtered)
+	}
+
+	all, err := PendingReleases(context.Background(), redisClient, "")
+	if err != nil {
+		t.Fatalf("PendingReleases(all) error = %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("len(PendingReleases(all)) = %d, want 2", len(all))
+	}
+
+	if err := CompletePendingRelease(context.Background(), redisClient, BuildUsername("session-1", "token-1"), "release-1"); err != nil {
+		t.Fatalf("CompletePendingRelease() error = %v", err)
+	}
+	all, err = PendingReleases(context.Background(), redisClient, "")
+	if err != nil {
+		t.Fatalf("PendingReleases(after complete) error = %v", err)
+	}
+	if len(all) != 1 || all[0].OperationID != "release-2" {
+		t.Fatalf("PendingReleases(after complete) = %#v, want only release-2", all)
 	}
 }
 

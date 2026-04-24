@@ -53,13 +53,51 @@ func (s *turnControlValidationServer) ReserveAllocation(ctx context.Context, req
 }
 
 func (s *turnControlValidationServer) ReleaseAllocation(ctx context.Context, req *turncontrol.ReleaseAllocationRequest) (*turncontrol.ReleaseAllocationResponse, error) {
-	if err := turnservice.ReleaseAllocationSlot(ctx, s.redisClient, req.Username); err != nil {
+	if err := turnservice.ReleaseAllocationSlot(ctx, s.redisClient, req.Username, req.OperationID); err != nil {
 		return &turncontrol.ReleaseAllocationResponse{
 			Released: false,
 			Reason:   turnservice.ValidationErrorReason(err),
 		}, nil
 	}
 	return &turncontrol.ReleaseAllocationResponse{Released: true}, nil
+}
+
+func (s *turnControlValidationServer) QueuePendingRelease(ctx context.Context, req *turncontrol.QueuePendingReleaseRequest) (*turncontrol.QueuePendingReleaseResponse, error) {
+	if err := turnservice.QueuePendingRelease(ctx, s.redisClient, req.Username, req.OperationID); err != nil {
+		return &turncontrol.QueuePendingReleaseResponse{
+			Queued: false,
+			Reason: turnservice.ValidationErrorReason(err),
+		}, nil
+	}
+	return &turncontrol.QueuePendingReleaseResponse{Queued: true}, nil
+}
+
+func (s *turnControlValidationServer) PendingReleases(ctx context.Context, req *turncontrol.PendingReleasesRequest) (*turncontrol.PendingReleasesResponse, error) {
+	releases, err := turnservice.PendingReleases(ctx, s.redisClient, req.Username)
+	if err != nil {
+		return nil, err
+	}
+
+	response := &turncontrol.PendingReleasesResponse{
+		Releases: make([]turncontrol.PendingRelease, 0, len(releases)),
+	}
+	for _, release := range releases {
+		response.Releases = append(response.Releases, turncontrol.PendingRelease{
+			Username:    release.Username,
+			OperationID: release.OperationID,
+		})
+	}
+	return response, nil
+}
+
+func (s *turnControlValidationServer) CompletePendingRelease(ctx context.Context, req *turncontrol.CompletePendingReleaseRequest) (*turncontrol.CompletePendingReleaseResponse, error) {
+	if err := turnservice.CompletePendingRelease(ctx, s.redisClient, req.Username, req.OperationID); err != nil {
+		return &turncontrol.CompletePendingReleaseResponse{
+			Completed: false,
+			Reason:    turnservice.ValidationErrorReason(err),
+		}, nil
+	}
+	return &turncontrol.CompletePendingReleaseResponse{Completed: true}, nil
 }
 
 func validationSuccessResponse(result turnservice.ValidationResult) *turncontrol.ValidationResponse {

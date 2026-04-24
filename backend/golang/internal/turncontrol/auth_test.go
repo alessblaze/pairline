@@ -36,6 +36,18 @@ func (s *testServiceServer) ReleaseAllocation(context.Context, *ReleaseAllocatio
 	return &ReleaseAllocationResponse{Released: true}, nil
 }
 
+func (s *testServiceServer) QueuePendingRelease(context.Context, *QueuePendingReleaseRequest) (*QueuePendingReleaseResponse, error) {
+	return &QueuePendingReleaseResponse{Queued: true}, nil
+}
+
+func (s *testServiceServer) PendingReleases(context.Context, *PendingReleasesRequest) (*PendingReleasesResponse, error) {
+	return &PendingReleasesResponse{}, nil
+}
+
+func (s *testServiceServer) CompletePendingRelease(context.Context, *CompletePendingReleaseRequest) (*CompletePendingReleaseResponse, error) {
+	return &CompletePendingReleaseResponse{Completed: true}, nil
+}
+
 func startTestServer(t *testing.T, sharedSecret string, srv ServiceServer) (*bufconn.Listener, func()) {
 	t.Helper()
 

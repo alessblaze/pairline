@@ -33,13 +33,47 @@ type CheckBannedSessionIPsResponse struct {
 	BannedIPs []string `json:"banned_ips,omitempty"`
 }
 
+type PendingRelease struct {
+	Username    string `json:"username"`
+	OperationID string `json:"operation_id,omitempty"`
+}
+
 type ReleaseAllocationRequest struct {
-	Username string `json:"username"`
+	Username    string `json:"username"`
+	OperationID string `json:"operation_id,omitempty"`
+}
+
+type QueuePendingReleaseRequest struct {
+	Username    string `json:"username"`
+	OperationID string `json:"operation_id,omitempty"`
+}
+
+type CompletePendingReleaseRequest struct {
+	Username    string `json:"username"`
+	OperationID string `json:"operation_id,omitempty"`
+}
+
+type PendingReleasesRequest struct {
+	Username string `json:"username,omitempty"`
 }
 
 type ReleaseAllocationResponse struct {
 	Released bool   `json:"released"`
 	Reason   string `json:"reason,omitempty"`
+}
+
+type QueuePendingReleaseResponse struct {
+	Queued bool   `json:"queued"`
+	Reason string `json:"reason,omitempty"`
+}
+
+type CompletePendingReleaseResponse struct {
+	Completed bool   `json:"completed"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+type PendingReleasesResponse struct {
+	Releases []PendingRelease `json:"releases,omitempty"`
 }
 
 type ValidationResponse struct {
@@ -57,6 +91,9 @@ type ServiceServer interface {
 	CheckBannedSessionIPs(context.Context, *CheckBannedSessionIPsRequest) (*CheckBannedSessionIPsResponse, error)
 	ReserveAllocation(context.Context, *ReserveAllocationRequest) (*ReserveAllocationResponse, error)
 	ReleaseAllocation(context.Context, *ReleaseAllocationRequest) (*ReleaseAllocationResponse, error)
+	QueuePendingRelease(context.Context, *QueuePendingReleaseRequest) (*QueuePendingReleaseResponse, error)
+	PendingReleases(context.Context, *PendingReleasesRequest) (*PendingReleasesResponse, error)
+	CompletePendingRelease(context.Context, *CompletePendingReleaseRequest) (*CompletePendingReleaseResponse, error)
 }
 
 type ServiceClient interface {
@@ -65,6 +102,9 @@ type ServiceClient interface {
 	CheckBannedSessionIPs(context.Context, *CheckBannedSessionIPsRequest, ...grpc.CallOption) (*CheckBannedSessionIPsResponse, error)
 	ReserveAllocation(context.Context, *ReserveAllocationRequest, ...grpc.CallOption) (*ReserveAllocationResponse, error)
 	ReleaseAllocation(context.Context, *ReleaseAllocationRequest, ...grpc.CallOption) (*ReleaseAllocationResponse, error)
+	QueuePendingRelease(context.Context, *QueuePendingReleaseRequest, ...grpc.CallOption) (*QueuePendingReleaseResponse, error)
+	PendingReleases(context.Context, *PendingReleasesRequest, ...grpc.CallOption) (*PendingReleasesResponse, error)
+	CompletePendingRelease(context.Context, *CompletePendingReleaseRequest, ...grpc.CallOption) (*CompletePendingReleaseResponse, error)
 }
 
 type serviceClient struct {
@@ -120,6 +160,33 @@ func (c *serviceClient) ReleaseAllocation(ctx context.Context, in *ReleaseAlloca
 	return out, nil
 }
 
+func (c *serviceClient) QueuePendingRelease(ctx context.Context, in *QueuePendingReleaseRequest, opts ...grpc.CallOption) (*QueuePendingReleaseResponse, error) {
+	out := new(QueuePendingReleaseResponse)
+	err := c.cc.Invoke(ctx, "/pairline.turncontrol.Service/QueuePendingRelease", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *serviceClient) PendingReleases(ctx context.Context, in *PendingReleasesRequest, opts ...grpc.CallOption) (*PendingReleasesResponse, error) {
+	out := new(PendingReleasesResponse)
+	err := c.cc.Invoke(ctx, "/pairline.turncontrol.Service/PendingReleases", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *serviceClient) CompletePendingRelease(ctx context.Context, in *CompletePendingReleaseRequest, opts ...grpc.CallOption) (*CompletePendingReleaseResponse, error) {
+	out := new(CompletePendingReleaseResponse)
+	err := c.cc.Invoke(ctx, "/pairline.turncontrol.Service/CompletePendingRelease", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func RegisterServiceServer(s grpc.ServiceRegistrar, srv ServiceServer) {
 	s.RegisterService(&grpc.ServiceDesc{
 		ServiceName: "pairline.turncontrol.Service",
@@ -144,6 +211,18 @@ func RegisterServiceServer(s grpc.ServiceRegistrar, srv ServiceServer) {
 			{
 				MethodName: "ReleaseAllocation",
 				Handler:    releaseAllocationHandler,
+			},
+			{
+				MethodName: "QueuePendingRelease",
+				Handler:    queuePendingReleaseHandler,
+			},
+			{
+				MethodName: "PendingReleases",
+				Handler:    pendingReleasesHandler,
+			},
+			{
+				MethodName: "CompletePendingRelease",
+				Handler:    completePendingReleaseHandler,
 			},
 		},
 		Streams:  []grpc.StreamDesc{},
@@ -237,6 +316,60 @@ func releaseAllocationHandler(srv interface{}, ctx context.Context, dec func(int
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ServiceServer).ReleaseAllocation(ctx, req.(*ReleaseAllocationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func queuePendingReleaseHandler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueuePendingReleaseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ServiceServer).QueuePendingRelease(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/pairline.turncontrol.Service/QueuePendingRelease",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ServiceServer).QueuePendingRelease(ctx, req.(*QueuePendingReleaseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func pendingReleasesHandler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PendingReleasesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ServiceServer).PendingReleases(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/pairline.turncontrol.Service/PendingReleases",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ServiceServer).PendingReleases(ctx, req.(*PendingReleasesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func completePendingReleaseHandler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CompletePendingReleaseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ServiceServer).CompletePendingRelease(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/pairline.turncontrol.Service/CompletePendingRelease",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ServiceServer).CompletePendingRelease(ctx, req.(*CompletePendingReleaseRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }

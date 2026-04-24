@@ -16,6 +16,9 @@ type fakeTurnControlClient struct {
 	bannedIPsResponse *turncontrol.CheckBannedSessionIPsResponse
 	reserveResponse   *turncontrol.ReserveAllocationResponse
 	releaseResponse   *turncontrol.ReleaseAllocationResponse
+	queueResponse     *turncontrol.QueuePendingReleaseResponse
+	pendingResponse   *turncontrol.PendingReleasesResponse
+	completeResponse  *turncontrol.CompletePendingReleaseResponse
 	err               error
 }
 
@@ -37,6 +40,18 @@ func (c *fakeTurnControlClient) ReserveAllocation(context.Context, *turncontrol.
 
 func (c *fakeTurnControlClient) ReleaseAllocation(context.Context, *turncontrol.ReleaseAllocationRequest, ...grpc.CallOption) (*turncontrol.ReleaseAllocationResponse, error) {
 	return c.releaseResponse, c.err
+}
+
+func (c *fakeTurnControlClient) QueuePendingRelease(context.Context, *turncontrol.QueuePendingReleaseRequest, ...grpc.CallOption) (*turncontrol.QueuePendingReleaseResponse, error) {
+	return c.queueResponse, c.err
+}
+
+func (c *fakeTurnControlClient) PendingReleases(context.Context, *turncontrol.PendingReleasesRequest, ...grpc.CallOption) (*turncontrol.PendingReleasesResponse, error) {
+	return c.pendingResponse, c.err
+}
+
+func (c *fakeTurnControlClient) CompletePendingRelease(context.Context, *turncontrol.CompletePendingReleaseRequest, ...grpc.CallOption) (*turncontrol.CompletePendingReleaseResponse, error) {
+	return c.completeResponse, c.err
 }
 
 func TestGRPCValidatorValidateTURNUsername(t *testing.T) {
@@ -137,7 +152,7 @@ func TestGRPCValidatorReserveAndReleaseTURNAllocation(t *testing.T) {
 		t.Fatal("ReserveTURNAllocation() = false, want true")
 	}
 
-	if err := validator.ReleaseTURNAllocation(context.Background(), "session-1|digest"); err != nil {
+	if err := validator.ReleaseTURNAllocation(context.Background(), "session-1|digest", "release-1"); err != nil {
 		t.Fatalf("ReleaseTURNAllocation() error = %v", err)
 	}
 }
@@ -187,6 +202,17 @@ type fakeValidator struct {
 	validateErr    error
 	validateCalls  int
 	releaseCalls   int
+	queueCalls     int
+	completeCalls  int
+	releasedOps    []string
+	queuedOps      []string
+	completedOps   []string
+	releaseErr     error
+	reserveFn      func(context.Context, string, int) (bool, error)
+	releaseFn      func(context.Context, string, string) error
+	queueFn        func(context.Context, string, string) error
+	pendingFn      func(context.Context, string) ([]PendingRelease, error)
+	completeFn     func(context.Context, string, string) error
 }
 
 func (v *fakeValidator) ValidateTURNUsername(context.Context, string) (ValidationResult, error) {
@@ -198,12 +224,44 @@ func (v *fakeValidator) CheckBannedSessionIPs(context.Context, []string) ([]stri
 	return append([]string(nil), v.bannedIPs...), nil
 }
 
-func (v *fakeValidator) ReserveTURNAllocation(context.Context, string, int) (bool, error) {
+func (v *fakeValidator) ReserveTURNAllocation(ctx context.Context, username string, limit int) (bool, error) {
+	if v.reserveFn != nil {
+		return v.reserveFn(ctx, username, limit)
+	}
 	return true, nil
 }
 
-func (v *fakeValidator) ReleaseTURNAllocation(context.Context, string) error {
+func (v *fakeValidator) ReleaseTURNAllocation(ctx context.Context, username, operationID string) error {
 	v.releaseCalls++
+	v.releasedOps = append(v.releasedOps, username+"|"+operationID)
+	if v.releaseFn != nil {
+		return v.releaseFn(ctx, username, operationID)
+	}
+	return v.releaseErr
+}
+
+func (v *fakeValidator) QueuePendingTURNRelease(ctx context.Context, username, operationID string) error {
+	v.queueCalls++
+	v.queuedOps = append(v.queuedOps, username+"|"+operationID)
+	if v.queueFn != nil {
+		return v.queueFn(ctx, username, operationID)
+	}
+	return nil
+}
+
+func (v *fakeValidator) PendingTURNReleases(ctx context.Context, username string) ([]PendingRelease, error) {
+	if v.pendingFn != nil {
+		return v.pendingFn(ctx, username)
+	}
+	return nil, nil
+}
+
+func (v *fakeValidator) CompletePendingTURNRelease(ctx context.Context, username, operationID string) error {
+	v.completeCalls++
+	v.completedOps = append(v.completedOps, username+"|"+operationID)
+	if v.completeFn != nil {
+		return v.completeFn(ctx, username, operationID)
+	}
 	return nil
 }
 
@@ -279,7 +337,7 @@ func TestServiceUntrackActiveAllocationCleansSessionIPCache(t *testing.T) {
 		},
 	}
 
-	svc.untrackActiveAllocation(
+	_, _ = svc.untrackActiveAllocation(
 		&net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 1111},
 		&net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 3478},
 		"UDP",
@@ -295,11 +353,12 @@ func TestRememberSessionIPUpdatesTrackedAllocations(t *testing.T) {
 	svc := &Service{
 		activeAllocations: map[string]activeAllocation{
 			allocationKey: {
-				Username:  "user-1",
-				SessionIP: "",
-				SrcAddr:   &net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 1111},
-				DstAddr:   &net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 3478},
-				Protocol:  "UDP",
+				Username:           "user-1",
+				SessionIP:          "",
+				SrcAddr:            &net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 1111},
+				DstAddr:            &net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 3478},
+				Protocol:           "UDP",
+				ReleaseOperationID: "release-1",
 			},
 		},
 		sessionIPByUserID: make(map[string]rememberedSessionIP),
@@ -349,5 +408,170 @@ func TestTurnAllocationProtocol(t *testing.T) {
 	}
 	if got := turnAllocationProtocol("TCP"); got != 1 {
 		t.Fatalf("turnAllocationProtocol(TCP) = %d, want 1", got)
+	}
+}
+
+func TestServiceFlushPendingReleases(t *testing.T) {
+	validator := &fakeValidator{}
+	svc := &Service{
+		validator:       validator,
+		pendingReleases: map[string]map[string]struct{}{"user-1": {"release-1": {}}},
+		releaseSignal:   make(chan struct{}, 1),
+	}
+
+	if err := svc.flushPendingReleases(context.Background(), "user-1"); err != nil {
+		t.Fatalf("flushPendingReleases() error = %v", err)
+	}
+	if validator.releaseCalls != 1 {
+		t.Fatalf("releaseCalls = %d, want 1", validator.releaseCalls)
+	}
+	if validator.queueCalls != 1 {
+		t.Fatalf("queueCalls = %d, want 1", validator.queueCalls)
+	}
+	if validator.completeCalls != 1 {
+		t.Fatalf("completeCalls = %d, want 1", validator.completeCalls)
+	}
+	if len(svc.pendingReleases) != 0 {
+		t.Fatalf("pendingReleases = %#v, want empty", svc.pendingReleases)
+	}
+}
+
+func TestServiceReleaseDeletedAllocationDoesImmediateRelease(t *testing.T) {
+	validator := &fakeValidator{}
+	svc := &Service{
+		validator:       validator,
+		pendingReleases: make(map[string]map[string]struct{}),
+		releaseSignal:   make(chan struct{}, 1),
+	}
+
+	svc.releaseDeletedAllocation(activeAllocation{
+		Username:           "user-1",
+		ReleaseOperationID: "release-1",
+	}, "")
+
+	if validator.releaseCalls != 1 {
+		t.Fatalf("releaseCalls = %d, want 1", validator.releaseCalls)
+	}
+	if validator.queueCalls != 1 {
+		t.Fatalf("queueCalls = %d, want 1", validator.queueCalls)
+	}
+	if validator.completeCalls != 1 {
+		t.Fatalf("completeCalls = %d, want 1", validator.completeCalls)
+	}
+	if len(svc.pendingReleases) != 0 {
+		t.Fatalf("pendingReleases = %#v, want empty", svc.pendingReleases)
+	}
+}
+
+func TestServiceReleaseDeletedAllocationQueuesRetryOnFailure(t *testing.T) {
+	validator := &fakeValidator{
+		releaseErr: errors.New("release failed"),
+		queueFn: func(context.Context, string, string) error {
+			return errors.New("queue failed")
+		},
+	}
+	svc := &Service{
+		validator:       validator,
+		pendingReleases: make(map[string]map[string]struct{}),
+		releaseSignal:   make(chan struct{}, 1),
+	}
+
+	svc.releaseDeletedAllocation(activeAllocation{
+		ReleaseOperationID: "release-1",
+	}, "fallback-user")
+
+	if validator.releaseCalls != 1 {
+		t.Fatalf("releaseCalls = %d, want 1", validator.releaseCalls)
+	}
+	if validator.queueCalls != 1 {
+		t.Fatalf("queueCalls = %d, want 1", validator.queueCalls)
+	}
+	if _, ok := svc.pendingReleases["fallback-user"]["release-1"]; !ok {
+		t.Fatalf("pendingReleases = %#v, want queued fallback release", svc.pendingReleases)
+	}
+}
+
+func TestServiceSnapshotPendingReleasesIncludesActiveSessions(t *testing.T) {
+	svc := &Service{
+		pendingReleases: map[string]map[string]struct{}{
+			"user-idle":   {"release-1": {}},
+			"user-active": {"release-2": {}},
+		},
+	}
+
+	pending := svc.snapshotPendingReleases("")
+	if len(pending) != 2 {
+		t.Fatalf("len(snapshotPendingReleases) = %d, want 2", len(pending))
+	}
+}
+
+func TestProcessPendingReleasesMergesDurableAndLocalEntries(t *testing.T) {
+	validator := &fakeValidator{
+		pendingFn: func(context.Context, string) ([]PendingRelease, error) {
+			return []PendingRelease{
+				{Username: "user-durable", OperationID: "release-1"},
+			}, nil
+		},
+	}
+	svc := &Service{
+		validator: validator,
+		pendingReleases: map[string]map[string]struct{}{
+			"user-local": {"release-2": {}},
+		},
+		releaseSignal: make(chan struct{}, 1),
+	}
+
+	if err := svc.processPendingReleases(context.Background(), ""); err != nil {
+		t.Fatalf("processPendingReleases() error = %v", err)
+	}
+	if validator.releaseCalls != 2 {
+		t.Fatalf("releaseCalls = %d, want 2", validator.releaseCalls)
+	}
+	if validator.queueCalls != 1 {
+		t.Fatalf("queueCalls = %d, want 1", validator.queueCalls)
+	}
+	if validator.completeCalls != 2 {
+		t.Fatalf("completeCalls = %d, want 2", validator.completeCalls)
+	}
+	if len(svc.pendingReleases) != 0 {
+		t.Fatalf("pendingReleases = %#v, want empty", svc.pendingReleases)
+	}
+}
+
+func TestQuotaHandlerUsesFreshReserveContextAfterSlowFlush(t *testing.T) {
+	validator := &fakeValidator{
+		releaseFn: func(ctx context.Context, _, _ string) error {
+			select {
+			case <-time.After(700 * time.Millisecond):
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		},
+		reserveFn: func(ctx context.Context, username string, limit int) (bool, error) {
+			if err := ctx.Err(); err != nil {
+				return false, err
+			}
+			return true, nil
+		},
+	}
+	svc := &Service{
+		config:    Config{AllocationQuota: 1},
+		validator: validator,
+		pendingReleases: map[string]map[string]struct{}{
+			"user-1": {
+				"release-1": {},
+				"release-2": {},
+				"release-3": {},
+			},
+		},
+		releaseSignal: make(chan struct{}, 1),
+	}
+
+	if allowed := svc.quotaHandler("user-1", "pairline", &net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 1111}); !allowed {
+		t.Fatal("quotaHandler() = false, want true")
+	}
+	if validator.releaseCalls != 3 {
+		t.Fatalf("releaseCalls = %d, want 3", validator.releaseCalls)
 	}
 }

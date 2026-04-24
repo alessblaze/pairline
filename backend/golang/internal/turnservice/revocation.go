@@ -23,6 +23,7 @@ type activeAllocation struct {
 	SrcAddr   net.Addr
 	DstAddr   net.Addr
 	Protocol  string
+	ReleaseOperationID string
 }
 
 type rememberedSessionIP struct {
@@ -109,15 +110,16 @@ func (s *Service) trackActiveAllocation(srcAddr, dstAddr net.Addr, protocol, use
 		SrcAddr:   cloneAddr(srcAddr),
 		DstAddr:   cloneAddr(dstAddr),
 		Protocol:  strings.ToUpper(strings.TrimSpace(protocol)),
+		ReleaseOperationID: s.nextReleaseOperationID(),
 	}
 	s.activeAllocations[key] = allocation
 	s.addAllocationIndexesLocked(key, allocation)
 }
 
-func (s *Service) untrackActiveAllocation(srcAddr, dstAddr net.Addr, protocol string) {
+func (s *Service) untrackActiveAllocation(srcAddr, dstAddr net.Addr, protocol string) (activeAllocation, bool) {
 	key := activeAllocationKey(srcAddr, dstAddr, protocol)
 	if key == "" {
-		return
+		return activeAllocation{}, false
 	}
 
 	s.mu.Lock()
@@ -125,9 +127,10 @@ func (s *Service) untrackActiveAllocation(srcAddr, dstAddr net.Addr, protocol st
 
 	allocation, ok := s.activeAllocations[key]
 	if !ok {
-		return
+		return activeAllocation{}, false
 	}
 	s.removeAllocationIndexesLocked(key, allocation)
+	return allocation, true
 }
 
 func (s *Service) cleanupRememberedSessionIPsLocked(now time.Time) {
