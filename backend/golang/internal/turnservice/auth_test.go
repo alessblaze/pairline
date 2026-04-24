@@ -161,6 +161,38 @@ func (f *fakeRedisClient) Eval(ctx context.Context, script string, keys []string
 			return redis.NewCmdResult(int64(0), nil)
 		}
 		return redis.NewCmdResult(f.ints[key], nil)
+	case sessionValidationSnapshotScriptSource:
+		if len(keys) != 4 {
+			return redis.NewCmdResult(nil, fmt.Errorf("unexpected session validation script args"))
+		}
+		for _, key := range keys {
+			if err, ok := f.getErr[key]; ok {
+				return redis.NewCmdResult(nil, err)
+			}
+		}
+		expectedToken := f.strings[keys[0]]
+		var sessionExists int64
+		if f.exists[keys[1]] {
+			sessionExists = 1
+		}
+		sessionIP := f.strings[keys[2]]
+		matchedID := f.strings[keys[3]]
+		return redis.NewCmdResult([]interface{}{expectedToken, sessionExists, sessionIP, matchedID}, nil)
+	case peerValidationSnapshotScriptSource:
+		if len(keys) != 2 {
+			return redis.NewCmdResult(nil, fmt.Errorf("unexpected peer validation script args"))
+		}
+		for _, key := range keys {
+			if err, ok := f.getErr[key]; ok {
+				return redis.NewCmdResult(nil, err)
+			}
+		}
+		var peerExists int64
+		if f.exists[keys[0]] {
+			peerExists = 1
+		}
+		peerMatchedID := f.strings[keys[1]]
+		return redis.NewCmdResult([]interface{}{peerExists, peerMatchedID}, nil)
 	default:
 		return redis.NewCmdResult(nil, fmt.Errorf("unexpected script"))
 	}
@@ -276,7 +308,7 @@ func TestPreloadAllocationScriptsLoadsScriptHashes(t *testing.T) {
 		t.Fatalf("PreloadAllocationScripts() error = %v", err)
 	}
 
-	for _, script := range allocationScripts {
+	for _, script := range turnScripts {
 		if _, ok := redisClient.scriptSHA[script.Hash()]; !ok {
 			t.Fatalf("script %s was not preloaded", script.Hash())
 		}

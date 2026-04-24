@@ -78,12 +78,14 @@ func (s *Service) rememberSessionIP(userID, sessionIP string) {
 		IP:     sessionIP,
 		SeenAt: now,
 	}
-	for key, allocation := range s.activeAllocations {
-		if allocation.Username != userID {
-			continue
+	for key := range s.allocationKeysByUserID[userID] {
+		allocation := s.activeAllocations[key]
+		if previousSessionIP := strings.TrimSpace(allocation.SessionIP); previousSessionIP != "" && previousSessionIP != sessionIP {
+			s.removeAllocationKeyFromSessionIPLocked(previousSessionIP, key)
 		}
 		allocation.SessionIP = sessionIP
 		s.activeAllocations[key] = allocation
+		s.addAllocationKeyToSessionIPLocked(sessionIP, key)
 	}
 	s.cleanupRememberedSessionIPsLocked(now)
 }
@@ -97,13 +99,19 @@ func (s *Service) trackActiveAllocation(srcAddr, dstAddr net.Addr, protocol, use
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.activeAllocations[key] = activeAllocation{
+	if previous, ok := s.activeAllocations[key]; ok {
+		s.removeAllocationIndexesLocked(key, previous)
+	}
+
+	allocation := activeAllocation{
 		Username:  userID,
 		SessionIP: s.sessionIPByUserID[userID].IP,
 		SrcAddr:   cloneAddr(srcAddr),
 		DstAddr:   cloneAddr(dstAddr),
 		Protocol:  strings.ToUpper(strings.TrimSpace(protocol)),
 	}
+	s.activeAllocations[key] = allocation
+	s.addAllocationIndexesLocked(key, allocation)
 }
 
 func (s *Service) untrackActiveAllocation(srcAddr, dstAddr net.Addr, protocol string) {
@@ -116,18 +124,10 @@ func (s *Service) untrackActiveAllocation(srcAddr, dstAddr net.Addr, protocol st
 	defer s.mu.Unlock()
 
 	allocation, ok := s.activeAllocations[key]
-	delete(s.activeAllocations, key)
-	if !ok || allocation.Username == "" {
+	if !ok {
 		return
 	}
-
-	for _, remaining := range s.activeAllocations {
-		if remaining.Username == allocation.Username {
-			return
-		}
-	}
-
-	delete(s.sessionIPByUserID, allocation.Username)
+	s.removeAllocationIndexesLocked(key, allocation)
 }
 
 func (s *Service) cleanupRememberedSessionIPsLocked(now time.Time) {
@@ -143,37 +143,47 @@ func (s *Service) cleanupRememberedSessionIPsLocked(now time.Time) {
 }
 
 func (s *Service) hasActiveAllocationForUsernameLocked(userID string) bool {
-	for _, allocation := range s.activeAllocations {
-		if allocation.Username == userID {
-			return true
-		}
-	}
-	return false
+	return s.allocationCountByUserID[userID] > 0
 }
 
-func (s *Service) snapshotActiveAllocations() ([]activeAllocation, []string) {
+func (s *Service) snapshotSessionIPs() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.cleanupRememberedSessionIPsLocked(time.Now())
 
-	allocations := make([]activeAllocation, 0, len(s.activeAllocations))
-	ips := make([]string, 0, len(s.activeAllocations))
-	seenIPs := make(map[string]struct{}, len(s.activeAllocations))
-
-	for _, allocation := range s.activeAllocations {
-		allocations = append(allocations, allocation)
-		if allocation.SessionIP == "" {
+	ips := make([]string, 0, len(s.allocationKeysBySession))
+	for sessionIP := range s.allocationKeysBySession {
+		if strings.TrimSpace(sessionIP) == "" {
 			continue
 		}
-		if _, ok := seenIPs[allocation.SessionIP]; ok {
-			continue
-		}
-		seenIPs[allocation.SessionIP] = struct{}{}
-		ips = append(ips, allocation.SessionIP)
+		ips = append(ips, sessionIP)
 	}
 
-	return allocations, ips
+	return ips
+}
+
+func (s *Service) snapshotAllocationsForSessionIPs(sessionIPs []string) []activeAllocation {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	allocations := make([]activeAllocation, 0, len(sessionIPs))
+	seenAllocationKeys := make(map[string]struct{})
+	for _, sessionIP := range sessionIPs {
+		for key := range s.allocationKeysBySession[strings.TrimSpace(sessionIP)] {
+			if _, ok := seenAllocationKeys[key]; ok {
+				continue
+			}
+			allocation, ok := s.activeAllocations[key]
+			if !ok {
+				continue
+			}
+			seenAllocationKeys[key] = struct{}{}
+			allocations = append(allocations, allocation)
+		}
+	}
+
+	return allocations
 }
 
 func (s *Service) runBanSweep(ctx context.Context) {
@@ -196,7 +206,7 @@ func (s *Service) runBanSweep(ctx context.Context) {
 }
 
 func (s *Service) revokeBannedAllocations(ctx context.Context) error {
-	allocations, sessionIPs := s.snapshotActiveAllocations()
+	sessionIPs := s.snapshotSessionIPs()
 	if len(sessionIPs) == 0 {
 		return nil
 	}
@@ -214,6 +224,7 @@ func (s *Service) revokeBannedAllocations(ctx context.Context) error {
 		bannedSet[strings.TrimSpace(bannedIP)] = struct{}{}
 	}
 
+	allocations := s.snapshotAllocationsForSessionIPs(bannedIPs)
 	var revokeErr error
 	for _, allocation := range allocations {
 		if _, ok := bannedSet[allocation.SessionIP]; !ok {
@@ -227,6 +238,66 @@ func (s *Service) revokeBannedAllocations(ctx context.Context) error {
 	}
 
 	return revokeErr
+}
+
+func (s *Service) addAllocationIndexesLocked(key string, allocation activeAllocation) {
+	username := strings.TrimSpace(allocation.Username)
+	if username != "" {
+		if s.allocationKeysByUserID[username] == nil {
+			s.allocationKeysByUserID[username] = make(map[string]struct{})
+		}
+		s.allocationKeysByUserID[username][key] = struct{}{}
+		s.allocationCountByUserID[username]++
+	}
+	s.addAllocationKeyToSessionIPLocked(allocation.SessionIP, key)
+}
+
+func (s *Service) removeAllocationIndexesLocked(key string, allocation activeAllocation) {
+	delete(s.activeAllocations, key)
+
+	username := strings.TrimSpace(allocation.Username)
+	if username != "" {
+		if keys := s.allocationKeysByUserID[username]; keys != nil {
+			delete(keys, key)
+			if len(keys) == 0 {
+				delete(s.allocationKeysByUserID, username)
+			}
+		}
+		if remaining := s.allocationCountByUserID[username] - 1; remaining > 0 {
+			s.allocationCountByUserID[username] = remaining
+		} else {
+			delete(s.allocationCountByUserID, username)
+			delete(s.sessionIPByUserID, username)
+		}
+	}
+
+	s.removeAllocationKeyFromSessionIPLocked(allocation.SessionIP, key)
+}
+
+func (s *Service) addAllocationKeyToSessionIPLocked(sessionIP, key string) {
+	sessionIP = strings.TrimSpace(sessionIP)
+	if sessionIP == "" {
+		return
+	}
+	if s.allocationKeysBySession[sessionIP] == nil {
+		s.allocationKeysBySession[sessionIP] = make(map[string]struct{})
+	}
+	s.allocationKeysBySession[sessionIP][key] = struct{}{}
+}
+
+func (s *Service) removeAllocationKeyFromSessionIPLocked(sessionIP, key string) {
+	sessionIP = strings.TrimSpace(sessionIP)
+	if sessionIP == "" {
+		return
+	}
+	keys := s.allocationKeysBySession[sessionIP]
+	if keys == nil {
+		return
+	}
+	delete(keys, key)
+	if len(keys) == 0 {
+		delete(s.allocationKeysBySession, sessionIP)
+	}
 }
 
 func revokeTurnAllocation(server *pionturn.Server, allocation activeAllocation) error {

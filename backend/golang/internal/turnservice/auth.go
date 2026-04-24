@@ -47,11 +47,29 @@ end
 return remaining
 `
 
+const sessionValidationSnapshotScriptSource = `
+local expectedToken = redis.call("GET", KEYS[1]) or ""
+local sessionExists = redis.call("EXISTS", KEYS[2])
+local sessionIP = redis.call("GET", KEYS[3]) or ""
+local matchedID = redis.call("GET", KEYS[4]) or ""
+return {expectedToken, sessionExists, sessionIP, matchedID}
+`
+
+const peerValidationSnapshotScriptSource = `
+local peerExists = redis.call("EXISTS", KEYS[1])
+local peerMatchedID = redis.call("GET", KEYS[2]) or ""
+return {peerExists, peerMatchedID}
+`
+
 var reserveAllocationSlotScript = redis.NewScript(reserveAllocationSlotScriptSource)
 var releaseAllocationSlotScript = redis.NewScript(releaseAllocationSlotScriptSource)
-var allocationScripts = []*redis.Script{
+var sessionValidationSnapshotScript = redis.NewScript(sessionValidationSnapshotScriptSource)
+var peerValidationSnapshotScript = redis.NewScript(peerValidationSnapshotScriptSource)
+var turnScripts = []*redis.Script{
 	reserveAllocationSlotScript,
 	releaseAllocationSlotScript,
+	sessionValidationSnapshotScript,
+	peerValidationSnapshotScript,
 }
 
 type ValidationResult struct {
@@ -122,13 +140,27 @@ func validateMatchedRouteSession(
 	sessionID string,
 	tokenMatches func(expectedToken string) bool,
 ) (ValidationResult, error) {
-	expectedToken, err := redisClient.Get(ctx, appredis.SessionTokenKey(sessionID, route)).Result()
-	switch {
-	case errors.Is(err, redis.Nil):
-		return ValidationResult{}, ErrSessionInactive
-	case err != nil:
+	sessionValues, err := sessionValidationSnapshotScript.Run(
+		ctx,
+		redisClient,
+		[]string{
+			appredis.SessionTokenKey(sessionID, route),
+			appredis.SessionDataKey(sessionID, route),
+			appredis.SessionIPKey(sessionID, route),
+			appredis.MatchKey(sessionID, route),
+		},
+	).Result()
+	if err != nil {
 		return ValidationResult{}, ErrValidationBackend
-	case expectedToken == "":
+	}
+
+	sessionSnapshot, ok := redisValueSlice(sessionValues)
+	if !ok {
+		return ValidationResult{}, ErrValidationBackend
+	}
+
+	expectedToken, _ := redisValueAsString(sessionSnapshot, 0)
+	if expectedToken == "" {
 		return ValidationResult{}, ErrSessionInactive
 	}
 
@@ -136,22 +168,12 @@ func validateMatchedRouteSession(
 		return ValidationResult{}, ErrInvalidSessionIdentity
 	}
 
-	sessionExists, err := redisClient.Exists(ctx, appredis.SessionDataKey(sessionID, route)).Result()
-	if err != nil {
-		return ValidationResult{}, ErrValidationBackend
-	}
-	if sessionExists == 0 {
+	if !redisValueAsBool(sessionSnapshot, 1) {
 		return ValidationResult{}, ErrSessionInactive
 	}
 
-	sessionIP, err := redisClient.Get(ctx, appredis.SessionIPKey(sessionID, route)).Result()
-	switch {
-	case errors.Is(err, redis.Nil):
-	case err != nil:
-		return ValidationResult{}, ErrValidationBackend
-	default:
-		sessionIP = strings.TrimSpace(sessionIP)
-	}
+	sessionIP, _ := redisValueAsString(sessionSnapshot, 2)
+	sessionIP = strings.TrimSpace(sessionIP)
 
 	banned, err := redisClient.Exists(ctx, appredis.BanSessionKey(sessionID)).Result()
 	if err != nil {
@@ -171,13 +193,8 @@ func validateMatchedRouteSession(
 		}
 	}
 
-	matchedID, err := redisClient.Get(ctx, appredis.MatchKey(sessionID, route)).Result()
-	switch {
-	case errors.Is(err, redis.Nil):
-		return ValidationResult{}, ErrSessionUnmatched
-	case err != nil:
-		return ValidationResult{}, ErrValidationBackend
-	case strings.TrimSpace(matchedID) == "":
+	matchedID, _ := redisValueAsString(sessionSnapshot, 3)
+	if strings.TrimSpace(matchedID) == "" {
 		return ValidationResult{}, ErrSessionUnmatched
 	}
 
@@ -189,21 +206,28 @@ func validateMatchedRouteSession(
 		return ValidationResult{}, ErrValidationBackend
 	}
 
-	peerExists, err := redisClient.Exists(ctx, appredis.SessionDataKey(matchedID, peerRoute)).Result()
+	peerValues, err := peerValidationSnapshotScript.Run(
+		ctx,
+		redisClient,
+		[]string{
+			appredis.SessionDataKey(matchedID, peerRoute),
+			appredis.MatchKey(matchedID, peerRoute),
+		},
+	).Result()
 	if err != nil {
 		return ValidationResult{}, ErrValidationBackend
 	}
-	if peerExists == 0 {
+
+	peerSnapshot, ok := redisValueSlice(peerValues)
+	if !ok {
+		return ValidationResult{}, ErrValidationBackend
+	}
+	if !redisValueAsBool(peerSnapshot, 0) {
 		return ValidationResult{}, ErrSessionUnmatched
 	}
 
-	peerMatchedID, err := redisClient.Get(ctx, appredis.MatchKey(matchedID, peerRoute)).Result()
-	switch {
-	case errors.Is(err, redis.Nil):
-		return ValidationResult{}, ErrSessionUnmatched
-	case err != nil:
-		return ValidationResult{}, ErrValidationBackend
-	case strings.TrimSpace(peerMatchedID) != sessionID:
+	peerMatchedID, _ := redisValueAsString(peerSnapshot, 1)
+	if strings.TrimSpace(peerMatchedID) != sessionID {
 		return ValidationResult{}, ErrSessionUnmatched
 	}
 
@@ -213,6 +237,45 @@ func validateMatchedRouteSession(
 		MatchedID: matchedID,
 		SessionIP: sessionIP,
 	}, nil
+}
+
+func redisValueSlice(value interface{}) ([]interface{}, bool) {
+	values, ok := value.([]interface{})
+	if !ok {
+		return nil, false
+	}
+
+	return values, true
+}
+
+func redisValueAsString(values []interface{}, index int) (string, bool) {
+	if index < 0 || index >= len(values) || values[index] == nil {
+		return "", false
+	}
+
+	value, ok := values[index].(string)
+	if !ok {
+		return "", false
+	}
+
+	return value, true
+}
+
+func redisValueAsBool(values []interface{}, index int) bool {
+	if index < 0 || index >= len(values) {
+		return false
+	}
+
+	switch value := values[index].(type) {
+	case int64:
+		return value > 0
+	case int:
+		return value > 0
+	case string:
+		return strings.TrimSpace(value) != "" && value != "0"
+	default:
+		return false
+	}
 }
 
 func validationRouteError(err error) error {
@@ -231,7 +294,7 @@ func turnAllocationKey(sessionID string) string {
 }
 
 func PreloadAllocationScripts(ctx context.Context, redisClient redis.UniversalClient) error {
-	for _, script := range allocationScripts {
+	for _, script := range turnScripts {
 		if err := script.Load(ctx, redisClient).Err(); err != nil {
 			return err
 		}

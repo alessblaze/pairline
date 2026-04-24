@@ -25,15 +25,18 @@ import (
 var turnTracer = otel.Tracer("pairline/turn")
 
 type Service struct {
-	config            Config
-	server            *pionturn.Server
-	packetConns       []net.PacketConn
-	listeners         []net.Listener
-	validator         Validator
-	mu                sync.Mutex
-	activeAllocations map[string]activeAllocation
-	sessionIPByUserID map[string]rememberedSessionIP
-	revokeAllocation  func(activeAllocation) error
+	config                  Config
+	server                  *pionturn.Server
+	packetConns             []net.PacketConn
+	listeners               []net.Listener
+	validator               Validator
+	mu                      sync.Mutex
+	activeAllocations       map[string]activeAllocation
+	allocationKeysByUserID  map[string]map[string]struct{}
+	allocationKeysBySession map[string]map[string]struct{}
+	allocationCountByUserID map[string]int
+	sessionIPByUserID       map[string]rememberedSessionIP
+	revokeAllocation        func(activeAllocation) error
 }
 
 type Validator interface {
@@ -142,10 +145,13 @@ func NewService(config Config, validator Validator) (*Service, error) {
 	}
 
 	svc := &Service{
-		config:            config,
-		validator:         validator,
-		activeAllocations: make(map[string]activeAllocation),
-		sessionIPByUserID: make(map[string]rememberedSessionIP),
+		config:                  config,
+		validator:               validator,
+		activeAllocations:       make(map[string]activeAllocation),
+		allocationKeysByUserID:  make(map[string]map[string]struct{}),
+		allocationKeysBySession: make(map[string]map[string]struct{}),
+		allocationCountByUserID: make(map[string]int),
+		sessionIPByUserID:       make(map[string]rememberedSessionIP),
 	}
 
 	packetConfigs := make([]pionturn.PacketConnConfig, 0, 1)
@@ -210,23 +216,7 @@ func NewService(config Config, validator Validator) (*Service, error) {
 			},
 			OnAllocationDeleted: func(srcAddr, dstAddr net.Addr, protocol, userID, _ string) {
 				svc.untrackActiveAllocation(srcAddr, dstAddr, protocol)
-				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-				defer cancel()
-
-				ctx, span := turnTracer.Start(ctx, "turn.allocation.release",
-					trace.WithSpanKind(trace.SpanKindInternal),
-					trace.WithAttributes(attribute.String("turn.username", userID)),
-				)
-				defer span.End()
-
-				if err := svc.validator.ReleaseTURNAllocation(ctx, userID); err != nil {
-					span.RecordError(err)
-					span.SetStatus(codes.Error, err.Error())
-					observability.RecordTURNRelayRelease(ctx, false)
-					log.Printf("TURN allocation release failed user=%q reason=%v", userID, err)
-				} else {
-					observability.RecordTURNRelayRelease(ctx, true)
-				}
+				svc.releaseAllocationSlot(userID)
 			},
 		},
 	})
@@ -316,11 +306,7 @@ func (s *Service) authHandler(ra *pionturn.RequestAttributes) (string, []byte, b
 		span.SetAttributes(attribute.String("turn.session_ip", result.SessionIP))
 	}
 	observability.RecordTURNRelayAuth(ctx, time.Since(startedAt), true, "")
-	if result.SessionIP != "" {
-		log.Printf("TURN auth allowed session=%s matched=%s peer_addr=%v session_ip=%s", result.SessionID, result.MatchedID, ra.SrcAddr, result.SessionIP)
-	} else {
-		log.Printf("TURN auth allowed session=%s matched=%s peer_addr=%v", result.SessionID, result.MatchedID, ra.SrcAddr)
-	}
+	s.logAuthAllowed(result, ra.SrcAddr)
 	return ra.Username, pionturn.GenerateAuthKey(ra.Username, ra.Realm, s.config.Credential), true
 }
 
@@ -448,4 +434,33 @@ func validationErrorFromReason(reason string) error {
 	default:
 		return fmt.Errorf("turn control validation failed: %s", reason)
 	}
+}
+
+func (s *Service) releaseAllocationSlot(username string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	ctx, span := turnTracer.Start(ctx, "turn.allocation.release",
+		trace.WithSpanKind(trace.SpanKindInternal),
+		trace.WithAttributes(attribute.String("turn.username", username)),
+	)
+	defer span.End()
+
+	if err := s.validator.ReleaseTURNAllocation(ctx, username); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		observability.RecordTURNRelayRelease(ctx, false)
+		log.Printf("TURN allocation release failed user=%q reason=%v", username, err)
+		return
+	}
+
+	observability.RecordTURNRelayRelease(ctx, true)
+}
+
+func (s *Service) logAuthAllowed(result ValidationResult, srcAddr net.Addr) {
+	if result.SessionIP != "" {
+		log.Printf("TURN auth allowed session=%s matched=%s peer_addr=%v session_ip=%s", result.SessionID, result.MatchedID, srcAddr, result.SessionIP)
+		return
+	}
+	log.Printf("TURN auth allowed session=%s matched=%s peer_addr=%v", result.SessionID, result.MatchedID, srcAddr)
 }

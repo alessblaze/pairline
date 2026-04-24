@@ -182,11 +182,16 @@ func TestPooledGRPCValidatorCyclesClients(t *testing.T) {
 }
 
 type fakeValidator struct {
-	bannedIPs []string
+	bannedIPs      []string
+	validateResult ValidationResult
+	validateErr    error
+	validateCalls  int
+	releaseCalls   int
 }
 
 func (v *fakeValidator) ValidateTURNUsername(context.Context, string) (ValidationResult, error) {
-	return ValidationResult{}, nil
+	v.validateCalls++
+	return v.validateResult, v.validateErr
 }
 
 func (v *fakeValidator) CheckBannedSessionIPs(context.Context, []string) ([]string, error) {
@@ -198,6 +203,7 @@ func (v *fakeValidator) ReserveTURNAllocation(context.Context, string, int) (boo
 }
 
 func (v *fakeValidator) ReleaseTURNAllocation(context.Context, string) error {
+	v.releaseCalls++
 	return nil
 }
 
@@ -226,6 +232,14 @@ func TestServiceRevokeBannedAllocations(t *testing.T) {
 			return nil
 		},
 	}
+	svc.allocationKeysBySession = map[string]map[string]struct{}{
+		"203.0.113.24": {
+			activeAllocationKey(&net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 1111}, &net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 3478}, "UDP"): {},
+		},
+		"198.51.100.8": {
+			activeAllocationKey(&net.UDPAddr{IP: net.ParseIP("10.0.0.3"), Port: 2222}, &net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 3478}, "UDP"): {},
+		},
+	}
 
 	if err := svc.revokeBannedAllocations(context.Background()); err != nil {
 		t.Fatalf("revokeBannedAllocations() error = %v", err)
@@ -252,6 +266,17 @@ func TestServiceUntrackActiveAllocationCleansSessionIPCache(t *testing.T) {
 		sessionIPByUserID: map[string]rememberedSessionIP{
 			"user-1": {IP: "203.0.113.24", SeenAt: time.Now()},
 		},
+		allocationKeysByUserID: map[string]map[string]struct{}{
+			"user-1": {
+				activeAllocationKey(&net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 1111}, &net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 3478}, "UDP"): {},
+			},
+		},
+		allocationCountByUserID: map[string]int{"user-1": 1},
+		allocationKeysBySession: map[string]map[string]struct{}{
+			"203.0.113.24": {
+				activeAllocationKey(&net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 1111}, &net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 3478}, "UDP"): {},
+			},
+		},
 	}
 
 	svc.untrackActiveAllocation(
@@ -266,9 +291,10 @@ func TestServiceUntrackActiveAllocationCleansSessionIPCache(t *testing.T) {
 }
 
 func TestRememberSessionIPUpdatesTrackedAllocations(t *testing.T) {
+	allocationKey := activeAllocationKey(&net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 1111}, &net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 3478}, "UDP")
 	svc := &Service{
 		activeAllocations: map[string]activeAllocation{
-			activeAllocationKey(&net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 1111}, &net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 3478}, "UDP"): {
+			allocationKey: {
 				Username:  "user-1",
 				SessionIP: "",
 				SrcAddr:   &net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 1111},
@@ -277,6 +303,11 @@ func TestRememberSessionIPUpdatesTrackedAllocations(t *testing.T) {
 			},
 		},
 		sessionIPByUserID: make(map[string]rememberedSessionIP),
+		allocationKeysByUserID: map[string]map[string]struct{}{
+			"user-1": {allocationKey: {}},
+		},
+		allocationCountByUserID: map[string]int{"user-1": 1},
+		allocationKeysBySession: make(map[string]map[string]struct{}),
 	}
 
 	svc.rememberSessionIP("user-1", "203.0.113.24")
@@ -285,6 +316,9 @@ func TestRememberSessionIPUpdatesTrackedAllocations(t *testing.T) {
 		if allocation.SessionIP != "203.0.113.24" {
 			t.Fatalf("allocation.SessionIP = %q, want %q", allocation.SessionIP, "203.0.113.24")
 		}
+	}
+	if _, ok := svc.allocationKeysBySession["203.0.113.24"][allocationKey]; !ok {
+		t.Fatal("allocationKeysBySession did not track updated session IP")
 	}
 }
 
@@ -297,6 +331,7 @@ func TestCleanupRememberedSessionIPsDropsStaleEntriesWithoutAllocations(t *testi
 				SeenAt: time.Now().Add(-rememberedSessionIPTTL - time.Second),
 			},
 		},
+		allocationCountByUserID: map[string]int{},
 	}
 
 	svc.mu.Lock()
