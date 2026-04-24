@@ -18,7 +18,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { EntryModal } from './EntryModal';
-import promoVideo from '../assets/promo.webm';
+import { HLSVideoPlayer } from './HLSVideoPlayer';
 import promoPoster from '../assets/promo-poster.webp';
 import promoImg from '../assets/promo.webp';
 import promoFeaturesImg from '../assets/promofeatures.webp';
@@ -30,8 +30,6 @@ export function LandingPage() {
   const [showModal, setShowModal] = useState(false);
   const [targetRoute, setTargetRoute] = useState<'/text' | '/video' | null>(null);
   const enableVideoChat = import.meta.env.VITE_ENABLE_VIDEO_CHAT !== 'false';
-  const promoVideoRef = useRef<HTMLVideoElement | null>(null);
-  const [promoVideoKey, setPromoVideoKey] = useState(0);
   const [promoVideoReady, setPromoVideoReady] = useState(false);
 
   // Track image loading so we can hold a skeleton until the critical images paint.
@@ -75,30 +73,12 @@ export function LandingPage() {
   };
 
   useEffect(() => {
-    const restorePromoVideo = () => {
-      // Remount the video so mobile Firefox restarts from frame 0 instead of
-      // briefly showing a stale black surface before playback resumes.
-      setPromoVideoReady(false);
-      setPromoVideoKey((current) => current + 1);
-    };
-
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        restorePromoVideo();
-      }
-    };
-
-    const handlePageShow = () => {
-      restorePromoVideo();
+      setPromoVideoReady(false);
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('pageshow', handlePageShow);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('pageshow', handlePageShow);
-    };
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, []);
 
   return (
@@ -212,22 +192,41 @@ export function LandingPage() {
 
       {/* Top Video Header */}
       <div className="w-full relative bg-gray-950 flex justify-center items-center overflow-hidden">
+        <div
+          className="absolute inset-0 z-0 bg-center bg-cover bg-no-repeat"
+          style={{ backgroundImage: `url(${promoPoster})` }}
+        />
+
         <img
           src={promoPoster}
           alt="Pairline promo preview"
-          className={`absolute inset-0 z-10 h-full w-full object-cover transition-opacity duration-500 ${promoVideoReady ? 'opacity-0' : 'opacity-100'}`}
+          className={`absolute inset-0 z-10 h-full w-full object-cover transition-opacity duration-500 ${
+            promoVideoReady ? 'opacity-0 pointer-events-none' : 'opacity-100'
+          }`}
         />
-        <video
-          key={promoVideoKey}
-          ref={promoVideoRef}
-          src={promoVideo}
+
+        <HLSVideoPlayer
+          src="/stream_master.m3u8"
           poster={promoPoster}
           autoPlay
           loop
           muted
-          playsInline
+          preload="metadata"
           onPlaying={() => setPromoVideoReady(true)}
-          className="w-full h-auto block"
+          onWaiting={() => setPromoVideoReady(false)}
+          onSeeking={() => setPromoVideoReady(false)}
+          onPause={() => setPromoVideoReady(false)}
+          onStalled={() => setPromoVideoReady(false)}
+          onError={() => setPromoVideoReady(false)}
+          className={`relative z-20 w-full aspect-video object-cover block transition-opacity duration-300 ${
+            promoVideoReady ? 'opacity-100' : 'opacity-0'
+          }`}
+          style={{
+            backgroundImage: `url(${promoPoster})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            backgroundRepeat: 'no-repeat',
+          }}
         />
       </div>
 
