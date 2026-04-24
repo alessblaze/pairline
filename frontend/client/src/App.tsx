@@ -23,6 +23,15 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { VideoDisabled } from './components/VideoDisabled';
 import { ServiceUnavailable } from './components/ServiceUnavailable';
 import { NetworkHealthProvider } from './hooks/useNetworkHealth';
+import unavailableGif from './assets/unavailable.gif';
+import loadingGif from './assets/loading.gif';
+
+const ImagePreloader = () => (
+  <div style={{ display: 'none' }} aria-hidden="true">
+    <img src={unavailableGif} alt="" />
+    <img src={loadingGif} alt="" />
+  </div>
+);
 
 function App() {
   const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8080/ws';
@@ -30,6 +39,7 @@ function App() {
 
   return (
     <div className="min-h-screen w-full overflow-x-hidden overflow-y-auto bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-white">
+      <ImagePreloader />
       <NetworkHealthProvider>
         <Routes>
           <Route path="/" element={<LandingPage />} />
