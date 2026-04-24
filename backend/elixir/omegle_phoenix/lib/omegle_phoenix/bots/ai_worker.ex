@@ -351,7 +351,7 @@ defmodule OmeglePhoenix.Bots.AIWorker do
             api_key: Map.get(llm_config, "api_token"),
             stream: false,
             temperature: llm_temperature(llm_config),
-            receive_timeout: 20_000,
+            receive_timeout: 40_000,
             retry_count: 0
           }
           |> maybe_put_max_tokens(llm_config)
