@@ -279,7 +279,7 @@ else
           {:ok, "1"}
 
         :omegle_phoenix_redis_cluster, ["SMEMBERS", lookup_key]
-        when lookup_key == "ip:sessions:#{ip}" ->
+        when lookup_key == key ->
           {:error, :timeout}
       end)
 
@@ -351,7 +351,7 @@ else
           {:ok, "1"}
 
         :omegle_phoenix_redis_cluster, ["SMEMBERS", lookup_key]
-        when lookup_key == "ip:sessions:#{ip}" ->
+        when lookup_key == key ->
           {:error, :closed}
       end)
 

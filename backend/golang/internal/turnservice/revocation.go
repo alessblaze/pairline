@@ -100,13 +100,23 @@ func (s *Service) trackActiveAllocation(srcAddr, dstAddr net.Addr, protocol, use
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	remembered := s.sessionIPByUserID[userID]
 	if previous, ok := s.activeAllocations[key]; ok {
+		if strings.TrimSpace(remembered.IP) == "" && strings.TrimSpace(previous.Username) == strings.TrimSpace(userID) {
+			remembered = rememberedSessionIP{
+				IP:     strings.TrimSpace(previous.SessionIP),
+				SeenAt: time.Now(),
+			}
+		}
 		s.removeAllocationIndexesLocked(key, previous)
+	}
+	if strings.TrimSpace(remembered.IP) != "" {
+		s.sessionIPByUserID[userID] = remembered
 	}
 
 	allocation := activeAllocation{
 		Username:           userID,
-		SessionIP:          s.sessionIPByUserID[userID].IP,
+		SessionIP:          remembered.IP,
 		SrcAddr:            cloneAddr(srcAddr),
 		DstAddr:            cloneAddr(dstAddr),
 		Protocol:           strings.ToUpper(strings.TrimSpace(protocol)),
@@ -317,6 +327,9 @@ func revokeTurnAllocation(server *pionturn.Server, allocation activeAllocation) 
 	if server == nil {
 		return fmt.Errorf("turn server is not initialized")
 	}
+	if allocation.SrcAddr == nil || allocation.DstAddr == nil {
+		return fmt.Errorf("turn allocation addresses are required")
+	}
 
 	serverValue := reflect.ValueOf(server)
 	if serverValue.Kind() != reflect.Ptr || serverValue.IsNil() {
@@ -339,10 +352,25 @@ func revokeTurnAllocation(server *pionturn.Server, allocation activeAllocation) 
 		}
 
 		fiveTupleType := deleteMethod.Type().In(0)
+		if fiveTupleType.Kind() != reflect.Ptr || fiveTupleType.Elem().Kind() != reflect.Struct {
+			return fmt.Errorf("turn allocation delete signature unavailable")
+		}
 		fiveTuple := reflect.New(fiveTupleType.Elem())
-		fiveTuple.Elem().FieldByName("Protocol").SetUint(uint64(turnAllocationProtocol(allocation.Protocol)))
-		fiveTuple.Elem().FieldByName("SrcAddr").Set(reflect.ValueOf(allocation.SrcAddr))
-		fiveTuple.Elem().FieldByName("DstAddr").Set(reflect.ValueOf(allocation.DstAddr))
+		protocolField := fiveTuple.Elem().FieldByName("Protocol")
+		srcAddrField := fiveTuple.Elem().FieldByName("SrcAddr")
+		dstAddrField := fiveTuple.Elem().FieldByName("DstAddr")
+		if !protocolField.IsValid() || !protocolField.CanSet() ||
+			!srcAddrField.IsValid() || !srcAddrField.CanSet() ||
+			!dstAddrField.IsValid() || !dstAddrField.CanSet() {
+			return fmt.Errorf("turn allocation five-tuple shape unavailable")
+		}
+		if !reflect.TypeOf(allocation.SrcAddr).AssignableTo(srcAddrField.Type()) ||
+			!reflect.TypeOf(allocation.DstAddr).AssignableTo(dstAddrField.Type()) {
+			return fmt.Errorf("turn allocation address types are incompatible")
+		}
+		protocolField.SetUint(uint64(turnAllocationProtocol(allocation.Protocol)))
+		srcAddrField.Set(reflect.ValueOf(allocation.SrcAddr))
+		dstAddrField.Set(reflect.ValueOf(allocation.DstAddr))
 		deleteMethod.Call([]reflect.Value{fiveTuple})
 	}
 

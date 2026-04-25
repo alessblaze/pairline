@@ -815,12 +815,11 @@ func runConcurrent(tasks ...func() error) error {
 
 	wg.Wait()
 	close(errCh)
+	var errs []error
 	for err := range errCh {
-		if err != nil {
-			return err
-		}
+		errs = append(errs, err)
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func redisClusterSlot(key string) uint16 {

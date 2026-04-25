@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -615,6 +616,22 @@ func TestPendingReleasesRoundTrip(t *testing.T) {
 	}
 	if _, ok := redisClient.hashes[userKey]; ok {
 		t.Fatalf("user-specific pending release index still exists after completion: %#v", redisClient.hashes[userKey])
+	}
+}
+
+func TestRunConcurrentJoinsMultipleErrors(t *testing.T) {
+	err := runConcurrent(
+		func() error { return errors.New("first failure") },
+		func() error { return errors.New("second failure") },
+	)
+	if err == nil {
+		t.Fatal("runConcurrent() error = nil, want joined error")
+	}
+	if !strings.Contains(err.Error(), "first failure") {
+		t.Fatalf("runConcurrent() error = %q, want first failure", err.Error())
+	}
+	if !strings.Contains(err.Error(), "second failure") {
+		t.Fatalf("runConcurrent() error = %q, want second failure", err.Error())
 	}
 }
 

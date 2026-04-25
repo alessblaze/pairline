@@ -114,10 +114,13 @@ func (c Config) ValidateForRelay() error {
 	if c.RelayMinPort <= 0 || c.RelayMaxPort <= 0 || c.RelayMinPort > c.RelayMaxPort {
 		return fmt.Errorf("invalid TURN relay port range %d-%d", c.RelayMinPort, c.RelayMaxPort)
 	}
+	if c.RelayMinPort > 65535 || c.RelayMaxPort > 65535 {
+		return fmt.Errorf("TURN relay port range must be within 1-65535, got %d-%d", c.RelayMinPort, c.RelayMaxPort)
+	}
 	if c.TLSListenAddress != "" && (c.TLSCertFile == "" || c.TLSKeyFile == "") {
 		return fmt.Errorf("TURN_TLS_CERT_FILE and TURN_TLS_KEY_FILE are required when TURN_TLS_LISTEN_ADDRESS is set")
 	}
-	if len(c.AdvertisedTURNURLs()) == 0 {
+	if !c.hasRelayListener() {
 		return fmt.Errorf("no TURN listener is configured")
 	}
 	return nil
@@ -187,6 +190,12 @@ func (c Config) AdvertisedTURNURLs() []string {
 	}
 
 	return urls
+}
+
+func (c Config) hasRelayListener() bool {
+	return strings.TrimSpace(c.UDPListenAddress) != "" ||
+		strings.TrimSpace(c.TCPListenAddress) != "" ||
+		strings.TrimSpace(c.TLSListenAddress) != ""
 }
 
 func BuildUsername(sessionID, sessionToken string) string {

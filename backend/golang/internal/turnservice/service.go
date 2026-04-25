@@ -301,11 +301,7 @@ func NewService(config Config, validator Validator) (*Service, error) {
 				svc.trackActiveAllocation(srcAddr, dstAddr, protocol, userID)
 			},
 			OnAllocationDeleted: func(srcAddr, dstAddr net.Addr, protocol, userID, _ string) {
-				allocation, ok := svc.untrackActiveAllocation(srcAddr, dstAddr, protocol)
-				if !ok {
-					allocation = activeAllocation{Username: userID}
-				}
-				svc.releaseDeletedAllocation(allocation, userID)
+				svc.handleAllocationDeleted(srcAddr, dstAddr, protocol, userID)
 			},
 		},
 	})
@@ -365,7 +361,7 @@ func (s *Service) authHandler(ra *pionturn.RequestAttributes) (string, []byte, b
 		trace.WithSpanKind(trace.SpanKindServer),
 		trace.WithAttributes(
 			attribute.String("turn.username", ra.Username),
-			attribute.String("turn.src_addr", ra.SrcAddr.String()),
+			attribute.String("turn.src_addr", formatAddr(ra.SrcAddr)),
 		),
 	)
 	defer span.End()
@@ -410,7 +406,7 @@ func (s *Service) quotaHandler(username, realm string, srcAddr net.Addr) bool {
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(
 			attribute.String("turn.username", username),
-			attribute.String("turn.src_addr", srcAddr.String()),
+			attribute.String("turn.src_addr", formatAddr(srcAddr)),
 			attribute.Int("turn.allocation_quota", s.config.AllocationQuota),
 		),
 	)
@@ -554,13 +550,43 @@ func (s *Service) releaseAllocationSlot(ctx context.Context, username, operation
 	return nil
 }
 
+func (s *Service) handleAllocationDeleted(srcAddr, dstAddr net.Addr, protocol, userID string) {
+	allocation, ok := s.untrackActiveAllocation(srcAddr, dstAddr, protocol)
+	if !ok {
+		allocation = activeAllocation{
+			Username: userID,
+			SrcAddr:  cloneAddr(srcAddr),
+			DstAddr:  cloneAddr(dstAddr),
+			Protocol: strings.ToUpper(strings.TrimSpace(protocol)),
+		}
+	}
+
+	go s.releaseDeletedAllocation(allocation, userID)
+}
+
 func (s *Service) releaseDeletedAllocation(allocation activeAllocation, fallbackUsername string) {
 	releaseUserID := strings.TrimSpace(allocation.Username)
 	if releaseUserID == "" {
 		releaseUserID = strings.TrimSpace(fallbackUsername)
 	}
 	operationID := strings.TrimSpace(allocation.ReleaseOperationID)
-	if releaseUserID == "" || operationID == "" {
+	if releaseUserID == "" {
+		log.Printf(
+			"TURN allocation release skipped missing username protocol=%s peer_addr=%v relay_addr=%v",
+			allocation.Protocol,
+			allocation.SrcAddr,
+			allocation.DstAddr,
+		)
+		return
+	}
+	if operationID == "" {
+		log.Printf(
+			"TURN allocation release skipped missing operation_id user=%q protocol=%s peer_addr=%v relay_addr=%v",
+			releaseUserID,
+			allocation.Protocol,
+			allocation.SrcAddr,
+			allocation.DstAddr,
+		)
 		return
 	}
 
@@ -599,6 +625,13 @@ func (s *Service) logAuthAllowed(result ValidationResult, srcAddr net.Addr) {
 		return
 	}
 	log.Printf("TURN auth allowed session=%s matched=%s peer_addr=%v", result.SessionID, result.MatchedID, srcAddr)
+}
+
+func formatAddr(addr net.Addr) string {
+	if addr == nil {
+		return ""
+	}
+	return addr.String()
 }
 
 func (s *Service) queueAllocationRelease(username, operationID string) {

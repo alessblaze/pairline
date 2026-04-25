@@ -85,6 +85,38 @@ func TestValidateForBootstrapAcceptsExplicitServerURLs(t *testing.T) {
 	}
 }
 
+func TestValidateForRelayRejectsServerURLsWithoutListeners(t *testing.T) {
+	cfg := Config{
+		Mode:         ModeIntegrated,
+		Realm:        DefaultRealm,
+		Credential:   DefaultCredential,
+		PublicIP:     "203.0.113.10",
+		ServerURLs:   []string{"turn:203.0.113.10:3478?transport=udp"},
+		RelayMinPort: 49152,
+		RelayMaxPort: 49252,
+	}
+
+	if err := cfg.ValidateForRelay(); err == nil {
+		t.Fatal("ValidateForRelay() error = nil, want listener validation error")
+	}
+}
+
+func TestValidateForRelayRejectsPortRangeAboveUint16(t *testing.T) {
+	cfg := Config{
+		Mode:             ModeIntegrated,
+		Realm:            DefaultRealm,
+		Credential:       DefaultCredential,
+		PublicIP:         "203.0.113.10",
+		UDPListenAddress: ":3478",
+		RelayMinPort:     49152,
+		RelayMaxPort:     70000,
+	}
+
+	if err := cfg.ValidateForRelay(); err == nil {
+		t.Fatal("ValidateForRelay() error = nil, want invalid relay port range error")
+	}
+}
+
 func TestLoadConfigFromEnvDefaultsControlGRPCPoolSize(t *testing.T) {
 	t.Setenv("TURN_CONTROL_GRPC_POOL_SIZE", "")
 

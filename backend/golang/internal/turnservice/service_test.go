@@ -1,13 +1,17 @@
 package turnservice
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/anish/omegle/backend/golang/internal/turncontrol"
+	pionturn "github.com/pion/turn/v5"
 	"google.golang.org/grpc"
 )
 
@@ -411,6 +415,13 @@ func TestTurnAllocationProtocol(t *testing.T) {
 	}
 }
 
+func TestRevokeTurnAllocationRejectsMissingAddresses(t *testing.T) {
+	err := revokeTurnAllocation(&pionturn.Server{}, activeAllocation{})
+	if err == nil {
+		t.Fatal("revokeTurnAllocation() error = nil, want missing address error")
+	}
+}
+
 func TestServiceFlushPendingReleases(t *testing.T) {
 	validator := &fakeValidator{}
 	svc := &Service{
@@ -491,6 +502,91 @@ func TestServiceReleaseDeletedAllocationQueuesRetryOnFailure(t *testing.T) {
 	}
 }
 
+func TestServiceReleaseDeletedAllocationLogsMissingOperationID(t *testing.T) {
+	var logBuffer bytes.Buffer
+	previousWriter := log.Writer()
+	log.SetOutput(&logBuffer)
+	defer log.SetOutput(previousWriter)
+
+	validator := &fakeValidator{}
+	svc := &Service{
+		validator:       validator,
+		pendingReleases: make(map[string]map[string]struct{}),
+		releaseSignal:   make(chan struct{}, 1),
+	}
+
+	svc.releaseDeletedAllocation(activeAllocation{
+		Username: "user-1",
+		Protocol: "UDP",
+		SrcAddr:  &net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 1111},
+		DstAddr:  &net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 3478},
+	}, "")
+
+	if validator.releaseCalls != 0 {
+		t.Fatalf("releaseCalls = %d, want 0", validator.releaseCalls)
+	}
+	if !strings.Contains(logBuffer.String(), "missing operation_id") {
+		t.Fatalf("log output = %q, want missing operation_id warning", logBuffer.String())
+	}
+}
+
+func TestServiceHandleAllocationDeletedReturnsBeforeReleaseCompletes(t *testing.T) {
+	releaseStarted := make(chan struct{}, 1)
+	releaseBlock := make(chan struct{})
+	validator := &fakeValidator{
+		releaseFn: func(context.Context, string, string) error {
+			releaseStarted <- struct{}{}
+			<-releaseBlock
+			return nil
+		},
+	}
+	srcAddr := &net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 1111}
+	dstAddr := &net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 3478}
+	svc := &Service{
+		validator: validator,
+		activeAllocations: map[string]activeAllocation{
+			activeAllocationKey(srcAddr, dstAddr, "UDP"): {
+				Username:           "user-1",
+				ReleaseOperationID: "release-1",
+				SrcAddr:            srcAddr,
+				DstAddr:            dstAddr,
+				Protocol:           "UDP",
+			},
+		},
+		pendingReleases: make(map[string]map[string]struct{}),
+		releaseSignal:   make(chan struct{}, 1),
+	}
+
+	returned := make(chan struct{})
+	go func() {
+		svc.handleAllocationDeleted(srcAddr, dstAddr, "UDP", "user-1")
+		close(returned)
+	}()
+
+	select {
+	case <-returned:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("handleAllocationDeleted blocked on release work")
+	}
+
+	select {
+	case <-releaseStarted:
+	case <-time.After(time.Second):
+		t.Fatal("release goroutine did not start")
+	}
+
+	close(releaseBlock)
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if validator.completeCalls == 1 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("completeCalls = %d, want 1", validator.completeCalls)
+}
+
 func TestServiceUntrackActiveAllocationReturnsReleaseFallback(t *testing.T) {
 	srcAddr := &net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 1111}
 	dstAddr := &net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 3478}
@@ -510,6 +606,59 @@ func TestServiceUntrackActiveAllocationReturnsReleaseFallback(t *testing.T) {
 	}
 	if _, ok := svc.allocationReleaseLookup[allocationKey]; ok {
 		t.Fatalf("allocationReleaseLookup[%q] still present after fallback untrack", allocationKey)
+	}
+}
+
+func TestTrackActiveAllocationPreservesSessionIPOnReplacement(t *testing.T) {
+	srcAddr := &net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 1111}
+	dstAddr := &net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 3478}
+	allocationKey := activeAllocationKey(srcAddr, dstAddr, "UDP")
+
+	svc := &Service{
+		activeAllocations: map[string]activeAllocation{
+			allocationKey: {
+				Username:           "user-1",
+				SessionIP:          "203.0.113.24",
+				SrcAddr:            srcAddr,
+				DstAddr:            dstAddr,
+				Protocol:           "UDP",
+				ReleaseOperationID: "release-old",
+			},
+		},
+		allocationReleaseLookup: map[string]activeAllocation{
+			allocationKey: {
+				Username:           "user-1",
+				SessionIP:          "203.0.113.24",
+				SrcAddr:            srcAddr,
+				DstAddr:            dstAddr,
+				Protocol:           "UDP",
+				ReleaseOperationID: "release-old",
+			},
+		},
+		allocationKeysByUserID: map[string]map[string]struct{}{
+			"user-1": {allocationKey: {}},
+		},
+		allocationKeysBySession: map[string]map[string]struct{}{
+			"203.0.113.24": {allocationKey: {}},
+		},
+		allocationCountByUserID: map[string]int{"user-1": 1},
+		sessionIPByUserID:       make(map[string]rememberedSessionIP),
+	}
+
+	svc.trackActiveAllocation(srcAddr, dstAddr, "UDP", "user-1")
+
+	allocation := svc.activeAllocations[allocationKey]
+	if allocation.SessionIP != "203.0.113.24" {
+		t.Fatalf("replacement allocation SessionIP = %q, want %q", allocation.SessionIP, "203.0.113.24")
+	}
+	if got := svc.sessionIPByUserID["user-1"].IP; got != "203.0.113.24" {
+		t.Fatalf("sessionIPByUserID[user-1] = %q, want %q", got, "203.0.113.24")
+	}
+	if _, ok := svc.allocationKeysBySession["203.0.113.24"][allocationKey]; !ok {
+		t.Fatalf("allocationKeysBySession = %#v, want replacement key to remain indexed", svc.allocationKeysBySession)
+	}
+	if allocation.ReleaseOperationID == "" || allocation.ReleaseOperationID == "release-old" {
+		t.Fatalf("replacement ReleaseOperationID = %q, want fresh non-empty ID", allocation.ReleaseOperationID)
 	}
 }
 
@@ -595,5 +744,29 @@ func TestQuotaHandlerUsesFreshReserveContextAfterSlowFlush(t *testing.T) {
 	}
 	if validator.releaseCalls != 3 {
 		t.Fatalf("releaseCalls = %d, want 3", validator.releaseCalls)
+	}
+}
+
+func TestQuotaHandlerHandlesNilSourceAddr(t *testing.T) {
+	validator := &fakeValidator{
+		reserveFn: func(context.Context, string, int) (bool, error) {
+			return true, nil
+		},
+	}
+	svc := &Service{
+		config:          Config{AllocationQuota: 1},
+		validator:       validator,
+		pendingReleases: make(map[string]map[string]struct{}),
+		releaseSignal:   make(chan struct{}, 1),
+	}
+
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("quotaHandler panicked with nil source address: %v", recovered)
+		}
+	}()
+
+	if allowed := svc.quotaHandler("user-1", "pairline", nil); !allowed {
+		t.Fatal("quotaHandler() = false, want true")
 	}
 }
