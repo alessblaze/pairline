@@ -587,6 +587,50 @@ func TestServiceHandleAllocationDeletedReturnsBeforeReleaseCompletes(t *testing.
 	t.Fatalf("completeCalls = %d, want 1", validator.completeCalls)
 }
 
+func TestServiceHandleAllocationDeletedRecoversAsyncReleasePanic(t *testing.T) {
+	var logBuffer bytes.Buffer
+	previousWriter := log.Writer()
+	log.SetOutput(&logBuffer)
+	defer log.SetOutput(previousWriter)
+
+	srcAddr := &net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 1111}
+	dstAddr := &net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 3478}
+	svc := &Service{
+		validator: &fakeValidator{
+			queueFn: func(context.Context, string, string) error {
+				panic("queue blew up")
+			},
+		},
+		activeAllocations: map[string]activeAllocation{
+			activeAllocationKey(srcAddr, dstAddr, "UDP"): {
+				Username:           "user-1",
+				ReleaseOperationID: "release-1",
+				SrcAddr:            srcAddr,
+				DstAddr:            dstAddr,
+				Protocol:           "UDP",
+			},
+		},
+		pendingReleases: make(map[string]map[string]localPendingRelease),
+		releaseSignal:   make(chan struct{}, 1),
+	}
+
+	svc.handleAllocationDeleted(srcAddr, dstAddr, "UDP", "user-1")
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		releases := svc.snapshotPendingReleases("user-1")
+		if len(releases) == 1 && releases[0].OperationID == "release-1" {
+			if !strings.Contains(logBuffer.String(), "TURN allocation release panicked") {
+				t.Fatalf("log output = %q, want recovered panic log", logBuffer.String())
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Fatalf("pending releases = %#v, want recovered release queued locally", svc.snapshotPendingReleases("user-1"))
+}
+
 func TestServiceUntrackActiveAllocationReturnsReleaseFallback(t *testing.T) {
 	srcAddr := &net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 1111}
 	dstAddr := &net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 3478}
@@ -734,6 +778,32 @@ func TestProcessPendingReleasesDropsLocalEntryAfterDurableQueueSucceeds(t *testi
 	}
 	if _, ok := svc.pendingReleases["user-1"]; ok {
 		t.Fatalf("pendingReleases = %#v, want local entry dropped after durable queue", svc.pendingReleases)
+	}
+}
+
+func TestProcessPendingReleasesRecoversFromValidatorPanic(t *testing.T) {
+	validator := &fakeValidator{
+		queueFn: func(context.Context, string, string) error {
+			panic("queue blew up")
+		},
+	}
+	svc := &Service{
+		validator: validator,
+		pendingReleases: map[string]map[string]localPendingRelease{
+			"user-1": {"release-1": {queuedAt: time.Now()}},
+		},
+		releaseSignal: make(chan struct{}, 1),
+	}
+
+	err := svc.processPendingReleases(context.Background(), "")
+	if err == nil {
+		t.Fatal("processPendingReleases() error = nil, want recovered panic error")
+	}
+	if !strings.Contains(err.Error(), "turn pending release processing panicked") {
+		t.Fatalf("processPendingReleases() error = %q, want recovered panic error", err.Error())
+	}
+	if _, ok := svc.pendingReleases["user-1"]["release-1"]; !ok {
+		t.Fatalf("pendingReleases = %#v, want release retained for retry after recovered panic", svc.pendingReleases)
 	}
 }
 

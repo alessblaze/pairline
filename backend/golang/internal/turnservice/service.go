@@ -575,7 +575,32 @@ func (s *Service) handleAllocationDeleted(srcAddr, dstAddr net.Addr, protocol, u
 		}
 	}
 
-	go s.releaseDeletedAllocation(allocation, userID)
+	s.launchAllocationRelease(allocation, userID)
+}
+
+func (s *Service) launchAllocationRelease(allocation activeAllocation, fallbackUsername string) {
+	go func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				releaseUserID := strings.TrimSpace(allocation.Username)
+				if releaseUserID == "" {
+					releaseUserID = strings.TrimSpace(fallbackUsername)
+				}
+				log.Printf(
+					"TURN allocation release panicked user=%q operation_id=%s protocol=%s peer_addr=%v relay_addr=%v reason=%v",
+					releaseUserID,
+					allocation.ReleaseOperationID,
+					allocation.Protocol,
+					allocation.SrcAddr,
+					allocation.DstAddr,
+					recovered,
+				)
+				s.queueAllocationRelease(releaseUserID, allocation.ReleaseOperationID)
+			}
+		}()
+
+		s.releaseDeletedAllocation(allocation, fallbackUsername)
+	}()
 }
 
 func (s *Service) releaseDeletedAllocation(allocation activeAllocation, fallbackUsername string) {
@@ -750,13 +775,18 @@ func (s *Service) pendingReleaseStates(ctx context.Context, username string) ([]
 	return releases, err
 }
 
-func (s *Service) processPendingReleases(ctx context.Context, username string) error {
+func (s *Service) processPendingReleases(ctx context.Context, username string) (processErr error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			processErr = errors.Join(processErr, fmt.Errorf("turn pending release processing panicked: %v", recovered))
+		}
+	}()
+
 	states, stateErr := s.pendingReleaseStates(ctx, username)
 	if len(states) == 0 {
 		return stateErr
 	}
 
-	var processErr error
 	if stateErr != nil {
 		processErr = stateErr
 	}
@@ -907,7 +937,7 @@ func (s *Service) reconcileTrackedAllocations() (reconcileErr error) {
 			allocation.SrcAddr,
 			allocation.DstAddr,
 		)
-		go s.releaseDeletedAllocation(allocation, allocation.Username)
+		s.launchAllocationRelease(allocation, allocation.Username)
 	}
 
 	return reconcileErr
