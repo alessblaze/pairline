@@ -33,7 +33,7 @@ const turnMode = (() => {
 const turnEnabled = turnMode !== 'off';
 const webrtcDebugEnabled = import.meta.env.VITE_WEBRTC_DEBUG !== 'false';
 const forceRelay = import.meta.env.VITE_FORCE_RELAY === 'true';
-const initialTurnPrefetchWaitMs = 400;
+const initialTurnPrefetchWaitMs = forceRelay ? 2000 : 400;
 const hasTurnServer = (iceServers: RTCIceServer[]) =>
   iceServers.some(server => {
     const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
@@ -764,6 +764,8 @@ export function useVideoChat(wsUrl: string) {
     };
 
     // Required for ICE restart: when restartIce() is called after a TURN upgrade,
+    // either side should be able to create a new offer — the caller/callee distinction
+    // only applies to the INITIAL negotiation, not to ICE restarts.
     pc.onnegotiationneeded = async () => {
       if (!isCurrentPeerConnection()) return;
       if (!iceRestartPendingRef.current) return;
@@ -771,9 +773,13 @@ export function useVideoChat(wsUrl: string) {
       const activeSessionId = sessionIdRef.current;
       const peerIdSnapshot = targetPeerId;
       if (!activeSessionId || !peerIdSnapshot) return;
-      const isCaller = isCallerSession(activeSessionId, peerIdSnapshot);
-      if (!isCaller) return;
-      if (pc.signalingState !== 'stable') return;
+      if (pc.signalingState !== 'stable') {
+        logWebRTC('Deferring ICE restart offer — signaling not stable (possible glare)', {
+          signalingState: pc.signalingState,
+          targetPeerId: peerIdSnapshot
+        });
+        return;
+      }
 
       try {
         const offer = await pc.createOffer({ iceRestart: true });
@@ -789,6 +795,7 @@ export function useVideoChat(wsUrl: string) {
         }
         logWebRTC('Created ICE restart offer', {
           targetPeerId: peerIdSnapshot,
+          initiator: isCallerSession(activeSessionId, peerIdSnapshot) ? 'caller' : 'callee',
           mLines: getSdpMediaSections(offer.sdp)
         });
         iceRestartPendingRef.current = false;
@@ -1402,7 +1409,26 @@ export function useVideoChat(wsUrl: string) {
           }
           const offerEpoch = chatEpochRef.current;
           let pc = peerConnectionRef.current;
-          if (pc && (pc.connectionState === 'closed' || pc.signalingState !== 'stable')) {
+          if (pc && pc.connectionState !== 'closed' && pc.signalingState === 'have-local-offer') {
+            // Glare: we have a pending local offer and received a remote offer.
+            // For ICE restarts, use SDP rollback instead of destroying the PeerConnection,
+            // which would wipe ICE state and force a full renegotiation.
+            logWebRTC('ICE restart glare detected, rolling back local offer', {
+              peerId: message.peer_id,
+              signalingState: pc.signalingState
+            });
+            try {
+              await pc.setLocalDescription({ type: 'rollback' });
+              iceRestartPendingRef.current = false;
+            } catch (rollbackErr) {
+              logWebRTC('SDP rollback failed, falling back to full reset', {
+                peerId: message.peer_id,
+                error: String(rollbackErr)
+              });
+              resetWebRTCTransport('incoming_offer_reset', { keepLocalMedia: true });
+              pc = null;
+            }
+          } else if (pc && (pc.connectionState === 'closed' || pc.signalingState !== 'stable')) {
             logWebRTC('Resetting peer connection before applying remote offer', {
               peerId: message.peer_id,
               signalingState: pc.signalingState,
@@ -1516,15 +1542,24 @@ export function useVideoChat(wsUrl: string) {
               ...parseIceCandidate(message.data.candidate.candidate)
             });
             const pc = peerConnectionRef.current;
-            if (!pc || pc.connectionState === 'closed') {
+            if (pc && pc.connectionState === 'closed') {
               logWebRTC('Ignoring ICE candidate for closed peer connection', {
                 peerId: message.peer_id
               });
               break;
             }
-            if (pc.remoteDescription) {
+            if (pc && pc.remoteDescription) {
               await pc.addIceCandidate(new RTCIceCandidate(message.data.candidate));
             } else {
+              // Queue the candidate — either the PeerConnection hasn't been created yet
+              // (trickle ICE candidates arrived before the offer was processed), or the
+              // remote description hasn't been set yet. These get flushed by
+              // flushIceCandidates() once setRemoteDescription completes.
+              logWebRTC('Queuing early ICE candidate (pc=' + (pc ? 'exists' : 'null') + ')', {
+                peerId: message.peer_id,
+                sdpMid: message.data.candidate.sdpMid,
+                queueSize: pendingIceCandidatesRef.current.length + 1
+              });
               pendingIceCandidatesRef.current.push(message.data.candidate);
             }
           } catch (error) {
