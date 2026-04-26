@@ -487,10 +487,43 @@ export function useVideoChat(wsUrl: string) {
     }
   };
 
-  const sendWebRTC = async (eventType: 'offer' | 'answer' | 'ice', payload: any, currentPeerId: string | null = peerId) => {
+  const shouldIgnoreIncomingSignal = (
+    signalType: 'webrtc_start' | 'offer' | 'answer' | 'ice',
+    incomingPeerId?: string | null
+  ) => {
+    const activePeerId = peerIdRef.current;
+    if (!incomingPeerId) {
+      logWebRTC(`Ignoring ${signalType} without peer_id`);
+      return true;
+    }
+    if (!activePeerId) {
+      logWebRTC(`Ignoring stale ${signalType} without active peer`, {
+        incomingPeerId
+      });
+      return true;
+    }
+    if (incomingPeerId !== activePeerId) {
+      logWebRTC(`Ignoring stale ${signalType} for previous peer`, {
+        incomingPeerId,
+        activePeerId
+      });
+      return true;
+    }
+    return false;
+  };
+
+  const sendWebRTC = async (eventType: 'offer' | 'answer' | 'ice', payload: any, currentPeerId: string | null = peerIdRef.current) => {
     const activeSessionId = sessionIdRef.current;
     if (!activeSessionId || !currentPeerId || !webrtcWsRef.current) {
       console.warn("Cannot send WebRTC signal: WS disconnected or session absent");
+      return;
+    }
+    if (peerIdRef.current !== currentPeerId) {
+      logWebRTC('Dropping stale outbound WebRTC signal', {
+        eventType,
+        targetPeerId: currentPeerId,
+        activePeerId: peerIdRef.current
+      });
       return;
     }
 
@@ -532,6 +565,13 @@ export function useVideoChat(wsUrl: string) {
   const startNegotiationIfNeeded = async (targetPeerId: string) => {
     const activeSessionId = sessionIdRef.current;
     if (!activeSessionId || negotiationStartedRef.current) return;
+    if (peerIdRef.current !== targetPeerId) {
+      logWebRTC('Skipping negotiation for stale peer', {
+        targetPeerId,
+        activePeerId: peerIdRef.current
+      });
+      return;
+    }
 
     const isCaller = isCallerSession(activeSessionId, targetPeerId);
     if (!isCaller) {
@@ -543,10 +583,20 @@ export function useVideoChat(wsUrl: string) {
     }
 
     negotiationStartedRef.current = true;
+    const negotiationEpoch = chatEpochRef.current;
 
     let pc = peerConnectionRef.current;
     if (!pc) {
       await waitForInitialTurnPrefetch('initial_offer');
+      if (chatEpochRef.current !== negotiationEpoch || peerIdRef.current !== targetPeerId) {
+        negotiationStartedRef.current = false;
+        logWebRTC('Aborting negotiation after stale TURN prefetch', {
+          targetPeerId,
+          negotiationEpoch,
+          currentEpoch: chatEpochRef.current
+        });
+        return;
+      }
       pc = createPeerConnection(targetPeerId);
 
       const transceiverInit: RTCRtpTransceiverInit = {
@@ -567,8 +617,26 @@ export function useVideoChat(wsUrl: string) {
 
     try {
       await attachLocalTracks();
+      if (chatEpochRef.current !== negotiationEpoch || peerConnectionRef.current !== pc || peerIdRef.current !== targetPeerId) {
+        negotiationStartedRef.current = false;
+        logWebRTC('Aborting negotiation before creating offer', {
+          targetPeerId,
+          negotiationEpoch,
+          currentEpoch: chatEpochRef.current
+        });
+        return;
+      }
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
+      if (chatEpochRef.current !== negotiationEpoch || peerConnectionRef.current !== pc || peerIdRef.current !== targetPeerId) {
+        negotiationStartedRef.current = false;
+        logWebRTC('Dropping stale local offer after reset', {
+          targetPeerId,
+          negotiationEpoch,
+          currentEpoch: chatEpochRef.current
+        });
+        return;
+      }
       logWebRTC('Created initial offer', {
         targetPeerId,
         mLines: getSdpMediaSections(offer.sdp)
@@ -600,6 +668,7 @@ export function useVideoChat(wsUrl: string) {
   };
 
   const createPeerConnection = (targetPeerId: string) => {
+    const connectionEpoch = chatEpochRef.current;
     const config: RTCConfiguration = {
       iceServers: turnServersRef.current,
       iceTransportPolicy: forceRelay ? 'relay' : 'all'
@@ -615,8 +684,13 @@ export function useVideoChat(wsUrl: string) {
 
     const pc = new RTCPeerConnection(config);
     peerConnectionRef.current = pc;
+    const isCurrentPeerConnection = () =>
+      peerConnectionRef.current === pc &&
+      peerIdRef.current === targetPeerId &&
+      chatEpochRef.current === connectionEpoch;
 
     pc.onicecandidate = (event) => {
+      if (!isCurrentPeerConnection()) return;
       if (event.candidate) {
         logWebRTC('Sending ICE candidate', {
           targetPeerId,
@@ -628,6 +702,7 @@ export function useVideoChat(wsUrl: string) {
     };
 
     pc.oniceconnectionstatechange = () => {
+      if (!isCurrentPeerConnection()) return;
       if (import.meta.env.VITE_WEBSOCKET_DEBUG === 'true') {
         console.log('WebRTC ICE State:', pc.iceConnectionState);
       }
@@ -641,11 +716,12 @@ export function useVideoChat(wsUrl: string) {
       }
       if (turnEnabled && (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected')) {
         console.warn(`ICE ${pc.iceConnectionState} — attempting TURN upgrade...`);
-        fetchAndApplyTURN(pc, targetPeerId);
+        fetchAndApplyTURN(pc, targetPeerId, connectionEpoch);
       }
     };
 
     pc.onconnectionstatechange = () => {
+      if (!isCurrentPeerConnection()) return;
       logWebRTC('Peer connection state changed', {
         connectionState: pc.connectionState,
         iceConnectionState: pc.iceConnectionState,
@@ -659,6 +735,7 @@ export function useVideoChat(wsUrl: string) {
     };
 
     pc.onsignalingstatechange = () => {
+      if (!isCurrentPeerConnection()) return;
       logWebRTC('Signaling state changed', {
         signalingState: pc.signalingState,
         localDescriptionType: pc.localDescription?.type,
@@ -668,6 +745,7 @@ export function useVideoChat(wsUrl: string) {
 
     // Required for ICE restart: when restartIce() is called after a TURN upgrade,
     pc.onnegotiationneeded = async () => {
+      if (!isCurrentPeerConnection()) return;
       if (!iceRestartPendingRef.current) return;
 
       const activeSessionId = sessionIdRef.current;
@@ -680,6 +758,15 @@ export function useVideoChat(wsUrl: string) {
       try {
         const offer = await pc.createOffer({ iceRestart: true });
         await pc.setLocalDescription(offer);
+        if (!isCurrentPeerConnection()) {
+          iceRestartPendingRef.current = false;
+          logWebRTC('Dropping stale ICE restart offer after reset', {
+            targetPeerId: peerIdSnapshot,
+            connectionEpoch,
+            currentEpoch: chatEpochRef.current
+          });
+          return;
+        }
         logWebRTC('Created ICE restart offer', {
           targetPeerId: peerIdSnapshot,
           mLines: getSdpMediaSections(offer.sdp)
@@ -693,6 +780,7 @@ export function useVideoChat(wsUrl: string) {
     };
 
     pc.ontrack = (event) => {
+      if (!isCurrentPeerConnection()) return;
       if (import.meta.env.VITE_WEBSOCKET_DEBUG === 'true') {
         console.log('Received track from peer:', event.track.kind);
       }
@@ -843,12 +931,26 @@ export function useVideoChat(wsUrl: string) {
     }
   };
 
-  const fetchAndApplyTURN = async (pc: RTCPeerConnection, _targetPeerId: string) => {
+  const fetchAndApplyTURN = async (pc: RTCPeerConnection, targetPeerId: string, connectionEpoch: number) => {
+    if (
+      peerConnectionRef.current !== pc ||
+      peerIdRef.current !== targetPeerId ||
+      chatEpochRef.current !== connectionEpoch
+    ) {
+      return;
+    }
     if (turnFetchedRef.current) return; // Already upgraded — don't call CF API again
     turnFetchedRef.current = true;
 
     try {
       const iceServers = await prefetchTurnServers('ice_failure_fallback');
+      if (
+        peerConnectionRef.current !== pc ||
+        peerIdRef.current !== targetPeerId ||
+        chatEpochRef.current !== connectionEpoch
+      ) {
+        return;
+      }
       if (!iceServers) {
         turnFetchedRef.current = false;
         return;
@@ -873,8 +975,7 @@ export function useVideoChat(wsUrl: string) {
     }
   };
 
-  const flushIceCandidates = async () => {
-    const pc = peerConnectionRef.current;
+  const flushIceCandidates = async (pc: RTCPeerConnection | null = peerConnectionRef.current) => {
     if (!pc || !pc.remoteDescription) return;
     while (pendingIceCandidatesRef.current.length > 0) {
       const candidateInit = pendingIceCandidatesRef.current.shift();
@@ -1208,6 +1309,9 @@ export function useVideoChat(wsUrl: string) {
 
       case 'webrtc_start':
         if (message.peer_id) {
+          if (shouldIgnoreIncomingSignal('webrtc_start', message.peer_id)) {
+            break;
+          }
           logWebRTC('Phoenix webrtc_start received', {
             peerId: message.peer_id,
             goWsOpen: webrtcSocketOpenRef.current
@@ -1259,9 +1363,30 @@ export function useVideoChat(wsUrl: string) {
 
       case 'offer':
         if (message.peer_id) {
+          if (shouldIgnoreIncomingSignal('offer', message.peer_id)) {
+            break;
+          }
+          const offerEpoch = chatEpochRef.current;
           let pc = peerConnectionRef.current;
+          if (pc && (pc.connectionState === 'closed' || pc.signalingState !== 'stable')) {
+            logWebRTC('Resetting peer connection before applying remote offer', {
+              peerId: message.peer_id,
+              signalingState: pc.signalingState,
+              connectionState: pc.connectionState
+            });
+            resetWebRTCTransport('incoming_offer_reset', { keepLocalMedia: true });
+            pc = null;
+          }
           if (!pc) {
             await waitForInitialTurnPrefetch('initial_answer');
+            if (chatEpochRef.current !== offerEpoch || peerIdRef.current !== message.peer_id) {
+              logWebRTC('Discarding remote offer after stale TURN prefetch', {
+                peerId: message.peer_id,
+                offerEpoch,
+                currentEpoch: chatEpochRef.current
+              });
+              break;
+            }
             pc = createPeerConnection(message.peer_id);
           }
           try {
@@ -1270,7 +1395,15 @@ export function useVideoChat(wsUrl: string) {
               mLines: getSdpMediaSections(message.data?.sdp?.sdp)
             });
             await pc.setRemoteDescription(new RTCSessionDescription(message.data.sdp));
-            await flushIceCandidates();
+            if (chatEpochRef.current !== offerEpoch || peerConnectionRef.current !== pc || peerIdRef.current !== message.peer_id) {
+              logWebRTC('Discarding remote offer after peer changed', {
+                peerId: message.peer_id,
+                offerEpoch,
+                currentEpoch: chatEpochRef.current
+              });
+              break;
+            }
+            await flushIceCandidates(pc);
 
             // Extract the transceivers WebRTC automatically created from the remote SDP's m-lines.
             const transceivers = pc.getTransceivers();
@@ -1284,9 +1417,25 @@ export function useVideoChat(wsUrl: string) {
             if (transceiversRef.current.video) transceiversRef.current.video.direction = 'sendrecv';
 
             await attachLocalTracks();
+            if (chatEpochRef.current !== offerEpoch || peerConnectionRef.current !== pc || peerIdRef.current !== message.peer_id) {
+              logWebRTC('Discarding local answer for stale remote offer', {
+                peerId: message.peer_id,
+                offerEpoch,
+                currentEpoch: chatEpochRef.current
+              });
+              break;
+            }
 
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
+            if (chatEpochRef.current !== offerEpoch || peerConnectionRef.current !== pc || peerIdRef.current !== message.peer_id) {
+              logWebRTC('Dropping stale local answer after reset', {
+                peerId: message.peer_id,
+                offerEpoch,
+                currentEpoch: chatEpochRef.current
+              });
+              break;
+            }
             logWebRTC('Created local answer', {
               peerId: message.peer_id,
               mLines: getSdpMediaSections(answer.sdp)
@@ -1299,13 +1448,23 @@ export function useVideoChat(wsUrl: string) {
         break;
 
       case 'answer':
+        if (message.peer_id && shouldIgnoreIncomingSignal('answer', message.peer_id)) {
+          break;
+        }
         if (peerConnectionRef.current) {
           try {
+            if (peerConnectionRef.current.signalingState !== 'have-local-offer') {
+              logWebRTC('Ignoring stale remote answer in unexpected signaling state', {
+                peerId: message.peer_id,
+                signalingState: peerConnectionRef.current.signalingState
+              });
+              break;
+            }
             logWebRTC('Applying remote answer', {
               mLines: getSdpMediaSections(message.data?.sdp?.sdp)
             });
             await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(message.data.sdp));
-            await flushIceCandidates();
+            await flushIceCandidates(peerConnectionRef.current);
           } catch (error) {
             console.error('Failed to handle answer:', error);
           }
@@ -1314,13 +1473,22 @@ export function useVideoChat(wsUrl: string) {
 
       case 'ice':
         if (message.data?.candidate) {
+          if (message.peer_id && shouldIgnoreIncomingSignal('ice', message.peer_id)) {
+            break;
+          }
           try {
             logWebRTC('Received ICE candidate', {
               sdpMid: message.data.candidate.sdpMid,
               ...parseIceCandidate(message.data.candidate.candidate)
             });
             const pc = peerConnectionRef.current;
-            if (pc?.remoteDescription) {
+            if (!pc || pc.connectionState === 'closed') {
+              logWebRTC('Ignoring ICE candidate for closed peer connection', {
+                peerId: message.peer_id
+              });
+              break;
+            }
+            if (pc.remoteDescription) {
               await pc.addIceCandidate(new RTCIceCandidate(message.data.candidate));
             } else {
               pendingIceCandidatesRef.current.push(message.data.candidate);
@@ -1342,13 +1510,7 @@ export function useVideoChat(wsUrl: string) {
         setPeerTyping(false);
         beginNewChatEpoch();
         pushSystemMessage('Stranger has disconnected.');
-        if (peerConnectionRef.current) {
-          peerConnectionRef.current.close();
-          peerConnectionRef.current = null;
-        }
-        if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = null;
-        }
+        resetWebRTCTransport('peer_disconnected', { keepLocalMedia: true });
         break;
 
       case 'banned':
@@ -1359,6 +1521,7 @@ export function useVideoChat(wsUrl: string) {
         setPeerTyping(false);
         beginNewChatEpoch();
         pushSystemMessage(`You have been banned: ${videoBanReason}`);
+        resetWebRTCTransport('banned', { keepLocalMedia: true });
         break;
 
       case 'error': {
@@ -1386,6 +1549,7 @@ export function useVideoChat(wsUrl: string) {
         setPeerTyping(false);
         beginNewChatEpoch();
         pushSystemMessage('Matchmaking timeout: No strangers are available right now.');
+        resetWebRTCTransport('timeout', { keepLocalMedia: true });
         break;
 
       case 'stopped':
@@ -1403,6 +1567,7 @@ export function useVideoChat(wsUrl: string) {
         setReportPeerId(null);
         setMessages([]);
         setPeerTyping(false);
+        resetWebRTCTransport('stopped', { keepLocalMedia: true });
         break;
     }
   };

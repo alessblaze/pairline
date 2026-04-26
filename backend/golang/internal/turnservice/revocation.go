@@ -323,7 +323,13 @@ func (s *Service) removeAllocationKeyFromSessionIPLocked(sessionIP, key string) 
 	}
 }
 
-func revokeTurnAllocation(server *pionturn.Server, allocation activeAllocation) error {
+func revokeTurnAllocation(server *pionturn.Server, allocation activeAllocation) (panicErr error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			panicErr = fmt.Errorf("turn allocation revocation panicked: %v", recovered)
+		}
+	}()
+
 	if server == nil {
 		return fmt.Errorf("turn server is not initialized")
 	}
@@ -342,10 +348,7 @@ func revokeTurnAllocation(server *pionturn.Server, allocation activeAllocation) 
 	}
 
 	for i := 0; i < allocationManagersField.Len(); i++ {
-		managerValue := reflect.NewAt(
-			allocationManagersField.Index(i).Type(),
-			unsafe.Pointer(allocationManagersField.Index(i).UnsafeAddr()),
-		).Elem()
+		managerValue := allocationManagerValue(allocationManagersField.Index(i))
 		deleteMethod := managerValue.MethodByName("DeleteAllocation")
 		if !deleteMethod.IsValid() {
 			return fmt.Errorf("turn allocation delete method unavailable")
@@ -361,7 +364,14 @@ func revokeTurnAllocation(server *pionturn.Server, allocation activeAllocation) 
 	return nil
 }
 
-func turnServerHasAllocation(server *pionturn.Server, allocation activeAllocation) (bool, error) {
+func turnServerHasAllocation(server *pionturn.Server, allocation activeAllocation) (exists bool, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			exists = false
+			err = fmt.Errorf("turn allocation inspection panicked: %v", recovered)
+		}
+	}()
+
 	if server == nil {
 		return false, fmt.Errorf("turn server is not initialized")
 	}
@@ -380,7 +390,7 @@ func turnServerHasAllocation(server *pionturn.Server, allocation activeAllocatio
 	}
 
 	for i := 0; i < allocationManagersField.Len(); i++ {
-		managerValue := allocationManagersField.Index(i)
+		managerValue := allocationManagerValue(allocationManagersField.Index(i))
 		if managerValue.IsNil() {
 			continue
 		}
@@ -404,6 +414,13 @@ func turnServerHasAllocation(server *pionturn.Server, allocation activeAllocatio
 	}
 
 	return false, nil
+}
+
+func allocationManagerValue(value reflect.Value) reflect.Value {
+	return reflect.NewAt(
+		value.Type(),
+		unsafe.Pointer(value.UnsafeAddr()),
+	).Elem()
 }
 
 func buildTurnFiveTupleValue(fiveTupleType reflect.Type, allocation activeAllocation) (reflect.Value, error) {

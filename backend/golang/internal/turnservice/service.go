@@ -871,14 +871,19 @@ func (s *Service) snapshotTrackedAllocations() []trackedAllocationSnapshot {
 	return allocations
 }
 
-func (s *Service) reconcileTrackedAllocations() error {
+func (s *Service) reconcileTrackedAllocations() (reconcileErr error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			reconcileErr = errors.Join(reconcileErr, fmt.Errorf("turn allocation reconciliation panicked: %v", recovered))
+		}
+	}()
+
 	s.ensureAllocationRuntimeHooks()
 	if s.hasAllocation == nil {
 		return nil
 	}
 
 	snapshots := s.snapshotTrackedAllocations()
-	var reconcileErr error
 	for _, snapshot := range snapshots {
 		exists, err := s.hasAllocation(snapshot.allocation)
 		if err != nil {

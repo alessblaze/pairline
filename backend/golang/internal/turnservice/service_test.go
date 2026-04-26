@@ -828,6 +828,47 @@ func TestReconcileTrackedAllocationsRemovesMissingServerEntries(t *testing.T) {
 	close(releaseBlock)
 }
 
+func TestReconcileTrackedAllocationsRecoversFromProbePanic(t *testing.T) {
+	srcAddr := &net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 1111}
+	dstAddr := &net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 3478}
+	allocationKey := activeAllocationKey(srcAddr, dstAddr, "UDP")
+	svc := &Service{
+		activeAllocations: map[string]activeAllocation{
+			allocationKey: {
+				Username:           "user-1",
+				SrcAddr:            srcAddr,
+				DstAddr:            dstAddr,
+				Protocol:           "UDP",
+				ReleaseOperationID: "release-1",
+			},
+		},
+		allocationReleaseLookup: map[string]activeAllocation{
+			allocationKey: {
+				Username:           "user-1",
+				SrcAddr:            srcAddr,
+				DstAddr:            dstAddr,
+				Protocol:           "UDP",
+				ReleaseOperationID: "release-1",
+			},
+		},
+		allocationKeysByUserID: map[string]map[string]struct{}{
+			"user-1": {allocationKey: {}},
+		},
+		allocationCountByUserID: map[string]int{"user-1": 1},
+		hasAllocation: func(activeAllocation) (bool, error) {
+			panic("boom")
+		},
+	}
+
+	err := svc.reconcileTrackedAllocations()
+	if err == nil {
+		t.Fatal("reconcileTrackedAllocations() error = nil, want recovered panic error")
+	}
+	if _, ok := svc.activeAllocations[allocationKey]; !ok {
+		t.Fatalf("activeAllocations = %#v, want allocation retained after probe panic", svc.activeAllocations)
+	}
+}
+
 func TestQuotaHandlerUsesFreshReserveContextAfterSlowFlush(t *testing.T) {
 	validator := &fakeValidator{
 		releaseFn: func(ctx context.Context, _, _ string) error {
