@@ -22,6 +22,7 @@ import { BANNED_PHRASE_REASON, BLOCKED_PHRASE_NOTICE } from '../chatModeration';
 import type { ChatMessage, Message } from '../types';
 
 const isCallerSession = (sessionId: string, peerId: string) => sessionId > peerId;
+const MAX_MESSAGES = 200;
 const turnMode = (() => {
   const explicitMode = import.meta.env.VITE_TURN_MODE;
   if (explicitMode === 'off' || explicitMode === 'cloudflare' || explicitMode === 'integrated' || explicitMode === 'auto') {
@@ -82,6 +83,7 @@ export function useVideoChat(wsUrl: string) {
   const pendingIceCandidatesRef = useRef<any[]>([]);
   const webrtcWsQueueRef = useRef<any[]>([]);
   const mockVideoTimerRef = useRef<number | null>(null);
+  const mockCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const iceRestartPendingRef = useRef(false);
   const webrtcSocketOpenRef = useRef(false);
   const signalingReadySentRef = useRef(false);
@@ -164,13 +166,16 @@ export function useVideoChat(wsUrl: string) {
   };
 
   const pushSystemMessage = (text: string, systemReason?: string) => {
-    setMessages(msgs => [...msgs, {
-      id: crypto.randomUUID(),
-      text,
-      sender: 'system',
-      timestamp: Date.now(),
-      systemReason
-    }]);
+    setMessages(msgs => {
+      const next: ChatMessage[] = [...msgs, {
+        id: crypto.randomUUID(),
+        text,
+        sender: 'system' as const,
+        timestamp: Date.now(),
+        systemReason
+      }];
+      return next.length > MAX_MESSAGES ? next.slice(-MAX_MESSAGES) : next;
+    });
   };
 
   const updateDeliveryStatus = (
@@ -233,6 +238,12 @@ export function useVideoChat(wsUrl: string) {
     signalingReadySentRef.current = false;
     clearGoWsConnectTimeout();
 
+    // Break closure chains so GC can reclaim the socket and its captured scope
+    ws.onopen = null;
+    ws.onclose = null;
+    ws.onerror = null;
+    ws.onmessage = null;
+
     try {
       ws.close();
     } catch (error) {
@@ -254,7 +265,15 @@ export function useVideoChat(wsUrl: string) {
     closeGoWebSocket(reason);
 
     if (peerConnectionRef.current) {
-      peerConnectionRef.current.close();
+      // Break closure references so GC can reclaim internal WebRTC buffers
+      const pc = peerConnectionRef.current;
+      pc.onicecandidate = null;
+      pc.oniceconnectionstatechange = null;
+      pc.onconnectionstatechange = null;
+      pc.onsignalingstatechange = null;
+      pc.onnegotiationneeded = null;
+      pc.ontrack = null;
+      pc.close();
       peerConnectionRef.current = null;
     }
 
@@ -453,6 +472,7 @@ export function useVideoChat(wsUrl: string) {
         const canvas = document.createElement('canvas');
         canvas.width = 640;
         canvas.height = 480;
+        mockCanvasRef.current = canvas;
         const ctx = canvas.getContext('2d');
 
         if (ctx) {
@@ -803,12 +823,16 @@ export function useVideoChat(wsUrl: string) {
           streamToAssign.addTrack(event.track);
         }
 
-        // Force the browser to recognize new sub-tracks in the same stream by
-        // bouncing the srcObject reference. Without this, WebKit often ignores dynamically added tracks.
-        if (videoElement.srcObject === streamToAssign) {
+        // Only bounce the srcObject when the stream has actually changed.
+        // Unnecessary bouncing leaks compositor resources on each cycle.
+        if (videoElement.srcObject !== streamToAssign) {
+          videoElement.srcObject = streamToAssign;
+        } else if (!event.streams?.length) {
+          // Force the browser to recognize new sub-tracks in the same stream by
+          // bouncing the srcObject reference. Without this, WebKit often ignores dynamically added tracks.
           videoElement.srcObject = null;
+          videoElement.srcObject = streamToAssign;
         }
-        videoElement.srcObject = streamToAssign;
 
         void videoElement.play().catch(err => {
           console.warn('Remote video autoplay was blocked:', err);
@@ -1218,7 +1242,14 @@ export function useVideoChat(wsUrl: string) {
         // Close any stale PeerConnection from a previous match
         if (peerConnectionRef.current) {
           logWebRTC('Closing stale PeerConnection from previous match');
-          peerConnectionRef.current.close();
+          const stalePc = peerConnectionRef.current;
+          stalePc.onicecandidate = null;
+          stalePc.oniceconnectionstatechange = null;
+          stalePc.onconnectionstatechange = null;
+          stalePc.onsignalingstatechange = null;
+          stalePc.onnegotiationneeded = null;
+          stalePc.ontrack = null;
+          stalePc.close();
           peerConnectionRef.current = null;
           transceiversRef.current = { audio: null, video: null };
         }
@@ -1329,12 +1360,15 @@ export function useVideoChat(wsUrl: string) {
 
       case 'message':
         if (message.data?.content) {
-          setMessages(prev => [...prev, {
-            id: crypto.randomUUID(),
-            text: message.data.content,
-            sender: 'peer',
-            timestamp: Date.now()
-          }]);
+          setMessages(prev => {
+            const next: ChatMessage[] = [...prev, {
+              id: crypto.randomUUID(),
+              text: message.data.content,
+              sender: 'peer' as const,
+              timestamp: Date.now()
+            }];
+            return next.length > MAX_MESSAGES ? next.slice(-MAX_MESSAGES) : next;
+          });
         }
         break;
 
@@ -1675,13 +1709,16 @@ export function useVideoChat(wsUrl: string) {
         const messageId = crypto.randomUUID();
         const chatEpoch = chatEpochRef.current;
 
-        setMessages(prev => [...prev, {
-          id: messageId,
-          text,
-          sender: 'me',
-          timestamp: Date.now(),
-          deliveryStatus: 'pending'
-        }]);
+        setMessages(prev => {
+          const next: ChatMessage[] = [...prev, {
+            id: messageId,
+            text,
+            sender: 'me' as const,
+            timestamp: Date.now(),
+            deliveryStatus: 'pending' as const
+          }];
+          return next.length > MAX_MESSAGES ? next.slice(-MAX_MESSAGES) : next;
+        });
 
         void wsClient.sendWithResponse('message', { content: text })
           .then((payload) => {
@@ -1755,6 +1792,12 @@ export function useVideoChat(wsUrl: string) {
     if (mockVideoTimerRef.current !== null) {
       window.clearInterval(mockVideoTimerRef.current);
       mockVideoTimerRef.current = null;
+    }
+    // Release the detached canvas element and its GPU texture memory
+    if (mockCanvasRef.current) {
+      mockCanvasRef.current.width = 0;
+      mockCanvasRef.current.height = 0;
+      mockCanvasRef.current = null;
     }
     resetWebRTCTransport('cleanup');
   };
