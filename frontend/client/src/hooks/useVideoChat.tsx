@@ -1454,14 +1454,23 @@ export function useVideoChat(wsUrl: string) {
 
   const stopSearch = () => {
     try {
+      beginNewChatEpoch();
       turnFetchGenerationRef.current += 1;
       turnServersRef.current = defaultStunServers;
       turnFetchedRef.current = false;
       turnFetchPromiseRef.current = null;
+      peerIdRef.current = null;
+      sessionIdRef.current = null;
+      sessionTokenRef.current = null;
+      setPeerId(null);
+      setMessages([]);
+      setPeerTyping(false);
+      setReconnectMessageVisible(false);
+      resetWebRTCTransport('stop_search', { keepLocalMedia: true });
+      setIsVideoConnecting(false);
       setStatus('idle');
       setSessionId(null);
       setSessionToken(null);
-      sessionTokenRef.current = null;
       setReportPeerId(null);
       wsClient.send('stop', {});
     } catch (error) {
@@ -1479,25 +1488,7 @@ export function useVideoChat(wsUrl: string) {
       setPeerTyping(false);
       setIsVideoConnecting(false);
       setStatus('searching');
-
-      // Clean up WebRTC state for the next connection
-      if (peerConnectionRef.current) {
-        peerConnectionRef.current.close();
-        peerConnectionRef.current = null;
-      }
-      transceiversRef.current = { audio: null, video: null };
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = null;
-      }
-      pendingIceCandidatesRef.current = [];
-      pendingWebrtcStartRef.current = null;
-      signalingReadySentRef.current = false;
-      negotiationStartedRef.current = false;
-      turnFetchGenerationRef.current += 1;
-      turnServersRef.current = defaultStunServers;
-      turnFetchedRef.current = false;
-      turnFetchPromiseRef.current = null;
-      iceRestartPendingRef.current = false;
+      resetWebRTCTransport('skip', { keepLocalMedia: true });
       goWsReconnectExhaustedRef.current = false;
     }
   };
@@ -1579,6 +1570,8 @@ export function useVideoChat(wsUrl: string) {
 
   const cleanup = () => {
     beginNewChatEpoch();
+    peerIdRef.current = null;
+    sessionIdRef.current = null;
     sessionTokenRef.current = null;
     setReconnectMessageVisible(false);
     if (peerTypingTimeoutRef.current) {

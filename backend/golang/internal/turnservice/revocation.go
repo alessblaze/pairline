@@ -351,30 +351,84 @@ func revokeTurnAllocation(server *pionturn.Server, allocation activeAllocation) 
 			return fmt.Errorf("turn allocation delete method unavailable")
 		}
 
-		fiveTupleType := deleteMethod.Type().In(0)
-		if fiveTupleType.Kind() != reflect.Ptr || fiveTupleType.Elem().Kind() != reflect.Struct {
-			return fmt.Errorf("turn allocation delete signature unavailable")
+		fiveTuple, err := buildTurnFiveTupleValue(deleteMethod.Type().In(0), allocation)
+		if err != nil {
+			return err
 		}
-		fiveTuple := reflect.New(fiveTupleType.Elem())
-		protocolField := fiveTuple.Elem().FieldByName("Protocol")
-		srcAddrField := fiveTuple.Elem().FieldByName("SrcAddr")
-		dstAddrField := fiveTuple.Elem().FieldByName("DstAddr")
-		if !protocolField.IsValid() || !protocolField.CanSet() ||
-			!srcAddrField.IsValid() || !srcAddrField.CanSet() ||
-			!dstAddrField.IsValid() || !dstAddrField.CanSet() {
-			return fmt.Errorf("turn allocation five-tuple shape unavailable")
-		}
-		if !reflect.TypeOf(allocation.SrcAddr).AssignableTo(srcAddrField.Type()) ||
-			!reflect.TypeOf(allocation.DstAddr).AssignableTo(dstAddrField.Type()) {
-			return fmt.Errorf("turn allocation address types are incompatible")
-		}
-		protocolField.SetUint(uint64(turnAllocationProtocol(allocation.Protocol)))
-		srcAddrField.Set(reflect.ValueOf(allocation.SrcAddr))
-		dstAddrField.Set(reflect.ValueOf(allocation.DstAddr))
 		deleteMethod.Call([]reflect.Value{fiveTuple})
 	}
 
 	return nil
+}
+
+func turnServerHasAllocation(server *pionturn.Server, allocation activeAllocation) (bool, error) {
+	if server == nil {
+		return false, fmt.Errorf("turn server is not initialized")
+	}
+	if allocation.SrcAddr == nil || allocation.DstAddr == nil {
+		return false, fmt.Errorf("turn allocation addresses are required")
+	}
+
+	serverValue := reflect.ValueOf(server)
+	if serverValue.Kind() != reflect.Ptr || serverValue.IsNil() {
+		return false, fmt.Errorf("invalid turn server")
+	}
+
+	allocationManagersField := serverValue.Elem().FieldByName("allocationManagers")
+	if !allocationManagersField.IsValid() || allocationManagersField.Kind() != reflect.Slice {
+		return false, fmt.Errorf("turn server allocation managers unavailable")
+	}
+
+	for i := 0; i < allocationManagersField.Len(); i++ {
+		managerValue := allocationManagersField.Index(i)
+		if managerValue.IsNil() {
+			continue
+		}
+
+		getMethod := managerValue.MethodByName("GetAllocation")
+		if !getMethod.IsValid() {
+			return false, fmt.Errorf("turn allocation get method unavailable")
+		}
+
+		fiveTuple, err := buildTurnFiveTupleValue(getMethod.Type().In(0), allocation)
+		if err != nil {
+			return false, err
+		}
+		results := getMethod.Call([]reflect.Value{fiveTuple})
+		if len(results) != 1 {
+			return false, fmt.Errorf("turn allocation get signature unavailable")
+		}
+		if !results[0].IsNil() {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func buildTurnFiveTupleValue(fiveTupleType reflect.Type, allocation activeAllocation) (reflect.Value, error) {
+	if fiveTupleType.Kind() != reflect.Ptr || fiveTupleType.Elem().Kind() != reflect.Struct {
+		return reflect.Value{}, fmt.Errorf("turn allocation five-tuple signature unavailable")
+	}
+
+	fiveTuple := reflect.New(fiveTupleType.Elem())
+	protocolField := fiveTuple.Elem().FieldByName("Protocol")
+	srcAddrField := fiveTuple.Elem().FieldByName("SrcAddr")
+	dstAddrField := fiveTuple.Elem().FieldByName("DstAddr")
+	if !protocolField.IsValid() || !protocolField.CanSet() ||
+		!srcAddrField.IsValid() || !srcAddrField.CanSet() ||
+		!dstAddrField.IsValid() || !dstAddrField.CanSet() {
+		return reflect.Value{}, fmt.Errorf("turn allocation five-tuple shape unavailable")
+	}
+	if !reflect.TypeOf(allocation.SrcAddr).AssignableTo(srcAddrField.Type()) ||
+		!reflect.TypeOf(allocation.DstAddr).AssignableTo(dstAddrField.Type()) {
+		return reflect.Value{}, fmt.Errorf("turn allocation address types are incompatible")
+	}
+
+	protocolField.SetUint(uint64(turnAllocationProtocol(allocation.Protocol)))
+	srcAddrField.Set(reflect.ValueOf(allocation.SrcAddr))
+	dstAddrField.Set(reflect.ValueOf(allocation.DstAddr))
+	return fiveTuple, nil
 }
 
 func turnAllocationProtocol(protocol string) uint8 {

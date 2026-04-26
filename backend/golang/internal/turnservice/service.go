@@ -30,16 +30,29 @@ var turnTracer = otel.Tracer("pairline/turn")
 
 const releaseAttemptTimeout = 750 * time.Millisecond
 const releaseRepairInterval = 2 * time.Second
+const allocationReconcileInterval = 30 * time.Second
+const pendingReleaseMaxAge = turnAllocationCounterTTL + time.Hour
 
 type PendingRelease struct {
 	Username    string
 	OperationID string
+	QueuedAt    time.Time
 }
 
 type pendingReleaseState struct {
 	PendingRelease
-	local   bool
-	durable bool
+	local         bool
+	durable       bool
+	localQueuedAt time.Time
+}
+
+type localPendingRelease struct {
+	queuedAt time.Time
+}
+
+type trackedAllocationSnapshot struct {
+	key        string
+	allocation activeAllocation
 }
 
 type Service struct {
@@ -55,10 +68,11 @@ type Service struct {
 	allocationKeysBySession map[string]map[string]struct{}
 	allocationCountByUserID map[string]int
 	sessionIPByUserID       map[string]rememberedSessionIP
-	pendingReleases         map[string]map[string]struct{}
+	pendingReleases         map[string]map[string]localPendingRelease
 	releaseSignal           chan struct{}
 	releaseSequence         atomic.Uint64
 	revokeAllocation        func(activeAllocation) error
+	hasAllocation           func(activeAllocation) (bool, error)
 }
 
 type Validator interface {
@@ -236,7 +250,7 @@ func NewService(config Config, validator Validator) (*Service, error) {
 		allocationKeysBySession: make(map[string]map[string]struct{}),
 		allocationCountByUserID: make(map[string]int),
 		sessionIPByUserID:       make(map[string]rememberedSessionIP),
-		pendingReleases:         make(map[string]map[string]struct{}),
+		pendingReleases:         make(map[string]map[string]localPendingRelease),
 		releaseSignal:           make(chan struct{}, 1),
 	}
 
@@ -311,9 +325,7 @@ func NewService(config Config, validator Validator) (*Service, error) {
 	}
 
 	svc.server = server
-	svc.revokeAllocation = func(allocation activeAllocation) error {
-		return revokeTurnAllocation(svc.server, allocation)
-	}
+	svc.ensureAllocationRuntimeHooks()
 	return svc, nil
 }
 
@@ -321,6 +333,7 @@ func (s *Service) Run(ctx context.Context) error {
 	if s == nil || s.server == nil {
 		return fmt.Errorf("turn service is not initialized")
 	}
+	s.ensureAllocationRuntimeHooks()
 
 	log.Printf(
 		"Pairline TURN relay listening udp=%q tcp=%q tls=%q public_ip=%q advertised_urls=%v",
@@ -333,6 +346,7 @@ func (s *Service) Run(ctx context.Context) error {
 
 	go s.runBanSweep(ctx)
 	go s.runReleaseWorker(ctx)
+	go s.runAllocationReconciler(ctx)
 	s.signalReleaseWorker()
 
 	<-ctx.Done()
@@ -642,13 +656,14 @@ func (s *Service) queueAllocationRelease(username, operationID string) {
 	}
 
 	s.mu.Lock()
+	s.cleanupExpiredPendingReleasesLocked(time.Now())
 	if s.pendingReleases == nil {
-		s.pendingReleases = make(map[string]map[string]struct{})
+		s.pendingReleases = make(map[string]map[string]localPendingRelease)
 	}
 	if s.pendingReleases[username] == nil {
-		s.pendingReleases[username] = make(map[string]struct{})
+		s.pendingReleases[username] = make(map[string]localPendingRelease)
 	}
-	s.pendingReleases[username][operationID] = struct{}{}
+	s.pendingReleases[username][operationID] = localPendingRelease{queuedAt: time.Now()}
 	s.mu.Unlock()
 
 	s.signalReleaseWorker()
@@ -685,6 +700,22 @@ func (s *Service) runReleaseWorker(ctx context.Context) {
 	}
 }
 
+func (s *Service) runAllocationReconciler(ctx context.Context) {
+	ticker := time.NewTicker(allocationReconcileInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := s.reconcileTrackedAllocations(); err != nil {
+				log.Printf("TURN allocation reconciliation failed: %v", err)
+			}
+		}
+	}
+}
+
 func pendingReleaseCompositeKey(username, operationID string) string {
 	return username + "\x1f" + operationID
 }
@@ -696,6 +727,7 @@ func (s *Service) pendingReleaseStates(ctx context.Context, username string) ([]
 		state := states[key]
 		state.PendingRelease = release
 		state.local = true
+		state.localQueuedAt = release.QueuedAt
 		states[key] = state
 	}
 
@@ -737,6 +769,8 @@ func (s *Service) processPendingReleases(ctx context.Context, username string) e
 				processErr = errors.Join(processErr, queueErr)
 			} else {
 				state.durable = true
+				s.completePendingRelease(state.Username, state.OperationID)
+				state.local = false
 			}
 		}
 
@@ -772,12 +806,14 @@ func (s *Service) snapshotPendingReleases(username string) []PendingRelease {
 	defer s.mu.Unlock()
 
 	username = strings.TrimSpace(username)
+	s.cleanupExpiredPendingReleasesLocked(time.Now())
 	releases := make([]PendingRelease, 0)
-	appendPending := func(userID string, operations map[string]struct{}) {
-		for operationID := range operations {
+	appendPending := func(userID string, operations map[string]localPendingRelease) {
+		for operationID, queued := range operations {
 			releases = append(releases, PendingRelease{
 				Username:    userID,
 				OperationID: operationID,
+				QueuedAt:    queued.queuedAt,
 			})
 		}
 	}
@@ -805,6 +841,104 @@ func (s *Service) completePendingRelease(username, operationID string) {
 	if len(operations) == 0 {
 		delete(s.pendingReleases, username)
 	}
+}
+
+func (s *Service) cleanupExpiredPendingReleasesLocked(now time.Time) {
+	for username, operations := range s.pendingReleases {
+		for operationID, pending := range operations {
+			if pending.queuedAt.IsZero() || now.Sub(pending.queuedAt) < pendingReleaseMaxAge {
+				continue
+			}
+			delete(operations, operationID)
+		}
+		if len(operations) == 0 {
+			delete(s.pendingReleases, username)
+		}
+	}
+}
+
+func (s *Service) snapshotTrackedAllocations() []trackedAllocationSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	allocations := make([]trackedAllocationSnapshot, 0, len(s.activeAllocations))
+	for key, allocation := range s.activeAllocations {
+		allocations = append(allocations, trackedAllocationSnapshot{
+			key:        key,
+			allocation: allocation,
+		})
+	}
+	return allocations
+}
+
+func (s *Service) reconcileTrackedAllocations() error {
+	s.ensureAllocationRuntimeHooks()
+	if s.hasAllocation == nil {
+		return nil
+	}
+
+	snapshots := s.snapshotTrackedAllocations()
+	var reconcileErr error
+	for _, snapshot := range snapshots {
+		exists, err := s.hasAllocation(snapshot.allocation)
+		if err != nil {
+			reconcileErr = errors.Join(reconcileErr, err)
+			continue
+		}
+		if exists {
+			continue
+		}
+
+		allocation, removed := s.removeTrackedAllocationByKey(snapshot.key, snapshot.allocation.ReleaseOperationID)
+		if !removed {
+			continue
+		}
+
+		log.Printf(
+			"TURN allocation reconciled after missing delete callback user=%q operation_id=%s protocol=%s peer_addr=%v relay_addr=%v",
+			allocation.Username,
+			allocation.ReleaseOperationID,
+			allocation.Protocol,
+			allocation.SrcAddr,
+			allocation.DstAddr,
+		)
+		go s.releaseDeletedAllocation(allocation, allocation.Username)
+	}
+
+	return reconcileErr
+}
+
+func (s *Service) ensureAllocationRuntimeHooks() {
+	if s == nil || s.server == nil {
+		return
+	}
+	if s.revokeAllocation == nil {
+		s.revokeAllocation = func(allocation activeAllocation) error {
+			return revokeTurnAllocation(s.server, allocation)
+		}
+	}
+	if s.hasAllocation == nil {
+		s.hasAllocation = func(allocation activeAllocation) (bool, error) {
+			return turnServerHasAllocation(s.server, allocation)
+		}
+	}
+}
+
+func (s *Service) removeTrackedAllocationByKey(key, releaseOperationID string) (activeAllocation, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	allocation, ok := s.activeAllocations[key]
+	if !ok {
+		return activeAllocation{}, false
+	}
+	if strings.TrimSpace(releaseOperationID) != "" && allocation.ReleaseOperationID != releaseOperationID {
+		return activeAllocation{}, false
+	}
+
+	s.removeAllocationIndexesLocked(key, allocation)
+	delete(s.allocationReleaseLookup, key)
+	return allocation, true
 }
 
 func (s *Service) nextReleaseOperationID() string {

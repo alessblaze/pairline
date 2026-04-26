@@ -426,7 +426,7 @@ func TestServiceFlushPendingReleases(t *testing.T) {
 	validator := &fakeValidator{}
 	svc := &Service{
 		validator:       validator,
-		pendingReleases: map[string]map[string]struct{}{"user-1": {"release-1": {}}},
+		pendingReleases: map[string]map[string]localPendingRelease{"user-1": {"release-1": {queuedAt: time.Now()}}},
 		releaseSignal:   make(chan struct{}, 1),
 	}
 
@@ -451,7 +451,7 @@ func TestServiceReleaseDeletedAllocationDoesImmediateRelease(t *testing.T) {
 	validator := &fakeValidator{}
 	svc := &Service{
 		validator:       validator,
-		pendingReleases: make(map[string]map[string]struct{}),
+		pendingReleases: make(map[string]map[string]localPendingRelease),
 		releaseSignal:   make(chan struct{}, 1),
 	}
 
@@ -483,7 +483,7 @@ func TestServiceReleaseDeletedAllocationQueuesRetryOnFailure(t *testing.T) {
 	}
 	svc := &Service{
 		validator:       validator,
-		pendingReleases: make(map[string]map[string]struct{}),
+		pendingReleases: make(map[string]map[string]localPendingRelease),
 		releaseSignal:   make(chan struct{}, 1),
 	}
 
@@ -511,7 +511,7 @@ func TestServiceReleaseDeletedAllocationLogsMissingOperationID(t *testing.T) {
 	validator := &fakeValidator{}
 	svc := &Service{
 		validator:       validator,
-		pendingReleases: make(map[string]map[string]struct{}),
+		pendingReleases: make(map[string]map[string]localPendingRelease),
 		releaseSignal:   make(chan struct{}, 1),
 	}
 
@@ -553,7 +553,7 @@ func TestServiceHandleAllocationDeletedReturnsBeforeReleaseCompletes(t *testing.
 				Protocol:           "UDP",
 			},
 		},
-		pendingReleases: make(map[string]map[string]struct{}),
+		pendingReleases: make(map[string]map[string]localPendingRelease),
 		releaseSignal:   make(chan struct{}, 1),
 	}
 
@@ -664,9 +664,9 @@ func TestTrackActiveAllocationPreservesSessionIPOnReplacement(t *testing.T) {
 
 func TestServiceSnapshotPendingReleasesIncludesActiveSessions(t *testing.T) {
 	svc := &Service{
-		pendingReleases: map[string]map[string]struct{}{
-			"user-idle":   {"release-1": {}},
-			"user-active": {"release-2": {}},
+		pendingReleases: map[string]map[string]localPendingRelease{
+			"user-idle":   {"release-1": {queuedAt: time.Now()}},
+			"user-active": {"release-2": {queuedAt: time.Now()}},
 		},
 	}
 
@@ -686,8 +686,8 @@ func TestProcessPendingReleasesMergesDurableAndLocalEntries(t *testing.T) {
 	}
 	svc := &Service{
 		validator: validator,
-		pendingReleases: map[string]map[string]struct{}{
-			"user-local": {"release-2": {}},
+		pendingReleases: map[string]map[string]localPendingRelease{
+			"user-local": {"release-2": {queuedAt: time.Now()}},
 		},
 		releaseSignal: make(chan struct{}, 1),
 	}
@@ -707,6 +707,125 @@ func TestProcessPendingReleasesMergesDurableAndLocalEntries(t *testing.T) {
 	if len(svc.pendingReleases) != 0 {
 		t.Fatalf("pendingReleases = %#v, want empty", svc.pendingReleases)
 	}
+}
+
+func TestProcessPendingReleasesDropsLocalEntryAfterDurableQueueSucceeds(t *testing.T) {
+	validator := &fakeValidator{
+		releaseFn: func(context.Context, string, string) error {
+			return errors.New("release still failing")
+		},
+	}
+	svc := &Service{
+		validator: validator,
+		pendingReleases: map[string]map[string]localPendingRelease{
+			"user-1": {"release-1": {queuedAt: time.Now()}},
+		},
+		releaseSignal: make(chan struct{}, 1),
+	}
+
+	if err := svc.processPendingReleases(context.Background(), ""); err == nil {
+		t.Fatal("processPendingReleases() error = nil, want release error")
+	}
+	if validator.queueCalls != 1 {
+		t.Fatalf("queueCalls = %d, want 1", validator.queueCalls)
+	}
+	if validator.releaseCalls != 1 {
+		t.Fatalf("releaseCalls = %d, want 1", validator.releaseCalls)
+	}
+	if _, ok := svc.pendingReleases["user-1"]; ok {
+		t.Fatalf("pendingReleases = %#v, want local entry dropped after durable queue", svc.pendingReleases)
+	}
+}
+
+func TestCleanupExpiredPendingReleasesDropsOldEntries(t *testing.T) {
+	svc := &Service{
+		pendingReleases: map[string]map[string]localPendingRelease{
+			"user-old": {
+				"release-old": {queuedAt: time.Now().Add(-pendingReleaseMaxAge - time.Minute)},
+			},
+			"user-fresh": {
+				"release-fresh": {queuedAt: time.Now()},
+			},
+		},
+	}
+
+	svc.mu.Lock()
+	svc.cleanupExpiredPendingReleasesLocked(time.Now())
+	svc.mu.Unlock()
+
+	if _, ok := svc.pendingReleases["user-old"]; ok {
+		t.Fatalf("pendingReleases = %#v, want expired entry removed", svc.pendingReleases)
+	}
+	if _, ok := svc.pendingReleases["user-fresh"]["release-fresh"]; !ok {
+		t.Fatalf("pendingReleases = %#v, want fresh entry retained", svc.pendingReleases)
+	}
+}
+
+func TestReconcileTrackedAllocationsRemovesMissingServerEntries(t *testing.T) {
+	srcAddr := &net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 1111}
+	dstAddr := &net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 3478}
+	allocationKey := activeAllocationKey(srcAddr, dstAddr, "UDP")
+	releaseStarted := make(chan struct{}, 1)
+	releaseBlock := make(chan struct{})
+	validator := &fakeValidator{
+		releaseFn: func(context.Context, string, string) error {
+			releaseStarted <- struct{}{}
+			<-releaseBlock
+			return nil
+		},
+	}
+	svc := &Service{
+		validator: validator,
+		activeAllocations: map[string]activeAllocation{
+			allocationKey: {
+				Username:           "user-1",
+				SessionIP:          "203.0.113.24",
+				SrcAddr:            srcAddr,
+				DstAddr:            dstAddr,
+				Protocol:           "UDP",
+				ReleaseOperationID: "release-1",
+			},
+		},
+		allocationReleaseLookup: map[string]activeAllocation{
+			allocationKey: {
+				Username:           "user-1",
+				SessionIP:          "203.0.113.24",
+				SrcAddr:            srcAddr,
+				DstAddr:            dstAddr,
+				Protocol:           "UDP",
+				ReleaseOperationID: "release-1",
+			},
+		},
+		allocationKeysByUserID: map[string]map[string]struct{}{
+			"user-1": {allocationKey: {}},
+		},
+		allocationKeysBySession: map[string]map[string]struct{}{
+			"203.0.113.24": {allocationKey: {}},
+		},
+		allocationCountByUserID: map[string]int{"user-1": 1},
+		sessionIPByUserID: map[string]rememberedSessionIP{
+			"user-1": {IP: "203.0.113.24", SeenAt: time.Now()},
+		},
+		pendingReleases: make(map[string]map[string]localPendingRelease),
+		releaseSignal:   make(chan struct{}, 1),
+		hasAllocation: func(activeAllocation) (bool, error) {
+			return false, nil
+		},
+	}
+
+	if err := svc.reconcileTrackedAllocations(); err != nil {
+		t.Fatalf("reconcileTrackedAllocations() error = %v", err)
+	}
+	if len(svc.activeAllocations) != 0 || len(svc.allocationReleaseLookup) != 0 {
+		t.Fatalf("allocation tracking still present after reconcile: active=%#v lookup=%#v", svc.activeAllocations, svc.allocationReleaseLookup)
+	}
+
+	select {
+	case <-releaseStarted:
+	case <-time.After(time.Second):
+		t.Fatal("releaseDeletedAllocation was not invoked for reconciled allocation")
+	}
+	close(releaseBlock)
 }
 
 func TestQuotaHandlerUsesFreshReserveContextAfterSlowFlush(t *testing.T) {
@@ -729,11 +848,11 @@ func TestQuotaHandlerUsesFreshReserveContextAfterSlowFlush(t *testing.T) {
 	svc := &Service{
 		config:    Config{AllocationQuota: 1},
 		validator: validator,
-		pendingReleases: map[string]map[string]struct{}{
+		pendingReleases: map[string]map[string]localPendingRelease{
 			"user-1": {
-				"release-1": {},
-				"release-2": {},
-				"release-3": {},
+				"release-1": {queuedAt: time.Now()},
+				"release-2": {queuedAt: time.Now()},
+				"release-3": {queuedAt: time.Now()},
 			},
 		},
 		releaseSignal: make(chan struct{}, 1),
@@ -756,7 +875,7 @@ func TestQuotaHandlerHandlesNilSourceAddr(t *testing.T) {
 	svc := &Service{
 		config:          Config{AllocationQuota: 1},
 		validator:       validator,
-		pendingReleases: make(map[string]map[string]struct{}),
+		pendingReleases: make(map[string]map[string]localPendingRelease),
 		releaseSignal:   make(chan struct{}, 1),
 	}
 
