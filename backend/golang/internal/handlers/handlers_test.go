@@ -280,6 +280,49 @@ func TestWriteCloseControlNilConnNoop(t *testing.T) {
 	}
 }
 
+func TestSignalingClientWritePumpRecoversPanics(t *testing.T) {
+	logBuffer := &lockedLogBuffer{writeCh: make(chan struct{}, 1)}
+	originalWriter := log.Writer()
+	originalFlags := log.Flags()
+	log.SetOutput(logBuffer)
+	log.SetFlags(0)
+	defer log.SetOutput(originalWriter)
+	defer log.SetFlags(originalFlags)
+
+	client := newSignalingClient(nil)
+	client.send <- outboundMessage{messageType: websocket.TextMessage, data: []byte("hello")}
+
+	onErrorCalled := make(chan struct{}, 1)
+	go client.writePump(nil, func() {
+		select {
+		case onErrorCalled <- struct{}{}:
+		default:
+		}
+	})
+
+	select {
+	case <-onErrorCalled:
+	case <-time.After(time.Second):
+		t.Fatal("writePump did not invoke the error handler after panic recovery")
+	}
+
+	select {
+	case <-client.done:
+	case <-time.After(time.Second):
+		t.Fatal("writePump did not close the client after panic recovery")
+	}
+
+	select {
+	case <-logBuffer.writeCh:
+	case <-time.After(time.Second):
+		t.Fatal("writePump panic recovery log was not written")
+	}
+
+	if !strings.Contains(logBuffer.String(), "WebRTC WS write pump panicked") {
+		t.Fatalf("log output = %q, want recovered write pump panic log", logBuffer.String())
+	}
+}
+
 func TestReportAutoApprovalFilterTargetsSpecificReportWhenProvided(t *testing.T) {
 	filter, args := reportAutoApprovalFilter(
 		"11111111-1111-1111-1111-111111111111",

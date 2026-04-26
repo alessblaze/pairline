@@ -202,9 +202,30 @@ func writeCloseControl(conn *websocket.Conn, code int, text string) error {
 	return conn.WriteControl(websocket.CloseMessage, message, deadline)
 }
 
+func runSignalingCallback(name string, fn func()) {
+	if fn == nil {
+		return
+	}
+
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			log.Printf("WebRTC WS %s panicked: %v", name, recovered)
+		}
+	}()
+
+	fn()
+}
+
 func (c *SignalingClient) writePump(onTick func(time.Time), onError func()) {
 	ticker := time.NewTicker(pingPeriod)
 	defer ticker.Stop()
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			log.Printf("WebRTC WS write pump panicked: %v", recovered)
+			runSignalingCallback("error handler", onError)
+			c.close()
+		}
+	}()
 
 	for {
 		select {
@@ -216,9 +237,7 @@ func (c *SignalingClient) writePump(onTick func(time.Time), onError func()) {
 			}
 			if err := c.writeMessage(outbound.messageType, outbound.data); err != nil {
 				log.Printf("WebRTC WS write failed: %v", err)
-				if onError != nil {
-					onError()
-				}
+				runSignalingCallback("error handler", onError)
 				c.close()
 				return
 			}
@@ -228,9 +247,7 @@ func (c *SignalingClient) writePump(onTick func(time.Time), onError func()) {
 			}
 			if err := c.writeMessage(websocket.PingMessage, nil); err != nil {
 				log.Printf("WebRTC WS ping failed: %v", err)
-				if onError != nil {
-					onError()
-				}
+				runSignalingCallback("error handler", onError)
 				c.close()
 				return
 			}
