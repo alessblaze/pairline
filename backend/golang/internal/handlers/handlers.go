@@ -527,7 +527,14 @@ func asyncEnqueueAutoModeration(enqueueAutoModeration func(string), reportID str
 		return
 	}
 
-	go enqueueAutoModeration(reportID)
+	go func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				log.Printf("auto moderation enqueue panicked report_id=%q reason=%v", reportID, recovered)
+			}
+		}()
+		enqueueAutoModeration(reportID)
+	}()
 }
 
 func GetAutoModerationSettingsHandlerGin(c *gin.Context) {

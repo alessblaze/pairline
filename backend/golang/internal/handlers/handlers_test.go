@@ -18,9 +18,12 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,6 +31,30 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
+
+type lockedLogBuffer struct {
+	mu      sync.Mutex
+	buffer  bytes.Buffer
+	writeCh chan struct{}
+}
+
+func (b *lockedLogBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	n, err := b.buffer.Write(p)
+	select {
+	case b.writeCh <- struct{}{}:
+	default:
+	}
+	return n, err
+}
+
+func (b *lockedLogBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.String()
+}
 
 func TestCanCreateAdminRole(t *testing.T) {
 	tests := []struct {
@@ -330,4 +357,36 @@ func TestAsyncEnqueueAutoModerationReturnsWithoutWaiting(t *testing.T) {
 	}
 
 	close(release)
+}
+
+func TestAsyncEnqueueAutoModerationRecoversPanics(t *testing.T) {
+	logBuffer := &lockedLogBuffer{writeCh: make(chan struct{}, 1)}
+	originalWriter := log.Writer()
+	originalFlags := log.Flags()
+	log.SetOutput(logBuffer)
+	log.SetFlags(0)
+	defer log.SetOutput(originalWriter)
+	defer log.SetFlags(originalFlags)
+
+	done := make(chan struct{})
+	asyncEnqueueAutoModeration(func(string) {
+		defer close(done)
+		panic("boom")
+	}, "report-123")
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("asyncEnqueueAutoModeration did not invoke the enqueue callback")
+	}
+
+	select {
+	case <-logBuffer.writeCh:
+	case <-time.After(time.Second):
+		t.Fatal("panic recovery log was not written")
+	}
+
+	if !strings.Contains(logBuffer.String(), "auto moderation enqueue panicked report_id=\"report-123\" reason=boom") {
+		t.Fatalf("log output = %q, want recovered panic log", logBuffer.String())
+	}
 }

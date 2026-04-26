@@ -291,9 +291,71 @@ func (h *RedisSignalingHub) Start(redisClient *appredis.Client) {
 		h.subscriber.Add(1)
 		go func() {
 			defer h.subscriber.Done()
-			h.runSubscriber()
+			for {
+				panicked := h.runSubscriberSafely()
+				if !panicked || h.stopped() {
+					return
+				}
+				if h.waitOrStop(time.Second) {
+					return
+				}
+			}
 		}()
 	})
+}
+
+func (h *RedisSignalingHub) runSubscriberSafely() (panicked bool) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			log.Printf("Redis signaling subscriber panicked for %s: %v", h.instanceID, recovered)
+			panicked = true
+		}
+	}()
+
+	h.runSubscriber()
+	return false
+}
+
+func (h *RedisSignalingHub) runSubscription(pubsub *redis.PubSub) {
+	ch := pubsub.Channel()
+	log.Printf("Redis signaling subscriber active for %s", h.instanceID)
+	subscriptionDone := make(chan struct{})
+	defer close(subscriptionDone)
+	defer func() {
+		_ = pubsub.Close()
+	}()
+
+	go func() {
+		select {
+		case <-h.stopCh:
+			_ = pubsub.Close()
+		case <-subscriptionDone:
+		}
+	}()
+
+	for msg := range ch {
+		var envelope redisSignalEnvelope
+		if err := json.Unmarshal([]byte(msg.Payload), &envelope); err != nil {
+			log.Printf("Failed to decode Redis signaling envelope: %v", err)
+			continue
+		}
+
+		if len(envelope.Payload) == 0 || envelope.TargetSessionID == "" {
+			continue
+		}
+
+		if !h.dispatchLocal(envelope.TargetSessionID, envelope.Payload) {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			route, err := appredis.ResolveSessionRoute(ctx, h.redis.GetClient(), envelope.TargetSessionID)
+			if err == nil {
+				owner, ownerErr := h.redis.GetClient().Get(ctx, ownerKey(envelope.TargetSessionID, route)).Result()
+				if ownerErr == nil && owner == h.instanceID {
+					_ = h.enqueuePendingIfStillRemote(ctx, envelope.TargetSessionID, envelope.Payload)
+				}
+			}
+			cancel()
+		}
+	}
 }
 
 func (h *RedisSignalingHub) Stop() {
@@ -499,44 +561,7 @@ func (h *RedisSignalingHub) runSubscriber() {
 			continue
 		}
 
-		ch := pubsub.Channel()
-		log.Printf("Redis signaling subscriber active for %s", h.instanceID)
-		subscriptionDone := make(chan struct{})
-
-		go func() {
-			select {
-			case <-h.stopCh:
-				_ = pubsub.Close()
-			case <-subscriptionDone:
-			}
-		}()
-
-		for msg := range ch {
-			var envelope redisSignalEnvelope
-			if err := json.Unmarshal([]byte(msg.Payload), &envelope); err != nil {
-				log.Printf("Failed to decode Redis signaling envelope: %v", err)
-				continue
-			}
-
-			if len(envelope.Payload) == 0 || envelope.TargetSessionID == "" {
-				continue
-			}
-
-			if !h.dispatchLocal(envelope.TargetSessionID, envelope.Payload) {
-				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-				route, err := appredis.ResolveSessionRoute(ctx, h.redis.GetClient(), envelope.TargetSessionID)
-				if err == nil {
-					owner, ownerErr := h.redis.GetClient().Get(ctx, ownerKey(envelope.TargetSessionID, route)).Result()
-					if ownerErr == nil && owner == h.instanceID {
-						_ = h.enqueuePendingIfStillRemote(ctx, envelope.TargetSessionID, envelope.Payload)
-					}
-				}
-				cancel()
-			}
-		}
-
-		close(subscriptionDone)
-		_ = pubsub.Close()
+		h.runSubscription(pubsub)
 
 		if h.stopped() {
 			return

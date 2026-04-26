@@ -807,6 +807,11 @@ func runConcurrent(tasks ...func() error) error {
 		wg.Add(1)
 		go func(runTask func() error) {
 			defer wg.Done()
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					errCh <- fmt.Errorf("concurrent task panicked: %v", recovered)
+				}
+			}()
 			if err := runTask(); err != nil {
 				errCh <- err
 			}

@@ -289,7 +289,10 @@ func (s *Server) startBanSyncLoop() {
 		defer ticker.Stop()
 
 		for range ticker.C {
-			s.syncActiveBansToRedis()
+			func() {
+				defer recoverServerBackgroundPanic("ban sync loop")
+				s.syncActiveBansToRedis()
+			}()
 		}
 	}()
 }
@@ -549,25 +552,35 @@ func startLoginRateLimitCleanup() {
 		go func() {
 			for {
 				time.Sleep(5 * time.Minute)
-				cutoff := time.Now().Add(-15 * time.Minute)
-				loginRateMu.Lock()
-				for ip, timestamps := range loginRateLimits {
-					var fresh []time.Time
-					for _, ts := range timestamps {
-						if ts.After(cutoff) {
-							fresh = append(fresh, ts)
+				func() {
+					defer recoverServerBackgroundPanic("login rate limit cleanup")
+
+					cutoff := time.Now().Add(-15 * time.Minute)
+					loginRateMu.Lock()
+					defer loginRateMu.Unlock()
+					for ip, timestamps := range loginRateLimits {
+						var fresh []time.Time
+						for _, ts := range timestamps {
+							if ts.After(cutoff) {
+								fresh = append(fresh, ts)
+							}
+						}
+						if len(fresh) == 0 {
+							delete(loginRateLimits, ip)
+						} else {
+							loginRateLimits[ip] = fresh
 						}
 					}
-					if len(fresh) == 0 {
-						delete(loginRateLimits, ip)
-					} else {
-						loginRateLimits[ip] = fresh
-					}
-				}
-				loginRateMu.Unlock()
+				}()
 			}
 		}()
 	})
+}
+
+func recoverServerBackgroundPanic(name string) {
+	if recovered := recover(); recovered != nil {
+		log.Printf("Server background task panicked task=%q reason=%v", name, recovered)
+	}
 }
 
 func LoginRateLimitMiddleware(maxAttempts int, window time.Duration) gin.HandlerFunc {

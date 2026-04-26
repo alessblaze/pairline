@@ -84,6 +84,8 @@ type Worker struct {
 	config     Config
 	triggerCh  chan string
 	processing chan struct{}
+
+	processPendingReportsFn func(context.Context, string) error
 }
 
 type StatusResponse struct {
@@ -182,12 +184,24 @@ func (w *Worker) scheduleSweep(reportID string) {
 	case w.processing <- struct{}{}:
 		go func() {
 			defer func() { <-w.processing }()
-			if err := w.processPendingReports(context.Background(), reportID); err != nil {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					log.Printf("auto moderation sweep panicked: %v", recovered)
+				}
+			}()
+			if err := w.runProcessPendingReports(context.Background(), reportID); err != nil {
 				log.Printf("auto moderation sweep failed: %v", err)
 			}
 		}()
 	default:
 	}
+}
+
+func (w *Worker) runProcessPendingReports(ctx context.Context, prioritizedReportID string) error {
+	if w.processPendingReportsFn != nil {
+		return w.processPendingReportsFn(ctx, prioritizedReportID)
+	}
+	return w.processPendingReports(ctx, prioritizedReportID)
 }
 
 func (w *Worker) processPendingReports(ctx context.Context, prioritizedReportID string) error {

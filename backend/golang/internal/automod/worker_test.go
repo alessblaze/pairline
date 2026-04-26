@@ -1,9 +1,13 @@
 package automod
 
 import (
+	"bytes"
 	"context"
+	"log"
 	"net/http"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/anish/omegle/backend/golang/internal/automod/models"
 	"github.com/anish/omegle/backend/golang/internal/storage"
@@ -37,6 +41,42 @@ func TestSafetyGuardModelParsesJSONWrappedInText(t *testing.T) {
 	}
 	if len(assessment.Categories) != 2 || assessment.Categories[0] != "harassment" || assessment.Categories[1] != "profanity" {
 		t.Fatalf("assessment.Categories = %#v", assessment.Categories)
+	}
+}
+
+func TestScheduleSweepRecoversPanicsAndReleasesWorkerSlot(t *testing.T) {
+	worker := &Worker{
+		processing: make(chan struct{}, 1),
+		processPendingReportsFn: func(context.Context, string) error {
+			panic("boom")
+		},
+	}
+
+	var logBuffer bytes.Buffer
+	originalWriter := log.Writer()
+	originalFlags := log.Flags()
+	log.SetOutput(&logBuffer)
+	log.SetFlags(0)
+	defer log.SetOutput(originalWriter)
+	defer log.SetFlags(originalFlags)
+
+	worker.scheduleSweep("report-1")
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		select {
+		case worker.processing <- struct{}{}:
+			<-worker.processing
+			if !strings.Contains(logBuffer.String(), "auto moderation sweep panicked: boom") {
+				t.Fatalf("log output = %q, want recovered panic log", logBuffer.String())
+			}
+			return
+		default:
+			if time.Now().After(deadline) {
+				t.Fatal("processing slot was not released after recovered panic")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
 	}
 }
 
@@ -88,11 +128,11 @@ func TestSafetyGuardPromptIncludesReportContext(t *testing.T) {
 	if prompt == "" {
 		t.Fatal("BuildPrompt() returned empty prompt")
 	}
-	
+
 	if !contains(prompt, "- I will find you") {
 		t.Fatalf("buildPrompt() missing peer evidence")
 	}
-	
+
 	if contains(prompt, "Report reason: harassment") || contains(prompt, "Reporter description: peer kept threatening me") {
 		t.Fatal("BuildPrompt() should not include report metadata for the safety guard model as it causes hallucinations")
 	}

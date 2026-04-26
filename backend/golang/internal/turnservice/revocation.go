@@ -228,7 +228,13 @@ func (s *Service) runBanSweep(ctx context.Context) {
 	}
 }
 
-func (s *Service) revokeBannedAllocations(ctx context.Context) error {
+func (s *Service) revokeBannedAllocations(ctx context.Context) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = errors.Join(err, fmt.Errorf("turn allocation ban sweep panicked: %v", recovered))
+		}
+	}()
+
 	sessionIPs := s.snapshotSessionIPs()
 	if len(sessionIPs) == 0 {
 		return nil

@@ -635,6 +635,21 @@ func TestRunConcurrentJoinsMultipleErrors(t *testing.T) {
 	}
 }
 
+func TestRunConcurrentRecoversPanics(t *testing.T) {
+	err := runConcurrent(
+		func() error {
+			panic("boom")
+		},
+		func() error { return nil },
+	)
+	if err == nil {
+		t.Fatal("runConcurrent() error = nil, want recovered panic error")
+	}
+	if !strings.Contains(err.Error(), "concurrent task panicked: boom") {
+		t.Fatalf("runConcurrent() error = %q, want recovered panic error", err.Error())
+	}
+}
+
 func pendingReleaseUserKeyMust(t *testing.T, username string) string {
 	t.Helper()
 

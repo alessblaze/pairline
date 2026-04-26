@@ -212,6 +212,7 @@ type fakeValidator struct {
 	queuedOps      []string
 	completedOps   []string
 	releaseErr     error
+	checkBannedFn  func(context.Context, []string) ([]string, error)
 	reserveFn      func(context.Context, string, int) (bool, error)
 	releaseFn      func(context.Context, string, string) error
 	queueFn        func(context.Context, string, string) error
@@ -224,7 +225,10 @@ func (v *fakeValidator) ValidateTURNUsername(context.Context, string) (Validatio
 	return v.validateResult, v.validateErr
 }
 
-func (v *fakeValidator) CheckBannedSessionIPs(context.Context, []string) ([]string, error) {
+func (v *fakeValidator) CheckBannedSessionIPs(ctx context.Context, sessionIPs []string) ([]string, error) {
+	if v.checkBannedFn != nil {
+		return v.checkBannedFn(ctx, sessionIPs)
+	}
 	return append([]string(nil), v.bannedIPs...), nil
 }
 
@@ -311,6 +315,26 @@ func TestServiceRevokeBannedAllocations(t *testing.T) {
 	}
 	if revoked[0].SessionIP != "203.0.113.24" {
 		t.Fatalf("revoked session IP = %q, want banned IP", revoked[0].SessionIP)
+	}
+}
+
+func TestServiceRevokeBannedAllocationsRecoversPanics(t *testing.T) {
+	svc := &Service{
+		validator: &fakeValidator{
+			checkBannedFn: func(context.Context, []string) ([]string, error) {
+				panic("boom")
+			},
+		},
+		allocationKeysBySession: map[string]map[string]struct{}{
+			"203.0.113.24": {},
+		},
+	}
+	err := svc.revokeBannedAllocations(context.Background())
+	if err == nil {
+		t.Fatal("revokeBannedAllocations() error = nil, want recovered panic error")
+	}
+	if !strings.Contains(err.Error(), "turn allocation ban sweep panicked: boom") {
+		t.Fatalf("revokeBannedAllocations() error = %q, want recovered panic error", err.Error())
 	}
 }
 
@@ -533,10 +557,15 @@ func TestServiceReleaseDeletedAllocationLogsMissingOperationID(t *testing.T) {
 func TestServiceHandleAllocationDeletedReturnsBeforeReleaseCompletes(t *testing.T) {
 	releaseStarted := make(chan struct{}, 1)
 	releaseBlock := make(chan struct{})
+	releaseCompleted := make(chan struct{})
 	validator := &fakeValidator{
 		releaseFn: func(context.Context, string, string) error {
 			releaseStarted <- struct{}{}
 			<-releaseBlock
+			return nil
+		},
+		completeFn: func(context.Context, string, string) error {
+			close(releaseCompleted)
 			return nil
 		},
 	}
@@ -577,14 +606,14 @@ func TestServiceHandleAllocationDeletedReturnsBeforeReleaseCompletes(t *testing.
 
 	close(releaseBlock)
 
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if validator.completeCalls == 1 {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+	select {
+	case <-releaseCompleted:
+	case <-time.After(time.Second):
+		t.Fatal("release completion did not run")
 	}
-	t.Fatalf("completeCalls = %d, want 1", validator.completeCalls)
+	if validator.completeCalls != 1 {
+		t.Fatalf("completeCalls = %d, want 1", validator.completeCalls)
+	}
 }
 
 func TestServiceHandleAllocationDeletedRecoversAsyncReleasePanic(t *testing.T) {
