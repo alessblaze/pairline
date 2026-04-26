@@ -19,6 +19,8 @@ import type { Message } from '../types';
 
 import { Socket, type Channel } from 'phoenix';
 
+const roomPingIntervalMs = 30_000;
+
 export class WebSocketClient {
   private socket: Socket | null = null;
   private channel: Channel | null = null;
@@ -34,6 +36,7 @@ export class WebSocketClient {
   private maxReconnectAttempts = 10;
   private reconnectDelay = 1000;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+  private roomPingInterval: ReturnType<typeof setInterval> | null = null;
   private shouldReconnect = true;
   private isConnecting = false;
 
@@ -75,6 +78,7 @@ export class WebSocketClient {
             this.connectPromise = null;
             this.reconnectAttempts = 0;
             this.shouldReconnect = true;
+            this.startRoomHeartbeat();
             this.openHandlers.forEach(handler => handler());
             resolve();
           })
@@ -114,6 +118,7 @@ export class WebSocketClient {
       }
       this.isConnecting = false;
       this.connectPromise = null;
+      this.stopRoomHeartbeat();
       this.channel = null;
       this.socket = null;
       this.closeHandlers.forEach(handler => handler());
@@ -192,6 +197,30 @@ export class WebSocketClient {
       console.error('Max reconnection attempts reached');
       this.shouldReconnect = false;
       this.maxRetriesHandlers.forEach(handler => handler());
+    }
+  }
+
+  private startRoomHeartbeat() {
+    this.stopRoomHeartbeat();
+
+    this.roomPingInterval = setInterval(() => {
+      if (!this.isConnected() || !this.channel) {
+        return;
+      }
+
+      this.channel.push('ping', {})
+        .receive('error', (payload: unknown) => {
+          if (import.meta.env.VITE_WEBSOCKET_DEBUG === 'true') {
+            console.warn('Room heartbeat failed:', payload);
+          }
+        });
+    }, roomPingIntervalMs);
+  }
+
+  private stopRoomHeartbeat() {
+    if (this.roomPingInterval) {
+      clearInterval(this.roomPingInterval);
+      this.roomPingInterval = null;
     }
   }
 
@@ -287,6 +316,7 @@ export class WebSocketClient {
     this.shouldReconnect = false;
     this.isConnecting = false;
     this.connectPromise = null;
+    this.stopRoomHeartbeat();
 
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);

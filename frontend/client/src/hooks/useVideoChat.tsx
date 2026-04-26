@@ -17,6 +17,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { WebSocketClient } from '../services/websocket';
+import { normalizeIceServersForBootstrap } from '../services/iceServers';
 import { useNetworkHealth } from './useNetworkHealth';
 import { BANNED_PHRASE_REASON, BLOCKED_PHRASE_NOTICE } from '../chatModeration';
 import type { ChatMessage, Message } from '../types';
@@ -900,11 +901,15 @@ export function useVideoChat(wsUrl: string) {
         }
 
         if (data.iceServers && Array.isArray(data.iceServers)) {
+          const normalizedIceServers = normalizeIceServersForBootstrap(
+            data.iceServers as RTCIceServer[],
+            typeof data.mode === 'string' ? data.mode : turnMode
+          );
           logWebRTC('Fetched TURN/STUN servers', {
             mode: data.mode ?? turnMode,
-            urls: data.iceServers.flatMap((server: RTCIceServer) => Array.isArray(server.urls) ? server.urls : [server.urls])
+            urls: normalizedIceServers.flatMap((server: RTCIceServer) => Array.isArray(server.urls) ? server.urls : [server.urls])
           });
-          return data.iceServers as RTCIceServer[];
+          return normalizedIceServers;
         }
         return null;
       } catch (err: unknown) {
