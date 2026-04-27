@@ -18,7 +18,7 @@ This file focuses on **what each variable changes in runtime behavior**, not jus
 ## Quick pitfalls (common misconfigurations)
 - **`SHARED_SECRET` mismatch**: Phoenix and Go must share the same value or cross-service auth/session operations will fail.
 - **CORS naming differs**: Phoenix uses **`CORS_ORIGINS`**, Go uses **`CORS_ORIGIN`** (both are comma-separated lists).
-- **Redis cluster seed list**: `REDIS_CLUSTER_NODES`/`REDIS_CLUSTER_NODES` is a comma-separated `host:port` list (no protocol).
+- **Redis cluster seed list**: `REDIS_CLUSTER_NODES` is a comma-separated `host:port` list (no protocol).
 - **Proxy IP trust**: if `TRUSTED_PROXY_CIDRS` is wrong, you’ll log/ban the proxy IP instead of the real client IP.
 
 ---
@@ -155,7 +155,7 @@ This file focuses on **what each variable changes in runtime behavior**, not jus
 
 > For full documentation on provider compatibility, supported adapters, dual assessment modes, and how to add new models, see [`MODERATION.md`](MODERATION.md).
 
-- **`AUTO_MODERATION_ENABLED`** (default: `false`): Enables the background worker for LLM-based report evaluations.
+- **`AUTO_MODERATION_ENABLED`** (default: `false`): Defines the initial/fallback enablement state for the background LLM worker. The Admin Dashboard UI settings will override this value once saved in the database.
 - **`AUTO_MODERATION_NIM_API_KEY`** (or **`NIM_API_KEY`**): API key for the inference provider. Works with any OpenAI-compatible API — not limited to NVIDIA NIM.
 - **`AUTO_MODERATION_NIM_BASE_URL`** (default: `https://integrate.api.nvidia.com/v1`): The base endpoint URL utilized by the native API client interface to dispatch moderation HTTP operations.
 - **`AUTO_MODERATION_MODEL`** (default: `nvidia/llama-3.1-nemotron-safety-guard-8b-v3`): The distinct API target endpoint identification tag (e.g. `gpt-4` or `deepseek-chat`).
@@ -170,6 +170,16 @@ This file focuses on **what each variable changes in runtime behavior**, not jus
 - **`AUTO_MODERATION_MAX_TOKENS`** (default: `8192`): Dictates the maximum amount of output tokens the model is permitted to generate. Must be set high (e.g. `8192`) when using reasoning models.
 - **`AUTO_MODERATION_DEBUG`** (default: `false`): When enabled, prints the full prompt, token usage stats, and raw model response to stdout for every moderation assessment. Keep disabled in production.
 - **`AUTO_MODERATION_ENQUEUE_TIMEOUT_MS`** (default: `250`): how long report creation waits when waking the background worker before falling back to the normal periodic sweep.
+- **`AUTO_MODERATION_BATCH_SIZE`** (default: `10`): Number of reports a single worker claims simultaneously during a polling sweep.
+- **`AUTO_MODERATION_BATCH_INTERVAL_SECONDS`** (default: `30`): How often the background worker polls the database for pending reports if not triggered directly.
+- **`AUTO_MODERATION_TIMEOUT_SECONDS`** (default: `20`): HTTP timeout for the LLM API request.
+- **`AUTO_MODERATION_CLAIM_TIMEOUT_SECONDS`** (default: `300`): How long a report can stay in the `processing` state before another worker reclaims it (handles crashed workers).
+- **`AUTO_MODERATION_MAX_ATTEMPTS`** (default: `3`): Maximum number of retry attempts for a failed LLM assessment before the report is permanently marked as failed for human review.
+
+### Go DB Worker
+
+- **`REPORT_INGEST_STREAM`** (default: `stream:reports:ingest`): The Redis stream used by the API to queue incoming reports for the async database workers.
+- **`REPORT_WORKER_GROUP`** (default: `db_workers`): The consumer group name used by the DB workers when consuming from the ingest stream.
 
 ### Root admin bootstrap
 - **`ROOT_ADMIN_USERNAME`** (default: `admin`): initial “root” admin username created/ensured at startup.
