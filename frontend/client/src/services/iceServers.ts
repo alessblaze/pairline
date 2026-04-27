@@ -52,7 +52,11 @@ const integratedTurnUrlBucket = (url: string): UrlBucket => {
 const normalizeIntegratedTurnUrls = (urls: string[]) => {
   const byBucket = new Map<UrlBucket, string>();
 
-  for (const url of urls) {
+  // Randomize the URLs to ensure load balancing across multiple TURN nodes,
+  // since we only keep the first URL found for each protocol bucket.
+  const shuffledUrls = [...urls].sort(() => Math.random() - 0.5);
+
+  for (const url of shuffledUrls) {
     const bucket = integratedTurnUrlBucket(url);
     if (!byBucket.has(bucket)) {
       byBucket.set(bucket, url);
