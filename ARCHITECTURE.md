@@ -34,6 +34,11 @@ graph TB
         GA["golang-admin"]
     end
 
+    subgraph GoWorker["Go DB Worker"]
+        GW1["golang-worker-1"]
+        GW2["golang-worker-2"]
+    end
+
     subgraph GoTurn["Go TURN Relay (host network)"]
         GT1["golang-turn-1"]
         GT2["golang-turn-2"]
@@ -61,16 +66,18 @@ graph TB
     Nginx -->|":8081 → Go /admin"| GA
 
     PX1 & PX2 & PX3 -->|"session state, matchmaking"| Redis
-    GP1 & GP2 -->|"session validation, bans"| Redis
+    GP1 & GP2 -->|"session validation, bans, XADD reports"| Redis
     GA -->|"ban sync, config"| Redis
+    GW1 & GW2 -->|"XREADGROUP reports"| Redis
     GT1 & GT2 -->|"gRPC :50050"| Nginx
     Nginx -->|"grpc_pass (least_conn)"| GP1 & GP2
 
     GA -->|"reports, bans, accounts"| Postgres
-    GP1 & GP2 -->|"reports, bans"| Postgres
+    GW1 & GW2 -->|"insert reports"| Postgres
+    GP1 & GP2 -->|"read bans"| Postgres
 
     PX1 & PX2 & PX3 -->|traces| OTEL
-    GP1 & GP2 & GA -->|traces + metrics| OTEL
+    GP1 & GP2 & GA & GW1 & GW2 -->|traces + metrics| OTEL
     OTEL --> Jaeger
     OTEL --> Prometheus
     Prometheus --> Grafana
@@ -83,10 +90,11 @@ graph TB
 | Service | Owner | Responsibilities |
 |---------|-------|-----------------|
 | **Phoenix** | Elixir/BEAM | WebSocket sessions, matchmaking, session lifecycle, IP tracking, Turnstile verification, BEAM clustering |
-| **Go Public** | Go | WebRTC signaling WS, TURN bootstrap, report submission, ban enforcement (Redis), gRPC TURN control plane |
-| **Go Admin** | Go | Admin dashboard API, JWT auth, ban CRUD, report review, auto-moderation worker, infra health aggregation |
+| **Go Public** | Go | WebRTC signaling WS, TURN bootstrap, report stream ingestion, ban enforcement (Redis), gRPC TURN control plane |
+| **Go Admin** | Go | Admin dashboard API, JWT auth, ban CRUD, report review, infra health aggregation |
+| **Go DB Worker** | Go | Async report processing, PostgreSQL insertion, auto-moderation pipeline execution |
 | **Go TURN** | Go (Pion) | TURN/STUN relay (UDP/TCP/TLS), allocation management, session validation via gRPC |
-| **Redis/Valkey** | — | Session state, match state, ban cache, pub/sub coordination, queue shards |
+| **Redis/Valkey** | — | Session state, match state, ban cache, pub/sub coordination, stream queues |
 | **PostgreSQL** | — | Reports, bans, admin accounts, banned words, bot definitions, auto-moderation settings |
 
 ---
@@ -127,8 +135,8 @@ sequenceDiagram
 
     Note over Browser,GoPublic: 5. Moderation
     Browser->>GoPublic: POST /api/v1/moderation/report
-    GoPublic->>Postgres: Store report
-    GoPublic->>GoPublic: Enqueue for auto-moderation
+    GoPublic->>Redis: XADD stream:reports:ingest
+    GoPublic-->>Browser: 200 OK
 ```
 
 ---
@@ -245,12 +253,16 @@ graph TB
 
     subgraph "Go Public"
         Validate["Validate session + peer<br/>(Redis lookup)"]
-        Store["Store report<br/>(Postgres)"]
-        Enqueue["Wake auto-mod worker"]
+        StreamXADD["Queue report<br/>(Redis Stream XADD)"]
     end
 
-    subgraph "Auto-Moderation Worker (Go Admin)"
-        Poll["Poll pending reports<br/>SELECT FOR UPDATE SKIP LOCKED"]
+    subgraph "Redis Cluster"
+        IngestStream[("stream:reports:ingest")]
+    end
+
+    subgraph "Go DB Worker"
+        Consume["Consume reports<br/>(XREADGROUP)"]
+        Store["Store report<br/>(Postgres)"]
         Extract["Extract evidence<br/>(reported + reporter)"]
         LLM["LLM Safety Assessment<br/>(OpenAI-compatible API)"]
         Decide["determineDecision()<br/>approve / reject / escalate"]
@@ -268,8 +280,8 @@ graph TB
         PhoenixSync["Phoenix admin stream<br/>(fan-out disconnect)"]
     end
 
-    Report --> Validate --> Store --> Enqueue
-    Enqueue --> Poll --> Extract --> LLM --> Decide
+    Report --> Validate --> StreamXADD --> IngestStream
+    IngestStream --> Consume --> Store --> Extract --> LLM --> Decide
     Decide -->|"auto-reject"| RedisBan & PGBan
     Decide -->|"reporter abusive"| CounterBan --> RedisBan & PGBan
     Decide -->|"escalate"| Review
@@ -543,29 +555,36 @@ graph LR
         Admin["Admin Server"]
     end
 
+    subgraph "cmd/worker"
+        Worker["DB Worker"]
+    end
+
     subgraph "cmd/turn"
         Turn["TURN Relay"]
     end
 
-    Combined ---|"Admin API ✓<br/>Moderation API ✓<br/>Signaling WS ✓<br/>TURN Bootstrap ✓<br/>TURN Control API ✓"| Combined
+    Combined ---|"Admin API ✓<br/>Moderation API ✓<br/>Signaling WS ✓<br/>TURN Bootstrap ✓<br/>TURN Control API ✓<br/>Auto-mod Worker ✓"| Combined
 
     Public ---|"Moderation API ✓<br/>Signaling WS ✓<br/>TURN Bootstrap ✓<br/>TURN Control API ✓"| Public
 
-    Admin ---|"Admin API ✓<br/>(auto-mod worker)"| Admin
+    Admin ---|"Admin API ✓"| Admin
+
+    Worker ---|"Async DB Inserts ✓<br/>Auto-mod Worker ✓"| Worker
 
     Turn ---|"Pion TURN relay<br/>gRPC or direct Redis"| Turn
 ```
 
-| Capability | `go run .` | `cmd/public` | `cmd/admin` | `cmd/turn` |
-|-----------|:---:|:---:|:---:|:---:|
-| Admin API | ✓ | | ✓ | |
-| Moderation API | ✓ | ✓ | | |
-| Signaling WS | ✓ | ✓ | | |
-| TURN Bootstrap | ✓ | ✓ | | |
-| TURN Control gRPC | ✓ | ✓ | | |
-| TURN Relay | | | | ✓ |
-| Auto-mod Worker | ✓ | ✓ | ✓ | |
-| Ban Sync Loop | ✓ | ✓ | ✓ | |
+| Capability | `go run .` | `cmd/public` | `cmd/admin` | `cmd/worker` | `cmd/turn` |
+|-----------|:---:|:---:|:---:|:---:|:---:|
+| Admin API | ✓ | | ✓ | | |
+| Moderation API | ✓ | ✓ | | | |
+| Signaling WS | ✓ | ✓ | | | |
+| TURN Bootstrap | ✓ | ✓ | | | |
+| TURN Control gRPC | ✓ | ✓ | | | |
+| Async Report DB Inserts | ✓ | | | ✓ | |
+| Auto-mod Worker | ✓ | | | ✓ | |
+| TURN Relay | | | | | ✓ |
+| Ban Sync Loop | ✓ | ✓ | ✓ | | |
 
 ---
 
@@ -587,6 +606,7 @@ All session-scoped keys use `{mode:shard}` hash tags to ensure co-location on th
 | `turn:allocations:{session_id}` | Go | 24h safety | TURN allocation counter per session |
 | `webrtc:{mode:shard}:ready:{id}` | Phoenix | — | WebRTC readiness flag |
 | `webrtc:turn:cache:cloudflare:{user}` | Go | 10min | Cached Cloudflare TURN credentials |
+| `stream:reports:ingest` | Go | ~10k max | Pending reports stream for async DB worker |
 
 ---
 
@@ -604,6 +624,8 @@ graph TB
         GP1["golang-public-1<br/>:8082"]
         GP2["golang-public-2<br/>:8082"]
         GA["golang-admin<br/>:8082"]
+        GW1["golang-worker-1"]
+        GW2["golang-worker-2"]
         PG["postgres<br/>:5432"]
         R1["redis-1<br/>:7000"]
         R2["redis-2<br/>:7001"]

@@ -69,20 +69,22 @@ type Server struct {
 }
 
 type Capabilities struct {
-	EnableAdminAPI       bool
-	EnableModerationAPI  bool
-	EnableSignalingWS    bool
-	EnableTurnBootstrap  bool
-	EnableTurnControlAPI bool
+	EnableAdminAPI             bool
+	EnableModerationAPI        bool
+	EnableSignalingWS          bool
+	EnableTurnBootstrap        bool
+	EnableTurnControlAPI       bool
+	EnableAutoModerationWorker bool
 }
 
 func NewServer() *Server {
 	return newServer(Capabilities{
-		EnableAdminAPI:       true,
-		EnableModerationAPI:  true,
-		EnableSignalingWS:    true,
-		EnableTurnBootstrap:  true,
-		EnableTurnControlAPI: true,
+		EnableAdminAPI:             true,
+		EnableModerationAPI:        true,
+		EnableSignalingWS:          true,
+		EnableTurnBootstrap:        true,
+		EnableTurnControlAPI:       true,
+		EnableAutoModerationWorker: true,
 	}, "pairline-go-service")
 }
 
@@ -184,6 +186,9 @@ func newServer(capabilities Capabilities, serviceName string) *Server {
 		s.syncBannedWordsToRedis()
 		s.syncBotsToRedis()
 		s.startBanSyncLoop()
+	}
+
+	if capabilities.EnableAutoModerationWorker {
 		s.autoModerator = automod.NewWorker(s.db.GetDB(), s.redis)
 		if s.autoModerator != nil {
 			s.autoModerator.Start(s.backgroundCtx)
@@ -697,11 +702,7 @@ func (s *Server) setupRoutes() {
 					bots.DeleteDefinitionHandler(c, botSyncer)
 				})
 
-				var enqueueAutoModeration func(string)
-				if s.autoModerator != nil {
-					enqueueAutoModeration = s.autoModerator.Enqueue
-				}
-				adminOnlyEnforcement.POST("/test/seed-reports", handlers.SeedReportsHandlerGin(enqueueAutoModeration))
+				adminOnlyEnforcement.POST("/test/seed-reports", handlers.SeedReportsHandlerGin(s.redis.GetClient()))
 
 				rootOnly := adminAuth.Group("")
 				rootOnly.Use(s.RoleAuthMiddleware([]string{"root"}))
@@ -725,11 +726,7 @@ func (s *Server) setupRoutes() {
 	if s.capabilities.EnableModerationAPI {
 		moderation := s.router.Group("/api/v1/moderation")
 		{
-			var enqueueAutoModeration func(string)
-			if s.autoModerator != nil {
-				enqueueAutoModeration = s.autoModerator.Enqueue
-			}
-			moderation.POST("/report", handlers.CreateReportHandlerGin(s.redis.GetClient(), enqueueAutoModeration))
+			moderation.POST("/report", handlers.CreateReportHandlerGin(s.redis.GetClient()))
 		}
 	}
 }

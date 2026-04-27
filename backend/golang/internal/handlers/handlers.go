@@ -378,7 +378,7 @@ func UpdateReportHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 	}
 }
 
-func CreateReportHandlerGin(redisClient redis.UniversalClient, _ func(string)) gin.HandlerFunc {
+func CreateReportHandlerGin(redisClient redis.UniversalClient) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		span := startHandlerSpan(c, "moderation.report.create")
 		defer span.End()
@@ -610,20 +610,7 @@ func validateReportPipelined(ctx context.Context, client redis.UniversalClient, 
 	return reporterIP, reportedIP, isBot, validToken, validPeer, nil
 }
 
-func asyncEnqueueAutoModeration(enqueueAutoModeration func(string), reportID string) {
-	if enqueueAutoModeration == nil {
-		return
-	}
 
-	go func() {
-		defer func() {
-			if recovered := recover(); recovered != nil {
-				log.Printf("auto moderation enqueue panicked report_id=%q reason=%v", reportID, recovered)
-			}
-		}()
-		enqueueAutoModeration(reportID)
-	}()
-}
 
 func GetAutoModerationSettingsHandlerGin(c *gin.Context) {
 	span := startHandlerSpan(c, "moderation.auto_reports.settings.get")
@@ -2074,12 +2061,11 @@ func loadBanMetrics(ctx context.Context, db *gorm.DB) (map[string]int64, error) 
 	return metrics, nil
 }
 
-func SeedReportsHandlerGin(enqueueAutoModeration func(string)) gin.HandlerFunc {
+func SeedReportsHandlerGin(redisClient redis.UniversalClient) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		span := startHandlerSpan(c, "admin.test.reports.seed")
 		defer span.End()
 
-		db := storage.NewDatabase()
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 		defer cancel()
 
@@ -2158,38 +2144,41 @@ func SeedReportsHandlerGin(enqueueAutoModeration func(string)) gin.HandlerFunc {
 			},
 		}
 
-		var createdIds []string
-
 		for i, s := range scenarios {
-			report := storage.Report{
-				ReporterSessionID:        uuid.New().String(),
-				ReportedSessionID:        uuid.New().String(),
-				ReporterIP:               "203.0." + strconv.Itoa(time.Now().Second()%255) + "." + strconv.Itoa(i+100),
-				ReportedIP:               "203.0." + strconv.Itoa(time.Now().Second()%255) + "." + strconv.Itoa(i+200),
-				Reason:                   s.Reason,
-				Description:              s.Description,
-				ChatLog:                  makeLog(s.Messages),
-				Status:                   "pending",
-				AutoModerationState:      "pending",
-				AutoModerationDecision:   "",
-				AutoModerationCategories: "[]",
-				CreatedAt:                time.Now(),
-			}
+			payloadBytes, err := json.Marshal(map[string]any{
+				"reporter_session_id": uuid.New().String(),
+				"reported_session_id": uuid.New().String(),
+				"reporter_ip":         "203.0." + strconv.Itoa(time.Now().Second()%255) + "." + strconv.Itoa(i+100),
+				"reported_ip":         "203.0." + strconv.Itoa(time.Now().Second()%255) + "." + strconv.Itoa(i+200),
+				"reason":              s.Reason,
+				"description":         s.Description,
+				"chat_log":            makeLog(s.Messages),
+				"timestamp":           time.Now().UnixMilli(),
+			})
 
-			if err := db.GetDB().WithContext(ctx).Create(&report).Error; err != nil {
+			if err != nil {
 				span.RecordError(err)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to seed report", "details": err.Error()})
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to serialize report payload", "details": err.Error()})
 				return
 			}
 
-			asyncEnqueueAutoModeration(enqueueAutoModeration, report.ID)
-			createdIds = append(createdIds, report.ID)
+			if err := redisClient.XAdd(ctx, &redis.XAddArgs{
+				Stream: "stream:reports:ingest",
+				MaxLen: 10000,
+				Approx: true,
+				Values: map[string]interface{}{
+					"payload": string(payloadBytes),
+				},
+			}).Err(); err != nil {
+				span.RecordError(err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue test report", "details": err.Error()})
+				return
+			}
 		}
 
 		c.JSON(http.StatusOK, gin.H{
 			"status": "seeded",
 			"count":  len(scenarios),
-			"ids":    createdIds,
 		})
 	}
 }

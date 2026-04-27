@@ -21,9 +21,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
+	"math/rand/v2"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -67,7 +70,10 @@ func main() {
 
 	autoModerator.Start(ctx)
 
-	go consumeReportsStream(ctx, db, redisClient.GetClient(), autoModerator)
+	// Run the stream consumer in a supervised goroutine so a panic
+	// doesn't silently kill report processing while the worker appears
+	// healthy from the outside.
+	go superviseConsumer(ctx, db, redisClient.GetClient(), autoModerator)
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -83,12 +89,49 @@ func main() {
 	redisClient.Close()
 }
 
+// superviseConsumer runs consumeReportsStream in a loop with panic
+// recovery. If the consumer panics, it logs the stack trace and
+// restarts after a brief delay instead of letting the goroutine die.
+func superviseConsumer(ctx context.Context, db *storage.Database, redisClient redis.UniversalClient, autoModerator *automod.Worker) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("CRITICAL: consumeReportsStream panicked: %v\n%s", r, debug.Stack())
+				}
+			}()
+			consumeReportsStream(ctx, db, redisClient, autoModerator)
+		}()
+
+		// If we get here, either the consumer returned (ctx cancelled)
+		// or it panicked. Back off before restarting.
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(3 * time.Second):
+			log.Println("Restarting stream consumer after recovery...")
+		}
+	}
+}
+
 func consumeReportsStream(ctx context.Context, db *storage.Database, redisClient redis.UniversalClient, autoModerator *automod.Worker) {
 	streamName := "stream:reports:ingest"
 	groupName := "db_workers"
-	consumerName := "worker-" + getEnv("HOSTNAME", "default-worker")
+	consumerName := resolveConsumerName()
 
-	err := redisClient.XGroupCreateMkStream(ctx, streamName, groupName, "$").Err()
+	log.Printf("Stream consumer starting: group=%s consumer=%s", groupName, consumerName)
+
+	// Use "0" instead of "$" so the group starts from the beginning of
+	// the stream. If the group already exists this is a no-op (BUSYGROUP).
+	// Using "$" causes messages added between group creation and the
+	// second worker joining to be invisible to the late-joining worker.
+	err := redisClient.XGroupCreateMkStream(ctx, streamName, groupName, "0").Err()
 	if err != nil && !strings.Contains(err.Error(), "BUSYGROUP") {
 		log.Printf("Failed to create consumer group: %v", err)
 	}
@@ -134,12 +177,26 @@ func consumeReportsStream(ctx context.Context, db *storage.Database, redisClient
 // but never acknowledged (e.g. due to a crash). It reads from ID "0"
 // which returns all pending entries for this consumer, then processes
 // and acks each one.
+//
+// Applies exponential backoff on persistent DB failures to avoid a
+// tight busy-loop when Postgres is unavailable.
 func recoverPending(ctx context.Context, redisClient redis.UniversalClient, db *storage.Database, autoModerator *automod.Worker, streamName, groupName, consumerName string) {
+	const maxBackoff = 30 * time.Second
+	backoff := time.Duration(0)
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
+		}
+
+		if backoff > 0 {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff):
+			}
 		}
 
 		res, err := redisClient.XReadGroup(ctx, &redis.XReadGroupArgs{
@@ -161,8 +218,23 @@ func recoverPending(ctx context.Context, redisClient redis.UniversalClient, db *
 			return
 		}
 
+		hadFailure := false
 		for _, msg := range res[0].Messages {
-			processMessage(ctx, redisClient, db, autoModerator, streamName, groupName, msg)
+			if !processMessage(ctx, redisClient, db, autoModerator, streamName, groupName, msg) {
+				hadFailure = true
+			}
+		}
+
+		if hadFailure {
+			// Exponential backoff: 1s → 2s → 4s → ... → 30s cap
+			if backoff == 0 {
+				backoff = 1 * time.Second
+			} else {
+				backoff = min(backoff*2, maxBackoff)
+			}
+			log.Printf("DB failure during recovery, backing off %v", backoff)
+		} else {
+			backoff = 0
 		}
 	}
 }
@@ -213,7 +285,10 @@ func reclaimOrphaned(ctx context.Context, redisClient redis.UniversalClient, db 
 	}
 }
 
-func processMessage(ctx context.Context, redisClient redis.UniversalClient, db *storage.Database, autoModerator *automod.Worker, streamName, groupName string, msg redis.XMessage) {
+// processMessage handles a single stream message. Returns true on
+// success (message acked), false if a retryable error occurred (message
+// left in the PEL for later retry).
+func processMessage(ctx context.Context, redisClient redis.UniversalClient, db *storage.Database, autoModerator *automod.Worker, streamName, groupName string, msg redis.XMessage) bool {
 	ctx, span := tracer.Start(ctx, "worker.processReport")
 	defer span.End()
 
@@ -225,7 +300,7 @@ func processMessage(ctx context.Context, redisClient redis.UniversalClient, db *
 		span.SetStatus(codes.Error, "invalid payload")
 		redisClient.XAck(ctx, streamName, groupName, msg.ID)
 		redisClient.XDel(ctx, streamName, msg.ID)
-		return
+		return true
 	}
 
 	var data struct {
@@ -245,7 +320,7 @@ func processMessage(ctx context.Context, redisClient redis.UniversalClient, db *
 		span.SetStatus(codes.Error, "unmarshal failed")
 		redisClient.XAck(ctx, streamName, groupName, msg.ID)
 		redisClient.XDel(ctx, streamName, msg.ID)
-		return
+		return true
 	}
 
 	report := storage.Report{
@@ -273,15 +348,14 @@ func processMessage(ctx context.Context, redisClient redis.UniversalClient, db *
 			span.SetAttributes(attribute.Bool("report.duplicate", true))
 			redisClient.XAck(ctx, streamName, groupName, msg.ID)
 			redisClient.XDel(ctx, streamName, msg.ID)
-			return
+			return true
 		}
 
 		log.Printf("Failed to insert report into database: %v", err)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "db insert failed")
-		// We DO NOT ack here, so the message can be retried
-		time.Sleep(1 * time.Second)
-		return
+		// Retryable failure — leave in PEL.
+		return false
 	}
 
 	span.SetAttributes(attribute.String("report.id", report.ID))
@@ -298,11 +372,15 @@ func processMessage(ctx context.Context, redisClient redis.UniversalClient, db *
 	// Acknowledge and remove the message from the stream
 	redisClient.XAck(ctx, streamName, groupName, msg.ID)
 	redisClient.XDel(ctx, streamName, msg.ID)
+	return true
 }
 
-func getEnv(key, defaultValue string) string {
-	if value, exists := os.LookupEnv(key); exists {
-		return value
+// resolveConsumerName builds a unique consumer name for this worker
+// instance. Falls back to a random suffix if HOSTNAME is unset or empty.
+func resolveConsumerName() string {
+	hostname := strings.TrimSpace(os.Getenv("HOSTNAME"))
+	if hostname == "" {
+		hostname = fmt.Sprintf("anon-%d", rand.IntN(100000))
 	}
-	return defaultValue
+	return "worker-" + hostname
 }
