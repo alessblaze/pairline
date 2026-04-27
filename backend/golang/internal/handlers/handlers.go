@@ -2174,6 +2174,12 @@ func SeedReportsHandlerGin(redisClient redis.UniversalClient) gin.HandlerFunc {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue test report", "details": err.Error()})
 				return
 			}
+
+			observability.RecordBusinessEvent(
+				c.Request.Context(),
+				"report.queued",
+				attribute.Bool("report.chat_log_present", true),
+			)
 		}
 
 		c.JSON(http.StatusOK, gin.H{

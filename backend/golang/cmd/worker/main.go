@@ -363,7 +363,6 @@ func processMessage(ctx context.Context, redisClient redis.UniversalClient, db *
 	observability.RecordBusinessEvent(
 		ctx,
 		"report.db_inserted",
-		attribute.String("report.id", report.ID),
 	)
 
 	// Kick off the auto-moderation pipeline
