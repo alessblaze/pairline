@@ -573,7 +573,13 @@ services:
     ports:
       - "50051:50051"
     healthcheck:
-      test: ["CMD", "bash", "-lc", "exec 3<>/dev/tcp/127.0.0.1/8081 && printf 'GET /health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3"]
+      test:
+        [
+          "CMD",
+          "bash",
+          "-lc",
+          "exec 3<>/dev/tcp/127.0.0.1/8081 && printf 'GET /health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3",
+        ]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -634,7 +640,13 @@ services:
     ports:
       - "50052:50052"
     healthcheck:
-      test: ["CMD", "bash", "-lc", "exec 3<>/dev/tcp/127.0.0.1/8081 && printf 'GET /health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3"]
+      test:
+        [
+          "CMD",
+          "bash",
+          "-lc",
+          "exec 3<>/dev/tcp/127.0.0.1/8081 && printf 'GET /health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3",
+        ]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -748,6 +760,7 @@ services:
       TURN_RELAY_ADDRESS: 0.0.0.0
       TURN_RELAY_MIN_PORT: "55000"
       TURN_RELAY_MAX_PORT: "55099"
+      TURN_BANDWIDTH_LIMIT_KBPS: "0"
     network_mode: host
     volumes:
       - ../backend/golang:/app
@@ -790,6 +803,7 @@ services:
       TURN_RELAY_ADDRESS: 0.0.0.0
       TURN_RELAY_MIN_PORT: "55100"
       TURN_RELAY_MAX_PORT: "55199"
+      TURN_BANDWIDTH_LIMIT_KBPS: "0"
     network_mode: host
     volumes:
       - ../backend/golang:/app

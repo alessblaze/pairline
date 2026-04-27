@@ -39,6 +39,7 @@ type Config struct {
 	RelayMinPort        int
 	RelayMaxPort        int
 	AllocationQuota     int
+	BandwidthLimitKbps  int
 	ControlGRPCAddress  string
 	ControlGRPCSecret   string
 	ControlGRPCPoolSize int
@@ -73,6 +74,7 @@ func LoadConfigFromEnv() Config {
 		RelayMinPort:        envIntOrDefault("TURN_RELAY_MIN_PORT", 49152),
 		RelayMaxPort:        envIntOrDefault("TURN_RELAY_MAX_PORT", 49252),
 		AllocationQuota:     envIntOrDefault("TURN_MAX_ALLOCATIONS_PER_SESSION", 4),
+		BandwidthLimitKbps:  envIntOrDefault("TURN_BANDWIDTH_LIMIT_KBPS", 0),
 		ControlGRPCAddress:  strings.TrimSpace(os.Getenv("TURN_CONTROL_GRPC_ADDRESS")),
 		ControlGRPCSecret:   strings.TrimSpace(os.Getenv("TURN_CONTROL_GRPC_SHARED_SECRET")),
 		ControlGRPCPoolSize: envIntOrDefault("TURN_CONTROL_GRPC_POOL_SIZE", 4),

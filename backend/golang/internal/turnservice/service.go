@@ -475,13 +475,54 @@ func (s *Service) closeSockets() error {
 }
 
 func relayAddressGenerator(config Config) pionturn.RelayAddressGenerator {
-	return &pionturn.RelayAddressGeneratorPortRange{
+	gen := &pionturn.RelayAddressGeneratorPortRange{
 		RelayAddress: net.ParseIP(config.PublicIP),
 		Address:      config.RelayAddress,
 		MinPort:      uint16(config.RelayMinPort),
 		MaxPort:      uint16(config.RelayMaxPort),
 		MaxRetries:   64,
 	}
+	
+	if config.BandwidthLimitKbps > 0 {
+		return &bandwidthLimitedRelayGenerator{
+			generator: gen,
+			limitKbps: config.BandwidthLimitKbps,
+		}
+	}
+	return gen
+}
+
+type bandwidthLimitedRelayGenerator struct {
+	generator pionturn.RelayAddressGenerator
+	limitKbps int
+}
+
+func (g *bandwidthLimitedRelayGenerator) Validate() error {
+	return g.generator.Validate()
+}
+
+func (g *bandwidthLimitedRelayGenerator) AllocatePacketConn(config pionturn.AllocateListenerConfig) (net.PacketConn, net.Addr, error) {
+	conn, addr, err := g.generator.AllocatePacketConn(config)
+	if err != nil || g.limitKbps <= 0 {
+		return conn, addr, err
+	}
+	return newRateLimitedPacketConn(conn, g.limitKbps), addr, nil
+}
+
+func (g *bandwidthLimitedRelayGenerator) AllocateListener(config pionturn.AllocateListenerConfig) (net.Listener, net.Addr, error) {
+	l, addr, err := g.generator.AllocateListener(config)
+	if err != nil || g.limitKbps <= 0 {
+		return l, addr, err
+	}
+	return newRateLimitedListener(l, g.limitKbps), addr, nil
+}
+
+func (g *bandwidthLimitedRelayGenerator) AllocateConn(config pionturn.AllocateConnConfig) (net.Conn, error) {
+	conn, err := g.generator.AllocateConn(config)
+	if err != nil || g.limitKbps <= 0 {
+		return conn, err
+	}
+	return newRateLimitedConn(conn, g.limitKbps), nil
 }
 
 func NewGRPCValidator(ctx context.Context, config Config) (Validator, func() error, error) {

@@ -198,6 +198,7 @@ This file focuses on **what each variable changes in runtime behavior**, not jus
 - **`TURN_TLS_CERT_FILE`** / **`TURN_TLS_KEY_FILE`**: required when `TURN_TLS_LISTEN_ADDRESS` is set.
 - **`TURN_RELAY_MIN_PORT`** / **`TURN_RELAY_MAX_PORT`** (defaults: `49152` / `49252`): relay allocation port range for the integrated relay.
 - **`TURN_MAX_ALLOCATIONS_PER_SESSION`** (default: `4`): coarse integrated relay allocation cap used to avoid runaway allocation growth.
+- **`TURN_BANDWIDTH_LIMIT_KBPS`** (default: `0` / disabled): per-allocation bandwidth cap in kilobits per second for the integrated Pion TURN relay. When set to a positive value (e.g. `1024` for ~1 Mbps), each relay allocation gets an independent token-bucket rate limiter. UDP packets exceeding the limit are silently dropped, which lets WebRTC's bandwidth estimator naturally downscale video quality. TCP relay connections apply backpressure instead of dropping. Set to `0` to leave allocations unlimited.
 
 ### TURN control-plane gRPC
 
