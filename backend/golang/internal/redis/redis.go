@@ -73,6 +73,43 @@ func NewClient() *Client {
 	return &Client{client: rdb}
 }
 
+// NewStreamClient creates a Redis cluster client without OTEL tracing
+// instrumentation. This is intended for stream consumers that issue
+// blocking reads (XREADGROUP with Block). The redisotel tracing hook
+// wraps every command in a span, which turns every 2-second blocking
+// poll into a noisy 2s span in Jaeger. Metrics are still enabled.
+func NewStreamClient() *Client {
+	addrs, err := redisClusterAddrsFromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	password := os.Getenv("REDIS_PASSWORD")
+
+	rdb := redis.NewClusterClient(&redis.ClusterOptions{
+		Addrs:                    addrs,
+		Password:                 password,
+		PoolSize:                 getEnvAsInt("REDIS_POOL_SIZE", 0),
+		MaintNotificationsConfig: redisMaintNotificationsConfig(),
+	})
+
+	// Only metrics, no tracing — blocking reads would generate noisy spans.
+	if err := redisotel.InstrumentMetrics(rdb); err != nil {
+		log.Printf("Failed to enable Redis metrics on stream client: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		_ = rdb.Close()
+		log.Fatalf("Failed to connect stream client to Redis Cluster: %v", err)
+	}
+
+	log.Println("Connected stream client to Redis Cluster successfully")
+	return &Client{client: rdb}
+}
+
 func redisMaintNotificationsConfig() *maintnotifications.Config {
 	raw := strings.TrimSpace(strings.ToLower(os.Getenv("REDIS_MAINT_NOTIFICATIONS_MODE")))
 

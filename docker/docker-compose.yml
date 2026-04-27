@@ -730,6 +730,69 @@ services:
         go mod download &&
         go run ./cmd/admin
 
+  golang-worker:
+    image: registry.suse.com/bci/golang:1.26
+    container_name: pairline-golang-worker
+    working_dir: /app
+    depends_on:
+      redis-cluster-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: omegle
+      POSTGRES_SSLMODE: disable
+      REDIS_CLUSTER_NODES: redis-node-1:7000,redis-node-2:7001,redis-node-3:7002
+      REDIS_PASSWORD: pairline-dev-redis-password
+      SHARED_SECRET: pairline-dev-shared-secret
+      JWT_SECRET: pairline-dev-jwt-secret-must-be-32-characters-long
+      ROOT_ADMIN_USERNAME: admin
+      ROOT_ADMIN_PASSWORD: adminpassword123
+      CORS_ORIGIN: http://localhost:8080,http://127.0.0.1:8080
+      TRUSTED_PROXY_CIDRS: 127.0.0.0/8,::1/128,172.16.0.0/12
+      GOCACHE: /tmp/go-build
+      REDIS_MAINT_NOTIFICATIONS_MODE: disabled
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Bearer pairline-dev-otel-secret"
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+      OTEL_ENVIRONMENT: docker
+      ADMIN_HEALTH_PHOENIX_URLS: http://phoenix1:8080/api/health,http://phoenix2:8080/api/health,http://phoenix3:8080/api/health
+      ADMIN_HEALTH_GO_URLS: http://golang-admin:8082/health,http://golang-public-1:8081/health,http://golang-public-2:8081/health
+      GOLANG_TURN_SHARED_SECRET: pairline-dev-shared-secret
+      ADMIN_HEALTH_TURN_URLS: http://host.docker.internal:8090/health,http://host.docker.internal:8091/health
+      OTEL_COLLECTOR_HEALTH_URL: http://otel-collector:13133/
+      AUTO_MODERATION_ENABLED: "false"
+      # NIM_API_KEY: ""
+      AUTO_MODERATION_NIM_BASE_URL: https://integrate.api.nvidia.com/v1
+      AUTO_MODERATION_MODEL: nvidia/llama-3.1-nemotron-safety-guard-8b-v3
+      # AUTO_MODERATION_MODEL_TYPE: generic-json
+      AUTO_MODERATION_BATCH_SIZE: 10
+      AUTO_MODERATION_BATCH_INTERVAL_SECONDS: 30
+      AUTO_MODERATION_TIMEOUT_SECONDS: 20
+      AUTO_MODERATION_CLAIM_TIMEOUT_SECONDS: 300
+      AUTO_MODERATION_MAX_ATTEMPTS: 3
+      AUTO_MODERATION_TEMPERATURE: 0.5
+      AUTO_MODERATION_MAX_TOKENS: 8192
+    networks:
+      pairline_cluster:
+        ipv4_address: 172.30.0.43
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ../backend/golang:/app
+      - golang_mod_cache:/go/pkg/mod
+      - golang_build_cache:/tmp/go-build
+    command:
+      - /bin/bash
+      - -lc
+      - |
+        go mod download &&
+        go run ./cmd/worker
+
   golang-turn-1:
     image: registry.suse.com/bci/golang:1.26
     container_name: pairline-golang-turn-1

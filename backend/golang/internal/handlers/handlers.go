@@ -378,7 +378,7 @@ func UpdateReportHandlerGin(redisClient *appredis.Client) gin.HandlerFunc {
 	}
 }
 
-func CreateReportHandlerGin(redisClient redis.UniversalClient, enqueueAutoModeration func(string)) gin.HandlerFunc {
+func CreateReportHandlerGin(redisClient redis.UniversalClient, _ func(string)) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		span := startHandlerSpan(c, "moderation.report.create")
 		defer span.End()
@@ -425,61 +425,6 @@ func CreateReportHandlerGin(redisClient redis.UniversalClient, enqueueAutoModera
 			return
 		}
 
-		db := storage.NewDatabase()
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-		defer cancel()
-
-		if !verifySessionToken(ctx, redisClient, req.ReporterSessionID, req.ReporterToken) {
-			span.SetStatus(codes.Error, "invalid session token")
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid session token"})
-			return
-		}
-
-		if !sessionCanReportPeer(ctx, redisClient, req.ReporterSessionID, req.ReportedSessionID) {
-			span.SetStatus(codes.Error, "report peer not allowed")
-			c.JSON(http.StatusForbidden, gin.H{"error": "Reports are only allowed for your current or recent chat partner"})
-			return
-		}
-
-		reportedSessionIsBot, err := sessionIsBotForReport(ctx, redisClient, req.ReportedSessionID)
-		if err != nil {
-			span.RecordError(err)
-		}
-		if reportedSessionIsBot {
-			observability.RecordBusinessEvent(
-				c.Request.Context(),
-				"report.bot_acknowledged",
-				attribute.Bool("report.chat_log_present", len(req.ChatLog) > 0),
-			)
-			c.JSON(http.StatusOK, gin.H{
-				"status": "created",
-			})
-			return
-		}
-
-		reporterRoute, reporterRouteErr := appredis.ResolveSessionRouteForReport(ctx, redisClient, req.ReporterSessionID)
-		reportedRoute, reportedRouteErr := appredis.ResolveSessionRouteForReport(ctx, redisClient, req.ReportedSessionID)
-
-		rawReporterIP := ""
-		if reporterRouteErr == nil {
-			rawReporterIP, _ = redisClient.Get(ctx, appredis.SessionIPKey(req.ReporterSessionID, reporterRoute)).Result()
-		}
-
-		rawReportedIP := ""
-		if reportedRouteErr == nil {
-			rawReportedIP, _ = redisClient.Get(ctx, appredis.SessionIPKey(req.ReportedSessionID, reportedRoute)).Result()
-		}
-		if rawReportedIP == "" {
-			rawReportedIP, _ = redisClient.Get(ctx, appredis.SessionIPLocatorKey(req.ReportedSessionID)).Result()
-		}
-
-		reporterIP := normalizeIP(rawReporterIP)
-		reportedIP := normalizeIP(rawReportedIP)
-
-		if reporterIP == "" {
-			reporterIP = getRequestClientIP(c)
-		}
-
 		chatLogStr, err := normalizeChatLog(req.ChatLog)
 		if err != nil {
 			span.RecordError(err)
@@ -488,38 +433,181 @@ func CreateReportHandlerGin(redisClient redis.UniversalClient, enqueueAutoModera
 			return
 		}
 
-		report := storage.Report{
-			ReporterSessionID:        req.ReporterSessionID,
-			ReportedSessionID:        req.ReportedSessionID,
-			ReporterIP:               reporterIP,
-			ReportedIP:               reportedIP,
-			Reason:                   req.Reason,
-			Description:              req.Description,
-			ChatLog:                  chatLogStr,
-			Status:                   "pending",
-			AutoModerationState:      "pending",
-			AutoModerationDecision:   "",
-			AutoModerationCategories: "[]",
-			CreatedAt:                time.Now(),
-		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
 
-		if err := db.GetDB().WithContext(ctx).Create(&report).Error; err != nil {
+		reporterIP, reportedIP, isBot, validToken, validPeer, err := validateReportPipelined(ctx, redisClient, req.ReporterSessionID, req.ReportedSessionID, req.ReporterToken)
+		if err != nil {
 			span.RecordError(err)
-			span.SetStatus(codes.Error, "failed to create report")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create report"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to validate report"})
 			return
 		}
+
+		if !validToken {
+			span.SetStatus(codes.Error, "invalid session token")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid session token"})
+			return
+		}
+
+		if !validPeer {
+			span.SetStatus(codes.Error, "report peer not allowed")
+			c.JSON(http.StatusForbidden, gin.H{"error": "Reports are only allowed for your current or recent chat partner"})
+			return
+		}
+
+		if isBot {
+			observability.RecordBusinessEvent(
+				c.Request.Context(),
+				"report.bot_acknowledged",
+				attribute.Bool("report.chat_log_present", len(req.ChatLog) > 0),
+			)
+			c.JSON(http.StatusOK, gin.H{"status": "created"})
+			return
+		}
+
+		if reporterIP == "" {
+			reporterIP = getRequestClientIP(c)
+		}
+
+		payloadBytes, err := json.Marshal(map[string]any{
+			"reporter_session_id": req.ReporterSessionID,
+			"reported_session_id": req.ReportedSessionID,
+			"reporter_ip":         reporterIP,
+			"reported_ip":         reportedIP,
+			"reason":              req.Reason,
+			"description":         req.Description,
+			"chat_log":            chatLogStr,
+			"timestamp":           time.Now().UnixMilli(),
+		})
+
+		if err != nil {
+			span.RecordError(err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process report"})
+			return
+		}
+
+		if err := redisClient.XAdd(ctx, &redis.XAddArgs{
+			Stream: "stream:reports:ingest",
+			MaxLen: 10000,
+			Approx: true,
+			Values: map[string]interface{}{
+				"payload": string(payloadBytes),
+			},
+		}).Err(); err != nil {
+			span.RecordError(err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue report"})
+			return
+		}
+
 		observability.RecordBusinessEvent(
 			c.Request.Context(),
-			"report.created",
+			"report.queued",
 			attribute.Bool("report.chat_log_present", chatLogStr != "[]"),
 		)
-		asyncEnqueueAutoModeration(enqueueAutoModeration, report.ID)
 
-		c.JSON(http.StatusOK, gin.H{
-			"status": "created",
-		})
+		c.JSON(http.StatusOK, gin.H{"status": "created"})
 	}
+}
+
+func validateReportPipelined(ctx context.Context, client redis.UniversalClient, reporterID, reportedID, reporterToken string) (string, string, bool, bool, bool, error) {
+	pipe := client.Pipeline()
+	repLocCmd := pipe.Get(ctx, appredis.SessionLocatorKey(reporterID))
+	repRepLocCmd := pipe.Get(ctx, appredis.SessionReportLocatorKey(reporterID))
+	tgtLocCmd := pipe.Get(ctx, appredis.SessionLocatorKey(reportedID))
+	tgtRepLocCmd := pipe.Get(ctx, appredis.SessionReportLocatorKey(reportedID))
+	tgtKindCmd := pipe.Get(ctx, appredis.SessionReportKindKey(reportedID))
+	tgtIPLocCmd := pipe.Get(ctx, appredis.SessionIPLocatorKey(reportedID))
+
+	_, execErr := pipe.Exec(ctx)
+	if execErr != nil && !errors.Is(execErr, redis.Nil) {
+		return "", "", false, false, false, execErr
+	}
+
+	var repRoute appredis.SessionRoute
+	repRouteOk := false
+	if loc, err := repLocCmd.Result(); err == nil {
+		repRoute, _ = appredis.DecodeSessionRoute(loc)
+		repRouteOk = true
+	} else if loc, err := repRepLocCmd.Result(); err == nil {
+		repRoute, _ = appredis.DecodeSessionRoute(loc)
+		repRouteOk = true
+	}
+
+	var tgtRoute appredis.SessionRoute
+	tgtRouteOk := false
+	if loc, err := tgtLocCmd.Result(); err == nil {
+		tgtRoute, _ = appredis.DecodeSessionRoute(loc)
+		tgtRouteOk = true
+	} else if loc, err := tgtRepLocCmd.Result(); err == nil {
+		tgtRoute, _ = appredis.DecodeSessionRoute(loc)
+		tgtRouteOk = true
+	}
+
+	isBot := false
+	if kind, err := tgtKindCmd.Result(); err == nil && strings.EqualFold(strings.TrimSpace(kind), "bot") {
+		isBot = true
+	}
+	reportedIP, _ := tgtIPLocCmd.Result()
+	reportedIP = normalizeIP(reportedIP)
+
+	pipe2 := client.Pipeline()
+	var tokenCmd, matchCmd, recentMatchCmd, repIPCmd, tgtIPCmd, tgtDataCmd *redis.StringCmd
+
+	if repRouteOk {
+		tokenCmd = pipe2.Get(ctx, appredis.SessionTokenKey(reporterID, repRoute))
+		matchCmd = pipe2.Get(ctx, appredis.MatchKey(reporterID, repRoute))
+		recentMatchCmd = pipe2.Get(ctx, appredis.RecentMatchKey(reporterID, repRoute))
+		repIPCmd = pipe2.Get(ctx, appredis.SessionIPKey(reporterID, repRoute))
+	}
+
+	if tgtRouteOk {
+		tgtIPCmd = pipe2.Get(ctx, appredis.SessionIPKey(reportedID, tgtRoute))
+		if !isBot {
+			tgtDataCmd = pipe2.Get(ctx, appredis.SessionDataKey(reportedID, tgtRoute))
+		}
+	}
+
+	_, execErr2 := pipe2.Exec(ctx)
+	if execErr2 != nil && !errors.Is(execErr2, redis.Nil) {
+		return "", "", false, false, false, execErr2
+	}
+
+	validToken := false
+	if repRouteOk && tokenCmd != nil {
+		expectedToken, _ := tokenCmd.Result()
+		hash := sha256.Sum256([]byte(reporterToken))
+		providedHashHex := hex.EncodeToString(hash[:])
+		validToken = expectedToken != "" && subtle.ConstantTimeCompare([]byte(expectedToken), []byte(providedHashHex)) == 1
+	}
+
+	validPeer := false
+	reporterIP := ""
+	if repRouteOk {
+		matchID, _ := matchCmd.Result()
+		recentMatchID, _ := recentMatchCmd.Result()
+		validPeer = (matchID == reportedID) || (recentMatchID == reportedID)
+		if ip, err := repIPCmd.Result(); err == nil {
+			reporterIP = normalizeIP(ip)
+		}
+	}
+
+	if tgtRouteOk {
+		if ip, err := tgtIPCmd.Result(); err == nil && ip != "" {
+			reportedIP = normalizeIP(ip)
+		}
+		if !isBot && tgtDataCmd != nil {
+			if rawData, err := tgtDataCmd.Result(); err == nil {
+				var data map[string]any
+				if json.Unmarshal([]byte(rawData), &data) == nil {
+					if kind, ok := data["session_kind"].(string); ok && strings.EqualFold(strings.TrimSpace(kind), "bot") {
+						isBot = true
+					}
+				}
+			}
+		}
+	}
+
+	return reporterIP, reportedIP, isBot, validToken, validPeer, nil
 }
 
 func asyncEnqueueAutoModeration(enqueueAutoModeration func(string), reportID string) {
