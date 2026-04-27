@@ -17,7 +17,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { WebSocketClient } from '../services/websocket';
-import { normalizeIceServersForBootstrap } from '../services/iceServers';
+import { normalizeIceServersForBootstrap, type TurnTransportFilter } from '../services/iceServers';
 import { useNetworkHealth } from './useNetworkHealth';
 import { BANNED_PHRASE_REASON, BLOCKED_PHRASE_NOTICE } from '../chatModeration';
 import type { ChatMessage, Message } from '../types';
@@ -34,6 +34,11 @@ const turnMode = (() => {
 const turnEnabled = turnMode !== 'off';
 const webrtcDebugEnabled = import.meta.env.VITE_WEBRTC_DEBUG !== 'false';
 const forceRelay = import.meta.env.VITE_FORCE_RELAY === 'true';
+const turnTransportFilter: TurnTransportFilter = (() => {
+  const raw = import.meta.env.VITE_TURN_TRANSPORT;
+  if (raw === 'udp' || raw === 'tcp') return raw;
+  return 'all';
+})();
 const initialTurnPrefetchWaitMs = forceRelay ? 2000 : 400;
 const hasTurnServer = (iceServers: RTCIceServer[]) =>
   iceServers.some(server => {
@@ -698,6 +703,7 @@ export function useVideoChat(wsUrl: string) {
       targetPeerId,
       turnEnabled,
       forceRelay,
+      turnTransportFilter,
       iceServers: config.iceServers?.map(server => ({
         urls: Array.isArray(server.urls) ? server.urls : [server.urls]
       }))
@@ -903,7 +909,8 @@ export function useVideoChat(wsUrl: string) {
         if (data.iceServers && Array.isArray(data.iceServers)) {
           const normalizedIceServers = normalizeIceServersForBootstrap(
             data.iceServers as RTCIceServer[],
-            typeof data.mode === 'string' ? data.mode : turnMode
+            typeof data.mode === 'string' ? data.mode : turnMode,
+            turnTransportFilter
           );
           logWebRTC('Fetched TURN/STUN servers', {
             mode: data.mode ?? turnMode,

@@ -1,5 +1,7 @@
 type TurnBootstrapMode = 'off' | 'cloudflare' | 'integrated' | 'auto';
 
+export type TurnTransportFilter = 'udp' | 'tcp' | 'all';
+
 type UrlBucket = 'udp' | 'turns' | 'tcp' | 'other';
 
 const integratedTurnBucketOrder: UrlBucket[] = ['udp', 'turns', 'tcp', 'other'];
@@ -62,11 +64,38 @@ const normalizeIntegratedTurnUrls = (urls: string[]) => {
     .filter((url): url is string => Boolean(url));
 };
 
+const filterTurnUrlsByTransport = (turnUrls: string[], transport: TurnTransportFilter): string[] => {
+  if (transport === 'all') {
+    return turnUrls;
+  }
+
+  return turnUrls.filter(url => {
+    // TURNS (TLS) is always TCP-based, so include it in the 'tcp' filter
+    if (url.startsWith('turns:')) {
+      return transport === 'tcp';
+    }
+
+    const lowerUrl = url.toLowerCase();
+    if (transport === 'udp') {
+      // Keep URLs that explicitly say transport=udp, or have no transport param
+      // (TURN defaults to UDP when no transport param is specified)
+      return !lowerUrl.includes('transport=tcp');
+    }
+    if (transport === 'tcp') {
+      return lowerUrl.includes('transport=tcp');
+    }
+
+    return true;
+  });
+};
+
 export function normalizeIceServersForBootstrap(
   iceServers: RTCIceServer[],
-  mode?: string
+  mode?: string,
+  transportFilter?: TurnTransportFilter
 ): RTCIceServer[] {
   const normalizedMode = mode?.trim() as TurnBootstrapMode | undefined;
+  const transport = transportFilter ?? 'all';
 
   return iceServers.reduce<RTCIceServer[]>((servers, server) => {
     const urls = dedupeUrls(asUrlList(server.urls));
@@ -78,7 +107,8 @@ export function normalizeIceServersForBootstrap(
     const nonTurnUrls = urls.filter(url => !isTurnUrl(url));
     const normalizedTurnUrls =
       normalizedMode === 'integrated' ? normalizeIntegratedTurnUrls(turnUrls) : turnUrls;
-    const normalizedUrls = [...nonTurnUrls, ...normalizedTurnUrls];
+    const filteredTurnUrls = filterTurnUrlsByTransport(normalizedTurnUrls, transport);
+    const normalizedUrls = [...nonTurnUrls, ...filteredTurnUrls];
 
     if (normalizedUrls.length === 0) {
       return servers;
