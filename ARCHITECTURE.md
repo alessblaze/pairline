@@ -2,7 +2,7 @@
 
 This document describes the architecture of the Pairline anonymous chat platform. It covers the service topology, data flow, WebRTC/TURN infrastructure, matchmaking lifecycle, moderation pipeline, and deployment model.
 
-For environment variable reference, see [ENVIRONMENT.md](./ENVIRONMENT.md). For TURN-specific details, see [TURNSERVER.md](./TURNSERVER.md). For auto-moderation, see [MODERATION.md](./MODERATION.md).
+For environment variable reference, see [ENVIRONMENT.md](./ENVIRONMENT.md). For TURN-specific details, see [TURN.md](./TURN.md). For auto-moderation, see [MODERATION.md](./MODERATION.md).
 
 ---
 
@@ -87,15 +87,15 @@ graph TB
 
 ## Service Responsibilities
 
-| Service | Owner | Responsibilities |
-|---------|-------|-----------------|
-| **Phoenix** | Elixir/BEAM | WebSocket sessions, matchmaking, session lifecycle, IP tracking, Turnstile verification, BEAM clustering |
-| **Go Public** | Go | WebRTC signaling WS, TURN bootstrap, report stream ingestion, ban enforcement (Redis), gRPC TURN control plane |
-| **Go Admin** | Go | Admin dashboard API, JWT auth, ban CRUD, report review, infra health aggregation |
-| **Go DB Worker** | Go | Async report processing, PostgreSQL insertion, auto-moderation pipeline execution |
-| **Go TURN** | Go (Pion) | TURN/STUN relay (UDP/TCP/TLS), allocation management, session validation via gRPC |
-| **Redis/Valkey** | — | Session state, match state, ban cache, pub/sub coordination, stream queues |
-| **PostgreSQL** | — | Reports, bans, admin accounts, banned words, bot definitions, auto-moderation settings |
+| Service          | Owner       | Responsibilities                                                                                               |
+| ---------------- | ----------- | -------------------------------------------------------------------------------------------------------------- |
+| **Phoenix**      | Elixir/BEAM | WebSocket sessions, matchmaking, session lifecycle, IP tracking, Turnstile verification, BEAM clustering       |
+| **Go Public**    | Go          | WebRTC signaling WS, TURN bootstrap, report stream ingestion, ban enforcement (Redis), gRPC TURN control plane |
+| **Go Admin**     | Go          | Admin dashboard API, JWT auth, ban CRUD, report review, infra health aggregation                               |
+| **Go DB Worker** | Go          | Async report processing, PostgreSQL insertion, auto-moderation pipeline execution                              |
+| **Go TURN**      | Go (Pion)   | TURN/STUN relay (UDP/TCP/TLS), allocation management, session validation via gRPC                              |
+| **Redis/Valkey** | —           | Session state, match state, ban cache, pub/sub coordination, stream queues                                     |
+| **PostgreSQL**   | —           | Reports, bans, admin accounts, banned words, bot definitions, auto-moderation settings                         |
 
 ---
 
@@ -176,7 +176,7 @@ graph LR
     TurnAuth -->|"gRPC pool + secret"| NginxProxy
     TurnQuota -->|"gRPC pool + secret"| NginxProxy
     NginxProxy -->|"grpc_pass"| GRPC
-    
+
     GRPC --> ValServer
     ValServer --> AuthLogic
     ValServer --> QuotaLogic
@@ -297,10 +297,10 @@ graph TB
 
 Bots are managed by Phoenix and run as supervised GenServer processes under `OmeglePhoenix.Bots.Supervisor`. They are assigned to waiting sessions based on admin-configured definitions stored in Redis. There are two bot types:
 
-| Type | Worker | How it generates replies |
-|------|--------|------------------------|
-| **Engagement** | `ScriptWorker` | JSON-scripted messages with trigger/regex matching, opening/closing/fallback messages |
-| **AI** | `AIWorker` | LLM-backed via LangChain (`ChatOpenAI`), per-definition API endpoint/model/system prompt |
+| Type           | Worker         | How it generates replies                                                                 |
+| -------------- | -------------- | ---------------------------------------------------------------------------------------- |
+| **Engagement** | `ScriptWorker` | JSON-scripted messages with trigger/regex matching, opening/closing/fallback messages    |
+| **AI**         | `AIWorker`     | LLM-backed via LangChain (`ChatOpenAI`), per-definition API endpoint/model/system prompt |
 
 ```mermaid
 graph TB
@@ -338,6 +338,7 @@ graph TB
 ### Bot Capacity Management
 
 Slot reservation uses a two-key Lua script with `{bot-active-runs}` hash tag:
+
 - `bots:active_runs:{bot-active-runs}:global` — global concurrent run counter
 - `bots:active_runs:{bot-active-runs}:definition:{id}` — per-definition counter
 
@@ -378,6 +379,7 @@ graph LR
 ```
 
 **Delivery strategy:**
+
 1. Check local ETS for a live `pid` — if found, deliver directly via `send/2`
 2. If not local, read the Redis owner key to find which node owns the session
 3. If the owner is a remote connected node, broadcast via `Phoenix.PubSub`
@@ -425,20 +427,20 @@ The `OmeglePhoenix.Redis.AdminSubscriber` is a GenServer that consumes a Redis S
 graph TB
     GoAdmin["Go Admin API<br/>(e.g., Ban User)"]
     Stream[("Redis Stream<br/>admin:action:stream")]
-    
+
     subgraph cg ["Consumer Group: admin:workers"]
         Node1["phoenix-1<br/>(AdminSubscriber)"]
         Node2["phoenix-2<br/>(AdminSubscriber)"]
         Node3["phoenix-3<br/>(AdminSubscriber)"]
     end
-    
+
     Users(("Connected Users"))
-    
+
     GoAdmin -->|"XADD"| Stream
     Stream -->|"XREADGROUP BLOCK<br/>(fan-out)"| Node1
     Stream -->|"XREADGROUP BLOCK<br/>(fan-out)"| Node2
     Stream -->|"XREADGROUP BLOCK<br/>(fan-out)"| Node3
-    
+
     Node1 -.->|"Apply locally"| Users
     Node2 -.->|"Apply locally"| Users
     Node3 -.->|"Apply locally"| Users
@@ -528,6 +530,7 @@ graph TB
 The admin dashboard is a single-page React app (`AdminPanelRuntime.tsx`, 250KB+) that communicates exclusively with the Go admin API via JWT-authenticated REST calls.
 
 **Tabs / Features:**
+
 - Reports queue with auto-moderation verdicts
 - Ban management (session + IP bans, temporary/permanent)
 - Banned words CRUD with toggle
@@ -574,17 +577,17 @@ graph LR
     Turn ---|"Pion TURN relay<br/>gRPC or direct Redis"| Turn
 ```
 
-| Capability | `go run .` | `cmd/public` | `cmd/admin` | `cmd/worker` | `cmd/turn` |
-|-----------|:---:|:---:|:---:|:---:|:---:|
-| Admin API | ✓ | | ✓ | | |
-| Moderation API | ✓ | ✓ | | | |
-| Signaling WS | ✓ | ✓ | | | |
-| TURN Bootstrap | ✓ | ✓ | | | |
-| TURN Control gRPC | ✓ | ✓ | | | |
-| Async Report DB Inserts | ✓ | | | ✓ | |
-| Auto-mod Worker | ✓ | | | ✓ | |
-| TURN Relay | | | | | ✓ |
-| Ban Sync Loop | ✓ | ✓ | ✓ | | |
+| Capability              | `go run .` | `cmd/public` | `cmd/admin` | `cmd/worker` | `cmd/turn` |
+| ----------------------- | :--------: | :----------: | :---------: | :----------: | :--------: |
+| Admin API               |     ✓      |              |      ✓      |              |            |
+| Moderation API          |     ✓      |      ✓       |             |              |            |
+| Signaling WS            |     ✓      |      ✓       |             |              |            |
+| TURN Bootstrap          |     ✓      |      ✓       |             |              |            |
+| TURN Control gRPC       |     ✓      |      ✓       |             |              |            |
+| Async Report DB Inserts |     ✓      |              |             |      ✓       |            |
+| Auto-mod Worker         |     ✓      |              |             |      ✓       |            |
+| TURN Relay              |            |              |             |              |     ✓      |
+| Ban Sync Loop           |     ✓      |      ✓       |      ✓      |              |            |
 
 ---
 
@@ -592,21 +595,21 @@ graph LR
 
 All session-scoped keys use `{mode:shard}` hash tags to ensure co-location on the same Redis cluster slot.
 
-| Key Pattern | Owner | TTL | Purpose |
-|-------------|-------|-----|---------|
-| `session:locator:{id}` | Phoenix | session TTL | Maps session ID → `mode\|shard` route |
-| `session:{mode:shard}:data:{id}` | Phoenix | session TTL | Session metadata (interests, config) |
-| `session:{mode:shard}:token:{id}` | Phoenix | session TTL | SHA-256 of session token |
-| `session:{mode:shard}:ip:{id}` | Phoenix | session TTL | Client IP for ban checks |
-| `session:{mode:shard}:owner:{id}` | Phoenix | 30s lease | Which Phoenix node owns this session |
-| `match:{mode:shard}:{id}` | Phoenix | — | Current match peer ID |
-| `ban:{session_id}` | Go | ban duration | Active session ban |
-| `ban:ip:{address}` | Go | ban duration | Active IP ban |
-| `bans:index` | Go | — | Set of all active ban keys |
-| `turn:allocations:{session_id}` | Go | 24h safety | TURN allocation counter per session |
-| `webrtc:{mode:shard}:ready:{id}` | Phoenix | — | WebRTC readiness flag |
-| `webrtc:turn:cache:cloudflare:{user}` | Go | 10min | Cached Cloudflare TURN credentials |
-| `stream:reports:ingest` | Go | ~10k max | Pending reports stream for async DB worker |
+| Key Pattern                           | Owner   | TTL          | Purpose                                    |
+| ------------------------------------- | ------- | ------------ | ------------------------------------------ |
+| `session:locator:{id}`                | Phoenix | session TTL  | Maps session ID → `mode\|shard` route      |
+| `session:{mode:shard}:data:{id}`      | Phoenix | session TTL  | Session metadata (interests, config)       |
+| `session:{mode:shard}:token:{id}`     | Phoenix | session TTL  | SHA-256 of session token                   |
+| `session:{mode:shard}:ip:{id}`        | Phoenix | session TTL  | Client IP for ban checks                   |
+| `session:{mode:shard}:owner:{id}`     | Phoenix | 30s lease    | Which Phoenix node owns this session       |
+| `match:{mode:shard}:{id}`             | Phoenix | —            | Current match peer ID                      |
+| `ban:{session_id}`                    | Go      | ban duration | Active session ban                         |
+| `ban:ip:{address}`                    | Go      | ban duration | Active IP ban                              |
+| `bans:index`                          | Go      | —            | Set of all active ban keys                 |
+| `turn:allocations:{session_id}`       | Go      | 24h safety   | TURN allocation counter per session        |
+| `webrtc:{mode:shard}:ready:{id}`      | Phoenix | —            | WebRTC readiness flag                      |
+| `webrtc:turn:cache:cloudflare:{user}` | Go      | 10min        | Cached Cloudflare TURN credentials         |
+| `stream:reports:ingest`               | Go      | ~10k max     | Pending reports stream for async DB worker |
 
 ---
 
@@ -653,6 +656,7 @@ graph TB
 ### Elixir Cluster Compose (`elixir-cluster-compose.yml`)
 
 Production-like layout (gitignored, contains secrets). Same topology as default but with:
+
 - Real CORS origins and secrets
 - `TURN_PUBLIC_IP` set to the host's LAN IP
 - BEAM node clustering enabled across Phoenix instances
@@ -662,21 +666,21 @@ Production-like layout (gitignored, contains secrets). Same topology as default 
 
 ## Network Ports (Default Dev)
 
-| Port | Service | Protocol | Exposed |
-|------|---------|----------|---------|
-| 5173 | Chat Frontend | HTTP | localhost |
-| 5174 | Admin Frontend | HTTP | localhost |
-| 8080 | Phoenix (direct) / Nginx→Phoenix | HTTP+WS | localhost |
-| 8081 | Nginx→Go | HTTP | localhost |
-| 8082 | Go Combined (direct) | HTTP+WS | localhost |
-| 7000–7005 | Redis Cluster | TCP | localhost |
-| 5432 | PostgreSQL | TCP | localhost |
-| 50050–50052 | TURN Control gRPC | TCP | internal |
-| 53478–53479 | TURN Relay | UDP+TCP | host network |
-| 16686 | Jaeger UI | HTTP | localhost |
-| 9090 | Prometheus | HTTP | localhost |
-| 3000 | Grafana | HTTP | localhost |
-| 4317–4318 | OTEL Collector | gRPC+HTTP | internal |
+| Port        | Service                          | Protocol  | Exposed      |
+| ----------- | -------------------------------- | --------- | ------------ |
+| 5173        | Chat Frontend                    | HTTP      | localhost    |
+| 5174        | Admin Frontend                   | HTTP      | localhost    |
+| 8080        | Phoenix (direct) / Nginx→Phoenix | HTTP+WS   | localhost    |
+| 8081        | Nginx→Go                         | HTTP      | localhost    |
+| 8082        | Go Combined (direct)             | HTTP+WS   | localhost    |
+| 7000–7005   | Redis Cluster                    | TCP       | localhost    |
+| 5432        | PostgreSQL                       | TCP       | localhost    |
+| 50050–50052 | TURN Control gRPC                | TCP       | internal     |
+| 53478–53479 | TURN Relay                       | UDP+TCP   | host network |
+| 16686       | Jaeger UI                        | HTTP      | localhost    |
+| 9090        | Prometheus                       | HTTP      | localhost    |
+| 3000        | Grafana                          | HTTP      | localhost    |
+| 4317–4318   | OTEL Collector                   | gRPC+HTTP | internal     |
 
 ---
 
@@ -698,9 +702,9 @@ graph LR
     GoAdmin -->|"JWT sign/verify"| JWT
 ```
 
-| Boundary | Mechanism | Notes |
-|----------|-----------|-------|
-| Phoenix ↔ Go | `SHARED_SECRET` HMAC | Used in session token verification |
-| Go Public ↔ Go TURN | gRPC metadata + constant-time compare | `x-pairline-turn-control-auth` header |
-| Admin Dashboard ↔ Go Admin | JWT (access + refresh) | CSRF double-submit cookie + origin check |
-| Browser → TURN | TURN long-term credential | Username = `{session_id}\|{sha256(token)}`, password = `TURN_STATIC_AUTH_SECRET` |
+| Boundary                   | Mechanism                             | Notes                                                                            |
+| -------------------------- | ------------------------------------- | -------------------------------------------------------------------------------- |
+| Phoenix ↔ Go               | `SHARED_SECRET` HMAC                  | Used in session token verification                                               |
+| Go Public ↔ Go TURN        | gRPC metadata + constant-time compare | `x-pairline-turn-control-auth` header                                            |
+| Admin Dashboard ↔ Go Admin | JWT (access + refresh)                | CSRF double-submit cookie + origin check                                         |
+| Browser → TURN             | TURN long-term credential             | Username = `{session_id}\|{sha256(token)}`, password = `TURN_STATIC_AUTH_SECRET` |

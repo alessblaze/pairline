@@ -9,8 +9,8 @@ Anonymous text and video chat app with moderation tooling. Built for massive sca
 - [frontend/client/](./frontend/client): React 19 + Vite chat client
 - [frontend/admin/](./frontend/admin): React 19 + Vite admin dashboard
 - [backend/elixir/omegle_phoenix/](./backend/elixir/omegle_phoenix): Phoenix websocket and matchmaking service
-- [backend/golang/](./backend/golang): moderation, admin, and TURN service
-- Redis: session state and admin pub/sub
+- [backend/golang/](./backend/golang): moderation APIs, async DB workers, admin panel, and TURN service
+- Redis: session state, cross-node routing, and async report queues
 - PostgreSQL: reports, bans, and admin data
 
 ## Repo layout
@@ -23,10 +23,20 @@ Anonymous text and video chat app with moderation tooling. Built for massive sca
 ├── backend/
 │   ├── elixir/omegle_phoenix/
 │   └── golang/
+│       ├── cmd/
+│       │   ├── admin/
+│       │   ├── public/
+│       │   ├── turn/
+│       │   └── worker/
+│       └── internal/
 ├── docker/
 │   └── docker-compose.yml
+├── AGENTS.md
+├── ARCHITECTURE.md
+├── ENVIRONMENT.md
+├── MODERATION.md
 ├── SETUP.md
-└── Vulnerabilities.md(Internal only.)
+└── TURN.md
 ```
 
 ## Getting started
@@ -35,7 +45,7 @@ See [SETUP.md](./SETUP.md) for local setup, environment variables, and run comma
 
 ## Service overview
 
-Phoenix handles websocket sessions, matchmaking, and session IP tracking. The Go service handles report submission, admin APIs, ban persistence, and TURN credential generation. The frontend talks to both services: websocket traffic goes to Phoenix and HTTP moderation/admin traffic goes to Go.
+Phoenix handles websocket sessions, matchmaking, and session IP tracking. The Go API handles report submission, admin interfaces, ban persistence, and TURN credential generation. To ensure high performance, incoming reports are pushed to a Redis stream where dedicated Go DB workers process them asynchronously, insert them into Postgres, and execute LLM-based safety assessments. The frontend talks to both services: websocket traffic goes to Phoenix and HTTP moderation/admin traffic goes to Go.
 
 ## Notes
 
