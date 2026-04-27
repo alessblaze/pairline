@@ -62,13 +62,12 @@ func main() {
 
 	db := storage.NewDatabase()
 	redisClient := appredis.NewClient()
-	streamRedisClient := appredis.NewStreamClient()
 
 	autoModerator := automod.NewWorker(db.GetDB(), redisClient)
 
 	autoModerator.Start(ctx)
 
-	go consumeReportsStream(ctx, db, redisClient.GetClient(), streamRedisClient.GetClient(), autoModerator)
+	go consumeReportsStream(ctx, db, redisClient.GetClient(), autoModerator)
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -82,10 +81,9 @@ func main() {
 	time.Sleep(2 * time.Second)
 	db.Close()
 	redisClient.Close()
-	streamRedisClient.Close()
 }
 
-func consumeReportsStream(ctx context.Context, db *storage.Database, redisClient redis.UniversalClient, streamClient redis.UniversalClient, autoModerator *automod.Worker) {
+func consumeReportsStream(ctx context.Context, db *storage.Database, redisClient redis.UniversalClient, autoModerator *automod.Worker) {
 	streamName := "stream:reports:ingest"
 	groupName := "db_workers"
 	consumerName := "worker-" + getEnv("HOSTNAME", "default-worker")
@@ -96,10 +94,10 @@ func consumeReportsStream(ctx context.Context, db *storage.Database, redisClient
 	}
 
 	// Recover any pending messages from a previous crash before reading new ones.
-	recoverPending(ctx, streamClient, redisClient, db, autoModerator, streamName, groupName, consumerName)
+	recoverPending(ctx, redisClient, db, autoModerator, streamName, groupName, consumerName)
 
 	// Periodically reclaim stale pending entries from dead consumers.
-	go reclaimOrphaned(ctx, streamClient, redisClient, db, autoModerator, streamName, groupName, consumerName)
+	go reclaimOrphaned(ctx, redisClient, db, autoModerator, streamName, groupName, consumerName)
 
 	for {
 		select {
@@ -108,9 +106,7 @@ func consumeReportsStream(ctx context.Context, db *storage.Database, redisClient
 		default:
 		}
 
-		// Use the untraced streamClient for the blocking read to avoid
-		// generating a 2s span on every idle poll.
-		res, err := streamClient.XReadGroup(ctx, &redis.XReadGroupArgs{
+		res, err := redisClient.XReadGroup(ctx, &redis.XReadGroupArgs{
 			Group:    groupName,
 			Consumer: consumerName,
 			Streams:  []string{streamName, ">"},
@@ -138,7 +134,7 @@ func consumeReportsStream(ctx context.Context, db *storage.Database, redisClient
 // but never acknowledged (e.g. due to a crash). It reads from ID "0"
 // which returns all pending entries for this consumer, then processes
 // and acks each one.
-func recoverPending(ctx context.Context, streamClient redis.UniversalClient, redisClient redis.UniversalClient, db *storage.Database, autoModerator *automod.Worker, streamName, groupName, consumerName string) {
+func recoverPending(ctx context.Context, redisClient redis.UniversalClient, db *storage.Database, autoModerator *automod.Worker, streamName, groupName, consumerName string) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -146,7 +142,7 @@ func recoverPending(ctx context.Context, streamClient redis.UniversalClient, red
 		default:
 		}
 
-		res, err := streamClient.XReadGroup(ctx, &redis.XReadGroupArgs{
+		res, err := redisClient.XReadGroup(ctx, &redis.XReadGroupArgs{
 			Group:    groupName,
 			Consumer: consumerName,
 			Streams:  []string{streamName, "0"},
@@ -175,7 +171,7 @@ func recoverPending(ctx context.Context, streamClient redis.UniversalClient, red
 // entries from dead consumers (e.g. a worker that was replaced with a
 // new container/hostname). Messages idle longer than 5 minutes are
 // claimed by this consumer and processed.
-func reclaimOrphaned(ctx context.Context, streamClient redis.UniversalClient, redisClient redis.UniversalClient, db *storage.Database, autoModerator *automod.Worker, streamName, groupName, consumerName string) {
+func reclaimOrphaned(ctx context.Context, redisClient redis.UniversalClient, db *storage.Database, autoModerator *automod.Worker, streamName, groupName, consumerName string) {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
 
@@ -188,7 +184,7 @@ func reclaimOrphaned(ctx context.Context, streamClient redis.UniversalClient, re
 
 		startID := "0-0"
 		for {
-			msgs, newStart, err := streamClient.XAutoClaim(ctx, &redis.XAutoClaimArgs{
+			msgs, newStart, err := redisClient.XAutoClaim(ctx, &redis.XAutoClaimArgs{
 				Stream:   streamName,
 				Group:    groupName,
 				Consumer: consumerName,
