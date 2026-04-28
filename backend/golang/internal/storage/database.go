@@ -65,6 +65,7 @@ type AdminAccount struct {
 
 type Report struct {
 	ID                        string     `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
+	IngestMessageID           *string    `gorm:"uniqueIndex:idx_reports_ingest_message_id" json:"-"`
 	ReporterSessionID         string     `gorm:"index" json:"reporter_session_id"`
 	ReportedSessionID         string     `gorm:"index" json:"reported_session_id"`
 	ReporterIP                string     `json:"reporter_ip"`

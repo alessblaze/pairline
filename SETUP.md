@@ -154,6 +154,7 @@ Optional split-binary flow:
 cd backend/golang
 go run ./cmd/public
 go run ./cmd/admin
+go run ./cmd/worker
 ```
 
 Frontend:

@@ -20,6 +20,7 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http/httptest"
 	"strings"
@@ -28,8 +29,10 @@ import (
 	"time"
 
 	"github.com/anish/omegle/backend/golang/internal/middleware"
+	appredis "github.com/anish/omegle/backend/golang/internal/redis"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 type lockedLogBuffer struct {
@@ -184,6 +187,69 @@ func TestBoolSettingEncoders(t *testing.T) {
 	}
 	if got := BoolToRedisSettingValue(false); got != "0" {
 		t.Fatalf("BoolToRedisSettingValue(false) = %q", got)
+	}
+}
+
+func TestResolveReportRoute(t *testing.T) {
+	validRoute := "video|2"
+
+	tests := []struct {
+		name          string
+		primaryValue  string
+		primaryErr    error
+		fallbackValue string
+		fallbackErr   error
+		want          appredis.SessionRoute
+		wantOK        bool
+	}{
+		{
+			name:         "uses primary locator when valid",
+			primaryValue: validRoute,
+			want:         appredis.SessionRoute{Mode: "video", Shard: 2},
+			wantOK:       true,
+		},
+		{
+			name:          "uses fallback when primary is missing",
+			primaryErr:    goredis.Nil,
+			fallbackValue: validRoute,
+			want:          appredis.SessionRoute{Mode: "video", Shard: 2},
+			wantOK:        true,
+		},
+		{
+			name:          "invalid primary fails closed",
+			primaryValue:  "not-a-route",
+			fallbackValue: validRoute,
+			wantOK:        false,
+		},
+		{
+			name:          "invalid fallback fails closed",
+			primaryErr:    goredis.Nil,
+			fallbackValue: "still-not-a-route",
+			wantOK:        false,
+		},
+		{
+			name:       "primary real error fails closed",
+			primaryErr: errors.New("redis unavailable"),
+			wantOK:     false,
+		},
+		{
+			name:        "both missing fail closed",
+			primaryErr:  goredis.Nil,
+			fallbackErr: goredis.Nil,
+			wantOK:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := resolveReportRoute(tt.primaryValue, tt.primaryErr, tt.fallbackValue, tt.fallbackErr)
+			if ok != tt.wantOK {
+				t.Fatalf("resolveReportRoute() ok = %v, want %v", ok, tt.wantOK)
+			}
+			if got != tt.want {
+				t.Fatalf("resolveReportRoute() = %+v, want %+v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -375,4 +441,3 @@ func TestReportAutoApprovalFilterFallsBackToRelatedReportsWithoutReportID(t *tes
 		}
 	}
 }
-

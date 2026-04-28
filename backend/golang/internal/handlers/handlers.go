@@ -46,6 +46,7 @@ import (
 	"github.com/anish/omegle/backend/golang/internal/moderation"
 	"github.com/anish/omegle/backend/golang/internal/observability"
 	appredis "github.com/anish/omegle/backend/golang/internal/redis"
+	"github.com/anish/omegle/backend/golang/internal/reporting"
 	"github.com/anish/omegle/backend/golang/internal/storage"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -486,14 +487,7 @@ func CreateReportHandlerGin(redisClient redis.UniversalClient) gin.HandlerFunc {
 			return
 		}
 
-		if err := redisClient.XAdd(ctx, &redis.XAddArgs{
-			Stream: "stream:reports:ingest",
-			MaxLen: 10000,
-			Approx: true,
-			Values: map[string]interface{}{
-				"payload": string(payloadBytes),
-			},
-		}).Err(); err != nil {
+		if err := reporting.Enqueue(ctx, redisClient, string(payloadBytes)); err != nil {
 			span.RecordError(err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue report"})
 			return
@@ -523,25 +517,13 @@ func validateReportPipelined(ctx context.Context, client redis.UniversalClient, 
 		return "", "", false, false, false, execErr
 	}
 
-	var repRoute appredis.SessionRoute
-	repRouteOk := false
-	if loc, err := repLocCmd.Result(); err == nil {
-		repRoute, _ = appredis.DecodeSessionRoute(loc)
-		repRouteOk = true
-	} else if loc, err := repRepLocCmd.Result(); err == nil {
-		repRoute, _ = appredis.DecodeSessionRoute(loc)
-		repRouteOk = true
-	}
+	repLoc, repLocErr := repLocCmd.Result()
+	repReportLoc, repReportLocErr := repRepLocCmd.Result()
+	repRoute, repRouteOk := resolveReportRoute(repLoc, repLocErr, repReportLoc, repReportLocErr)
 
-	var tgtRoute appredis.SessionRoute
-	tgtRouteOk := false
-	if loc, err := tgtLocCmd.Result(); err == nil {
-		tgtRoute, _ = appredis.DecodeSessionRoute(loc)
-		tgtRouteOk = true
-	} else if loc, err := tgtRepLocCmd.Result(); err == nil {
-		tgtRoute, _ = appredis.DecodeSessionRoute(loc)
-		tgtRouteOk = true
-	}
+	tgtLoc, tgtLocErr := tgtLocCmd.Result()
+	tgtReportLoc, tgtReportLocErr := tgtRepLocCmd.Result()
+	tgtRoute, tgtRouteOk := resolveReportRoute(tgtLoc, tgtLocErr, tgtReportLoc, tgtReportLocErr)
 
 	isBot := false
 	if kind, err := tgtKindCmd.Result(); err == nil && strings.EqualFold(strings.TrimSpace(kind), "bot") {
@@ -610,7 +592,23 @@ func validateReportPipelined(ctx context.Context, client redis.UniversalClient, 
 	return reporterIP, reportedIP, isBot, validToken, validPeer, nil
 }
 
+func resolveReportRoute(primaryValue string, primaryErr error, fallbackValue string, fallbackErr error) (appredis.SessionRoute, bool) {
+	if primaryErr == nil {
+		route, err := appredis.DecodeSessionRoute(primaryValue)
+		return route, err == nil
+	}
 
+	if !errors.Is(primaryErr, redis.Nil) {
+		return appredis.SessionRoute{}, false
+	}
+
+	if fallbackErr == nil {
+		route, err := appredis.DecodeSessionRoute(fallbackValue)
+		return route, err == nil
+	}
+
+	return appredis.SessionRoute{}, false
+}
 
 func GetAutoModerationSettingsHandlerGin(c *gin.Context) {
 	span := startHandlerSpan(c, "moderation.auto_reports.settings.get")
@@ -2162,14 +2160,7 @@ func SeedReportsHandlerGin(redisClient redis.UniversalClient) gin.HandlerFunc {
 				return
 			}
 
-			if err := redisClient.XAdd(ctx, &redis.XAddArgs{
-				Stream: "stream:reports:ingest",
-				MaxLen: 10000,
-				Approx: true,
-				Values: map[string]interface{}{
-					"payload": string(payloadBytes),
-				},
-			}).Err(); err != nil {
+			if err := reporting.Enqueue(ctx, redisClient, string(payloadBytes)); err != nil {
 				span.RecordError(err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue test report", "details": err.Error()})
 				return

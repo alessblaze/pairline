@@ -559,14 +559,14 @@ graph LR
     end
 
     subgraph "cmd/worker"
-        Worker["DB Worker"]
+        Worker["Dedicated Report Worker"]
     end
 
     subgraph "cmd/turn"
         Turn["TURN Relay"]
     end
 
-    Combined ---|"Admin API ✓<br/>Moderation API ✓<br/>Signaling WS ✓<br/>TURN Bootstrap ✓<br/>TURN Control API ✓<br/>Auto-mod Worker ✓"| Combined
+    Combined ---|"Admin API ✓<br/>Moderation API ✓<br/>Signaling WS ✓<br/>TURN Bootstrap ✓<br/>TURN Control API ✓<br/>Report Ingest Worker ✓<br/>Auto-mod Worker ✓"| Combined
 
     Public ---|"Moderation API ✓<br/>Signaling WS ✓<br/>TURN Bootstrap ✓<br/>TURN Control API ✓"| Public
 
@@ -609,7 +609,7 @@ All session-scoped keys use `{mode:shard}` hash tags to ensure co-location on th
 | `turn:allocations:{session_id}`       | Go      | 24h safety   | TURN allocation counter per session        |
 | `webrtc:{mode:shard}:ready:{id}`      | Phoenix | —            | WebRTC readiness flag                      |
 | `webrtc:turn:cache:cloudflare:{user}` | Go      | 10min        | Cached Cloudflare TURN credentials         |
-| `stream:reports:ingest`               | Go      | ~10k max     | Pending reports stream for async DB worker |
+| `stream:reports:ingest`               | Go      | unbounded by default | Pending reports stream for async DB worker |
 
 ---
 

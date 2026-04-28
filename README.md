@@ -45,7 +45,7 @@ See [SETUP.md](./SETUP.md) for local setup, environment variables, and run comma
 
 ## Service overview
 
-Phoenix handles websocket sessions, matchmaking, and session IP tracking. The Go API handles report submission, admin interfaces, ban persistence, and TURN credential generation. To ensure high performance, incoming reports are pushed to a Redis stream where dedicated Go DB workers process them asynchronously, insert them into Postgres, and execute LLM-based safety assessments. The frontend talks to both services: websocket traffic goes to Phoenix and HTTP moderation/admin traffic goes to Go.
+Phoenix handles websocket sessions, matchmaking, and session IP tracking. The Go API handles report submission, admin interfaces, ban persistence, and TURN credential generation. To ensure high performance, incoming reports are pushed to a Redis stream where Go report-ingest workers process them asynchronously, insert them into Postgres, and execute LLM-based safety assessments. The combined Go binary consumes that stream itself, while split-binary deployments should run `cmd/worker` alongside `cmd/public` and `cmd/admin` for the same low-latency moderation path. The frontend talks to both services: websocket traffic goes to Phoenix and HTTP moderation/admin traffic goes to Go.
 
 ## Notes
 

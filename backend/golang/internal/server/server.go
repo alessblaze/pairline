@@ -38,6 +38,7 @@ import (
 	"github.com/anish/omegle/backend/golang/internal/middleware"
 	"github.com/anish/omegle/backend/golang/internal/observability"
 	appredis "github.com/anish/omegle/backend/golang/internal/redis"
+	"github.com/anish/omegle/backend/golang/internal/reporting"
 	"github.com/anish/omegle/backend/golang/internal/storage"
 	"github.com/anish/omegle/backend/golang/internal/turncontrol"
 	"github.com/anish/omegle/backend/golang/internal/turnservice"
@@ -74,6 +75,7 @@ type Capabilities struct {
 	EnableSignalingWS          bool
 	EnableTurnBootstrap        bool
 	EnableTurnControlAPI       bool
+	EnableReportIngestWorker   bool
 	EnableAutoModerationWorker bool
 }
 
@@ -84,6 +86,7 @@ func NewServer() *Server {
 		EnableSignalingWS:          true,
 		EnableTurnBootstrap:        true,
 		EnableTurnControlAPI:       true,
+		EnableReportIngestWorker:   true,
 		EnableAutoModerationWorker: true,
 	}, "pairline-go-service")
 }
@@ -192,6 +195,13 @@ func newServer(capabilities Capabilities, serviceName string) *Server {
 		s.autoModerator = automod.NewWorker(s.db.GetDB(), s.redis)
 		if s.autoModerator != nil {
 			s.autoModerator.Start(s.backgroundCtx)
+		}
+	}
+
+	if capabilities.EnableReportIngestWorker {
+		reportIngestWorker := reporting.NewIngestWorker(s.db, s.redis.GetClient(), s.autoModerator)
+		if reportIngestWorker != nil {
+			reportIngestWorker.Start(s.backgroundCtx)
 		}
 	}
 

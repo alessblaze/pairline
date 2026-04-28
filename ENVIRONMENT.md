@@ -180,6 +180,9 @@ This file focuses on **what each variable changes in runtime behavior**, not jus
 
 - **`REPORT_INGEST_STREAM`** (default: `stream:reports:ingest`): The Redis stream used by the API to queue incoming reports for the async database workers.
 - **`REPORT_WORKER_GROUP`** (default: `db_workers`): The consumer group name used by the DB workers when consuming from the ingest stream.
+- **`REPORT_INGEST_STREAM_MAXLEN`** (default: `0`): optional soft cap for the ingest stream.
+  - `0` disables trimming so queued reports are not dropped during backlog or worker downtime.
+  - Set a positive value only if you explicitly accept lossy overflow behavior in exchange for bounded Redis memory.
 
 ### Root admin bootstrap
 - **`ROOT_ADMIN_USERNAME`** (default: `admin`): initial “root” admin username created/ensured at startup.

@@ -550,6 +550,9 @@ services:
       POSTGRES_DB: omegle
       POSTGRES_SSLMODE: disable
       REDIS_CLUSTER_NODES: redis-node-1:7000,redis-node-2:7001,redis-node-3:7002
+      REPORT_INGEST_STREAM: stream:reports:ingest
+      REPORT_WORKER_GROUP: db_workers
+      REPORT_INGEST_STREAM_MAXLEN: "0"
       REDIS_PASSWORD: pairline-dev-redis-password
       SHARED_SECRET: pairline-dev-shared-secret
       JWT_SECRET: pairline-dev-jwt-secret-must-be-32-characters-long
@@ -617,6 +620,9 @@ services:
       POSTGRES_DB: omegle
       POSTGRES_SSLMODE: disable
       REDIS_CLUSTER_NODES: redis-node-1:7000,redis-node-2:7001,redis-node-3:7002
+      REPORT_INGEST_STREAM: stream:reports:ingest
+      REPORT_WORKER_GROUP: db_workers
+      REPORT_INGEST_STREAM_MAXLEN: "0"
       REDIS_PASSWORD: pairline-dev-redis-password
       SHARED_SECRET: pairline-dev-shared-secret
       JWT_SECRET: pairline-dev-jwt-secret-must-be-32-characters-long
@@ -684,6 +690,9 @@ services:
       POSTGRES_DB: omegle
       POSTGRES_SSLMODE: disable
       REDIS_CLUSTER_NODES: redis-node-1:7000,redis-node-2:7001,redis-node-3:7002
+      REPORT_INGEST_STREAM: stream:reports:ingest
+      REPORT_WORKER_GROUP: db_workers
+      REPORT_INGEST_STREAM_MAXLEN: "0"
       REDIS_PASSWORD: pairline-dev-redis-password
       SHARED_SECRET: pairline-dev-shared-secret
       JWT_SECRET: pairline-dev-jwt-secret-must-be-32-characters-long
@@ -747,6 +756,9 @@ services:
       POSTGRES_DB: omegle
       POSTGRES_SSLMODE: disable
       REDIS_CLUSTER_NODES: redis-node-1:7000,redis-node-2:7001,redis-node-3:7002
+      REPORT_INGEST_STREAM: stream:reports:ingest
+      REPORT_WORKER_GROUP: db_workers
+      REPORT_INGEST_STREAM_MAXLEN: "0"
       REDIS_PASSWORD: pairline-dev-redis-password
       SHARED_SECRET: pairline-dev-shared-secret
       JWT_SECRET: pairline-dev-jwt-secret-must-be-32-characters-long

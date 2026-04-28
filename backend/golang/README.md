@@ -16,7 +16,7 @@ The legacy combined binary defaults to port `8082`.
 ## Binary layout
 
 - `go run .`
-  Starts the legacy combined binary with both public and admin routes.
+  Starts the legacy combined binary with both public and admin routes, plus one background report-ingest consumer.
 - `go run ./cmd/public`
   Starts the public binary only:
   - `GET /health`
@@ -38,6 +38,8 @@ The legacy combined binary defaults to port `8082`.
   - `GET /api/v1/admin/reports`
   - `POST /api/v1/admin/ban`
   - account-management routes
+- `go run ./cmd/worker`
+  Starts an extra dedicated report-ingest worker for more async DB and auto-moderation capacity.
 
 ## Environment
 
@@ -55,6 +57,9 @@ Copy `.env.example` to `.env` and review:
 - `BAN_SYNC_INTERVAL_SECONDS`
 - `AUTO_MODERATION_*`
 - `NIM_API_KEY`
+- `REPORT_INGEST_STREAM`
+- `REPORT_WORKER_GROUP`
+- `REPORT_INGEST_STREAM_MAXLEN`
 - `TURN_*`
 - `CLOUDFLARE_TURN_*`
 
@@ -68,6 +73,8 @@ For the full backend env var reference (Phoenix + Go), see [`ENVIRONMENT.md`](..
 `NIM_API_KEY` (or `NVIDIA_NIM_API_KEY`) enables the async report auto-moderation worker to call NVIDIA NIM after reports are stored.
 `AUTO_MODERATION_MODEL` defaults to `nvidia/llama-3.1-nemotron-safety-guard-8b-v3`.
 `AUTO_MODERATION_ENQUEUE_TIMEOUT_MS` defaults to `250` and caps how long report creation waits to wake the background worker before falling back to the next periodic sweep.
+`REPORT_INGEST_STREAM_MAXLEN` defaults to `0`, which leaves the report ingest stream untrimmed so queued reports are not dropped during backlog or worker downtime.
+In split-binary deployments, `cmd/public` and `cmd/admin` do not consume the report ingest stream themselves. Run `cmd/worker` alongside them so queued reports are persisted and auto-moderated with the original low-latency path.
 The Go worker currently ships model adapters for `nvidia/llama-3.1-nemotron-safety-guard-8b-v3`, `nvidia/llama-3.1-nemotron-safety-guard-multilingual-8b-v1`, `nvidia/llama-3.1-nemoguard-8b-content-safety`, `nvidia/nemotron-content-safety-reasoning-4b`, and `meta/llama-guard-4-12b` under `internal/automod/models/`.
 Go services are Redis Cluster only and require `REDIS_CLUSTER_NODES`.
 `REDIS_POOL_SIZE` optionally overrides the go-redis cluster pool size per node when you need predictable tuning across deployments.
@@ -92,6 +99,7 @@ go run .
 go run ./cmd/public
 go run ./cmd/turn
 go run ./cmd/admin
+go run ./cmd/worker
 GOCACHE=/tmp/go-build go test ./...
 ```
 
